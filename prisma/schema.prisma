@@ -1,0 +1,194 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  password          String?
+  firstName         String?
+  lastName          String?
+  phoneNumber       String?
+  businessName      String?
+  businessType      String?
+  address           String?
+  whatsappNumber    String?
+  directChatMessage String?
+  role              String    @default("user") // user, admin
+  isActive          Boolean   @default(true)
+  emailVerified     DateTime?
+  image             String?
+
+  // Additional fields from database
+  accountStatus     String    @default("active")
+  adCampaignSource  String?
+  affiliateId       String?
+  affiliateLinkUrl  String?
+  deviceInfo        Json?
+  landingPageUrl    String?
+  subscriptionExpirationDate DateTime?
+  subscriptionLtv   Float     @default(0.00)
+  subscriptionPlan  String?
+  subscriptionStartDate DateTime?
+  termsAccepted     Boolean   @default(false)
+  subscriptionStatus String   @default("active")
+  stripeCustomerId  String?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  sessions          Session[]
+  accounts          Account[]
+  orders            Order[]
+  payments          Payment[]
+  qrCodes           QRCode[]
+  supportTickets    SupportTicket[]
+  emailVerifications EmailVerification[]
+  passwordResets    PasswordReset[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Email verification tokens
+model EmailVerification {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verifications")
+}
+
+// Password reset tokens
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_resets")
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  userId      String
+  amount      Float
+  currency    String   @default("USD")
+  status      String   @default("pending") // pending, completed, failed, cancelled
+  description String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("orders")
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  orderId       String
+  amount        Float
+  currency      String   @default("USD")
+  status        String   @default("pending") // pending, completed, failed, cancelled
+  paymentMethod String?
+  transactionId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model QRCode {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  url         String
+  qrData      String
+  qrCodeImage String?  // Store the generated QR code image as data URL
+  isActive    Boolean  @default(true)
+  scanCount   Int      @default(0)
+  shareCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("qr_codes")
+}
+
+model SupportTicket {
+  id          String   @id @default(cuid())
+  userId      String
+  subject     String
+  description String
+  status      String   @default("open") // open, in_progress, resolved, closed
+  priority    String   @default("medium") // low, medium, high, urgent
+  category    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("support_tickets")
+} 
