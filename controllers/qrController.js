@@ -124,7 +124,7 @@ const createQRCode = async (req, res) => {
       data: {
         userId: req.user.userId,
         name: name || `QR Code ${code}`,
-        url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/${code}`, // Store frontend redirect URL
+        url: `${process.env.FRONTEND_URL}/qr/redirect/${code}`, // Store frontend redirect URL
         qrData: code, // Store the short code as QR data
         qrCodeImage: qrCodeImage,
       }
@@ -191,7 +191,7 @@ const generateQRCodeWithUserInfo = async (req, res) => {
       data: {
         userId: req.user.userId,
         name: name || `${user.businessName || user.firstName}'s QR Code`,
-        url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/${randomCode}`, // Store frontend redirect URL
+        url: `${process.env.FRONTEND_URL}/qr/redirect/${randomCode}`, // Store frontend redirect URL
         qrData: randomCode, // Store the random code as QR data
         qrCodeImage: qrCodeImage,
       }

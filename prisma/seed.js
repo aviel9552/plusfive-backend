@@ -137,7 +137,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'Business Card QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/PKZcsL`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/PKZcsL`,
           qrData: 'PKZcsL',
           qrCodeImage: await QRCode.toDataURL('PKZcsL', {
             errorCorrectionLevel: 'M',
@@ -157,7 +157,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'Menu QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/8eDnMm`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/8eDnMm`,
           qrData: '8eDnMm',
           qrCodeImage: await QRCode.toDataURL('8eDnMm', {
             errorCorrectionLevel: 'M',
@@ -176,7 +176,7 @@ async function main() {
         data: {
           userId: adminUser.id,
           name: 'Admin Dashboard QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/vsFY1S`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/vsFY1S`,
           qrData: 'vsFY1S',
           qrCodeImage: await QRCode.toDataURL('vsFY1S', {
             errorCorrectionLevel: 'M',
@@ -195,7 +195,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'WhatsApp Contact QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/oy2o9B`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/oy2o9B`,
           qrData: 'oy2o9B',
           qrCodeImage: await QRCode.toDataURL('oy2o9B', {
             errorCorrectionLevel: 'M',
@@ -214,7 +214,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'Restaurant Menu QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/ecBYhU`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/ecBYhU`,
           qrData: 'ecBYhU',
           qrCodeImage: await QRCode.toDataURL('ecBYhU', {
             errorCorrectionLevel: 'M',
@@ -233,7 +233,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'Product QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/MW45gk`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/MW45gk`,
           qrData: 'MW45gk',
           qrCodeImage: await QRCode.toDataURL('MW45gk', {
             errorCorrectionLevel: 'M',
@@ -252,7 +252,7 @@ async function main() {
         data: {
           userId: adminUser.id,
           name: 'Event Ticket QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/7pvX04`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/7pvX04`,
           qrData: '7pvX04',
           qrCodeImage: await QRCode.toDataURL('7pvX04', {
             errorCorrectionLevel: 'M',
@@ -271,7 +271,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'Location QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/Pw8AvL`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/Pw8AvL`,
           qrData: 'Pw8AvL',
           qrCodeImage: await QRCode.toDataURL('Pw8AvL', {
             errorCorrectionLevel: 'M',
@@ -290,7 +290,7 @@ async function main() {
         data: {
           userId: testUser.id,
           name: 'App Download QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/6ud6x4`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/6ud6x4`,
           qrData: '6ud6x4',
           qrCodeImage: await QRCode.toDataURL('6ud6x4', {
             errorCorrectionLevel: 'M',
@@ -309,7 +309,7 @@ async function main() {
         data: {
           userId: adminUser.id,
           name: 'Support QR',
-          url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/qr/redirect/tD2qo0`,
+          url: `${process.env.FRONTEND_URL}/qr/redirect/tD2qo0`,
           qrData: 'tD2qo0',
           qrCodeImage: await QRCode.toDataURL('tD2qo0', {
             errorCorrectionLevel: 'M',
