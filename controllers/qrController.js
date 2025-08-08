@@ -226,13 +226,13 @@ const generateQRCodeWithUserInfo = async (req, res) => {
 const getQRCodeById = async (req, res) => {
   try {
     // If user is admin, can access any QR code, otherwise only user's own QR codes
-    const where = {
-      id: req.params.id,
-      ...(req.user.role !== 'admin' && { userId: req.user.userId })
-    };
+    // const where = {
+    //   id: req.params.id,
+    //   ...(req.user.role !== 'admin' && { userId: req.user.userId })
+    // };
     
     const qrCode = await prisma.qRCode.findFirst({
-      where,
+      // where,
       include: {
         user: {
           select: {
@@ -257,7 +257,7 @@ const getQRCodeById = async (req, res) => {
     
     if (!qrCode) {
       return errorResponse(res, 'QR code not found', 404);
-    }image.png
+    }
     
     // If QR code image doesn't exist, generate it
     if (!qrCode.qrCodeImage) {
@@ -483,6 +483,86 @@ const serveQRCodeImage = async (req, res) => {
   }
 };
 
+// Get user's own QR codes only
+const getUserOwnQRCodes = async (req, res) => {
+  try {
+    const isActive = req.query.isActive;
+    
+    // Only show current user's QR codes
+    const where = {
+      userId: req.user.userId,
+      ...(isActive !== undefined && { isActive: isActive === 'true' })
+    };
+    
+    const qrCodes = await prisma.qRCode.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phoneNumber: true,
+            businessName: true,
+            businessType: true,
+            address: true,
+            whatsappNumber: true,
+            role: true,
+            accountStatus: true,
+            subscriptionStatus: true,
+            subscriptionPlan: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+    
+    // Generate QR code images for codes that don't have them
+    const qrCodesWithImages = await Promise.all(
+      qrCodes.map(async (qrCode) => {
+        if (!qrCode.qrCodeImage) {
+          try {
+            const qrCodeImage = await QRCode.toDataURL(qrCode.qrData, {
+              errorCorrectionLevel: 'M',
+              type: 'image/png',
+              quality: 0.92,
+              margin: 1,
+              color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+              }
+            });
+            
+            // Update the QR code with the generated image
+            await prisma.qRCode.update({
+              where: { id: qrCode.id },
+              data: { qrCodeImage: qrCodeImage }
+            });
+            
+            return { ...qrCode, qrCodeImage };
+          } catch (error) {
+            console.error(`Error generating QR code image for ${qrCode.id}:`, error);
+            return qrCode;
+          }
+        }
+        return qrCode;
+      })
+    );
+    
+    return successResponse(res, {
+      qrCodes: qrCodesWithImages,
+      total: qrCodesWithImages.length,
+      message: 'User\'s own QR codes retrieved successfully'
+    });
+    
+  } catch (error) {
+    console.error('Get user own QR codes error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 module.exports = {
   getAllQRCodes,
   createQRCode,
@@ -492,5 +572,6 @@ module.exports = {
   deleteQRCode,
   serveQRCodeImage,
   incrementShareCount,
-  incrementScanCount
+  incrementScanCount,
+  getUserOwnQRCodes,
 }; 

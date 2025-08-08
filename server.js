@@ -32,8 +32,20 @@ app.use(cors(config.server.cors));
 app.options('*', cors(config.server.cors));
 
 // Rate limiting
-const limiter = rateLimit(config.rateLimit);
-app.use('/api/', limiter);
+// const limiter = rateLimit(config.rateLimit);
+// app.use('/api/', limiter);
+
+// More lenient rate limit for login
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 login attempts per windowMs
+  message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply login rate limit only to auth routes
+app.use('/api/auth/', loginLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

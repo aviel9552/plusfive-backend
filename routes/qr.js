@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount } = require('../controllers/qrController');
+const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes } = require('../controllers/qrController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { qrCodeCreateSchema, qrCodeUpdateSchema } = require('../lib/validations');
@@ -40,6 +40,9 @@ router.get('/redirect/:id', async (req, res) => {
 
 // GET /api/qr - Get all QR codes
 router.get('/', authenticateToken, getAllQRCodes);
+
+// GET /api/qr/my-qr-codes - Get user's own QR codes only
+router.get('/my-qr-codes', authenticateToken, getUserOwnQRCodes);
 
 // POST /api/qr - Create new QR code (with optional direct generation)
 router.post('/', authenticateToken, validateRequest(qrCodeCreateSchema), createQRCode);
