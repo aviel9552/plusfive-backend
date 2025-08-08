@@ -5,10 +5,12 @@ const appConfig = {
     port: process.env.PORT || 3000,
     host: process.env.HOST || 'localhost',
     environment: process.env.NODE_ENV || 'development',
-    cors: {
-      origin: process.env.CORS_ORIGIN || '*',
-      credentials: true
-    }
+          cors: {
+        origin: process.env.CORS_ORIGIN || '*',
+        credentials: false,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+      }
   },
 
   // JWT configuration
@@ -81,10 +83,12 @@ const getConfig = () => {
       port: parseInt(process.env.PORT) || 3000,
       host: process.env.HOST || 'localhost',
       environment,
-      cors: {
-        origin: process.env.CORS_ORIGIN || '*',
-        credentials: true
-      }
+          cors: {
+      origin: process.env.CORS_ORIGIN || '*',
+      credentials: false,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    }
     },
     
     database: {

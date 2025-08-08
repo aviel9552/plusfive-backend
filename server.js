@@ -28,6 +28,9 @@ if (!validateConfig()) {
 app.use(helmet());
 app.use(cors(config.server.cors));
 
+// Pre-flight requests
+app.options('*', cors(config.server.cors));
+
 // Rate limiting
 const limiter = rateLimit(config.rateLimit);
 app.use('/api/', limiter);
