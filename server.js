@@ -87,15 +87,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
+// Start server only when executed directly (not when imported by serverless function)
 const PORT = config.server.port;
 const HOST = config.server.host;
 
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
-  console.log(`📊 Environment: ${config.server.environment}`);
-  console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
-  console.log(`📝 Log level: ${config.logging.level}`);
-});
+if (require.main === module) {
+  app.listen(PORT, HOST, () => {
+    console.log(`🚀 Server running on http://${HOST}:${PORT}`);
+    console.log(`📊 Environment: ${config.server.environment}`);
+    console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
+    console.log(`📝 Log level: ${config.logging.level}`);
+  });
+}
 
-module.exports = app; 
+module.exports = app;

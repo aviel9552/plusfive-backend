@@ -79,6 +79,18 @@ npm run dev
 
 The API will be available at `http://localhost:3000`
 
+### 5. Deploy to Vercel (Serverless)
+
+1. Project root me `vercel.json` aur `api/index.js` already configured hain. Vercel par naya Project banayein aur is repository ko connect karein.
+2. Vercel Project Settings → Environment Variables me set karein:
+   - `DATABASE_URL` (Vercel Postgres/Prisma integration se milne wala URL)
+   - `JWT_SECRET`
+   - Optional: `.env.example` me diye hue anya vars
+3. Database migrate/deploy:
+   - Production: `npx prisma migrate deploy`
+   - Ya non‑prod: `npx prisma db push`
+4. Deploy karein. Build ke dauran `prisma generate` `postinstall` se auto chalega.
+
 ## API Endpoints
 
 ### Authentication
