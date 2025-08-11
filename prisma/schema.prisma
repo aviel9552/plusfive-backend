@@ -240,3 +240,13 @@ model CustomerMaster {
   @@unique([userId, customerId]) // One customer per business owner
   @@map("customer_master")
 } 
+
+model WebhookLog {
+  id          String   @id @default(cuid())
+  data        Json     // Store JSON data from webhook body
+  createdDate DateTime @default(now())
+  status      String   @default("pending") // pending, processed, failed
+  type        String   // appointment, payment_checkout
+  
+  @@map("webhook_logs")
+} 

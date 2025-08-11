@@ -17,6 +17,7 @@ const supportRoutes = require('./routes/support');
 const userRoutes = require('./routes/users');
 const referralRoutes = require('./routes/referrals');
 const customerRoutes = require('./routes/customers');
+const webhookRoutes = require('./routes/webhooks');
 
 const app = express();
 
@@ -64,7 +65,7 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/qr', qrRoutes);
@@ -72,6 +73,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
