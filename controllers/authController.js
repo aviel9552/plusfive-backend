@@ -7,7 +7,7 @@ const crypto = require('crypto');
 // Register user
 const register = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, ...otherFields } = req.body;
+    const { email, password, firstName, lastName, referralCode, ...otherFields } = req.body;
 
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({
@@ -21,14 +21,24 @@ const register = async (req, res) => {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Create user
+    // Filter valid fields for user creation
+    const validUserFields = {
+      phoneNumber: otherFields.phoneNumber,
+      businessName: otherFields.businessName,
+      businessType: otherFields.businessType,
+      address: otherFields.address,
+      whatsappNumber: otherFields.whatsappNumber,
+      directChatMessage: otherFields.directChatMessage
+    };
+
+    // Create user with only valid fields
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         firstName,
         lastName,
-        ...otherFields
+        ...validUserFields
       },
       select: {
         id: true,
@@ -40,6 +50,31 @@ const register = async (req, res) => {
         createdAt: true
       }
     });
+
+    // If referral code provided, create referral
+    if (referralCode) {
+      try {
+        // Find referrer by referral code
+        const referrer = await prisma.user.findUnique({
+          where: { referralCode: referralCode }
+        });
+
+        if (referrer && referrer.id !== user.id) {
+          // Create referral
+          await prisma.referral.create({
+            data: {
+              referrerId: referrer.id,
+              referredUserId: user.id,
+              status: 'pending',
+              commission: 0
+            }
+          });
+        }
+      } catch (referralError) {
+        console.error('Referral creation failed:', referralError);
+        // Don't fail registration if referral fails
+      }
+    }
 
     // Generate verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');

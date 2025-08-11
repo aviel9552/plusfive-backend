@@ -15,6 +15,8 @@ const paymentRoutes = require('./routes/payments');
 const qrRoutes = require('./routes/qr');
 const supportRoutes = require('./routes/support');
 const userRoutes = require('./routes/users');
+const referralRoutes = require('./routes/referrals');
+const customerRoutes = require('./routes/customers');
 
 const app = express();
 
@@ -68,6 +70,8 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/referrals', referralRoutes);
+app.use('/api/customers', customerRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

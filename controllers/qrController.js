@@ -29,7 +29,6 @@ const getAllQRCodes = async (req, res) => {
             address: true,
             whatsappNumber: true,
             role: true,
-            accountStatus: true,
             subscriptionStatus: true,
             subscriptionPlan: true,
             createdAt: true
@@ -246,7 +245,6 @@ const getQRCodeById = async (req, res) => {
             address: true,
             whatsappNumber: true,
             role: true,
-            accountStatus: true,
             subscriptionStatus: true,
             subscriptionPlan: true,
             createdAt: true
@@ -510,7 +508,6 @@ const getUserOwnQRCodes = async (req, res) => {
             address: true,
             whatsappNumber: true,
             role: true,
-            accountStatus: true,
             subscriptionStatus: true,
             subscriptionPlan: true,
             createdAt: true

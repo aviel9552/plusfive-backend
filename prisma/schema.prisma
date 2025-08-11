@@ -7,7 +7,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url       = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -23,25 +23,21 @@ model User {
   address           String?
   whatsappNumber    String?
   directChatMessage String?
-  role              String    @default("user") // user, admin
+  role              String    @default("user") // user, admin, customer
   isActive          Boolean   @default(true)
   emailVerified     DateTime?
   image             String?
 
-  // Additional fields from database
-  accountStatus     String    @default("active")
-  adCampaignSource  String?
-  affiliateId       String?
-  affiliateLinkUrl  String?
-  deviceInfo        Json?
-  landingPageUrl    String?
+  // Essential fields
   subscriptionExpirationDate DateTime?
   subscriptionLtv   Float     @default(0.00)
   subscriptionPlan  String?
   subscriptionStartDate DateTime?
   termsAccepted     Boolean   @default(false)
   subscriptionStatus String   @default("active")
-  stripeCustomerId  String?
+  
+  // Referral system
+  referralCode      String?   @unique
 
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -55,6 +51,14 @@ model User {
   supportTickets    SupportTicket[]
   emailVerifications EmailVerification[]
   passwordResets    PasswordReset[]
+  
+  // Referral relations
+  referralsGiven    Referral[] @relation("Referrer")
+  referralsReceived Referral[] @relation("ReferredUser")
+  
+  // Customer relations
+  customersManaged  CustomerMaster[] @relation("User")
+  customerOf        CustomerMaster[] @relation("Customer")
 
   @@map("users")
 }
@@ -192,4 +196,47 @@ model SupportTicket {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("support_tickets")
+}
+
+model Referral {
+  id             String   @id @default(cuid())
+  status         String   @default("pending") // pending, active, cancelled
+  commission     Float    @default(0)
+  date           DateTime @default(now())
+  
+  // Relations
+  referrerId     String
+  referrer       User     @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  
+  referredUserId String
+  referredUser   User     @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@map("referrals")
+}
+
+// Customer Master table - Business owners can manage their customers
+model CustomerMaster {
+  id              String   @id @default(cuid())
+  userId          String   // User with role 'user' (business owner)
+  customerId      String   // User with role 'customer'
+  notes           String?  // Business owner's notes about customer
+  status          String   @default("active") // active, inactive, blocked
+  totalVisits     Int?      @default(0) // How many times customer visited
+  lastVisit       DateTime? // Last visit date
+  totalSpent      Float?    @default(0.00) // Total amount spent by customer
+  
+  // Additional fields for customer management
+  rating          Float?    @default(0.0) // Customer rating (0.0 to 5.0)
+  lastPayment     Float?    @default(0.00) // Last payment amount
+  totalPaid       Float?    @default(0.00) // Total amount paid by customer
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  user            User     @relation("User", fields: [userId], references: [id], onDelete: Cascade)
+  customer        User     @relation("Customer", fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customerId]) // One customer per business owner
+  @@map("customer_master")
 } 

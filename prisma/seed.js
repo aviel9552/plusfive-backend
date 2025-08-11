@@ -26,6 +26,7 @@ async function main() {
       directChatMessage: 'Welcome to PlusFive Admin Panel!',
       role: 'admin',
       emailVerified: new Date(),
+      referralCode: 'PLUSFIVE2025ADMIN',
     },
   });
 
@@ -50,6 +51,7 @@ async function main() {
       directChatMessage: 'Hello! How can I help you today?',
       role: 'user',
       emailVerified: new Date(),
+      referralCode: 'PLUSFIVE2025USER',
     },
   });
 
