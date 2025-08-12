@@ -132,9 +132,9 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
       customerId,
       notes: notes || null,
       status: status || 'active',
-      rating: rating || null,
-      lastPayment: lastPayment || null,
-      totalPaid: totalPaid || null,
+      rating: rating ? parseFloat(rating) : null,
+      lastPayment: lastPayment ? parseFloat(lastPayment) : null,
+      totalPaid: totalPaid ? parseFloat(totalPaid) : null,
       totalVisits: 0,
       totalSpent: 0.00
     };
@@ -246,9 +246,9 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
       customerId: newCustomerUser.id,
       notes: customerData.notes || null,
       status: customerData.status || 'active',
-      rating: customerData.rating || null,
-      lastPayment: customerData.lastPayment || null,
-      totalPaid: customerData.totalPaid || null,
+      rating: customerData.rating ? parseFloat(customerData.rating) : null,
+      lastPayment: customerData.lastPayment ? parseFloat(customerData.lastPayment) : null,
+      totalPaid: customerData.totalPaid ? parseFloat(customerData.totalPaid) : null,
       totalVisits: 0,
       totalSpent: 0.00
     };
@@ -438,9 +438,9 @@ const updateCustomer = async (req, res) => {
         data: {
           notes,
           status,
-          rating,
-          lastPayment,
-          totalPaid
+          rating: rating ? parseFloat(rating) : rating,
+          lastPayment: lastPayment ? parseFloat(lastPayment) : lastPayment,
+          totalPaid: totalPaid ? parseFloat(totalPaid) : totalPaid
         }
       });
 
