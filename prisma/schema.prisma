@@ -59,6 +59,7 @@ model User {
   // Customer relations
   customersManaged  CustomerMaster[] @relation("User")
   customerOf        CustomerMaster[] @relation("Customer")
+  customers         Customers[]      // New customers table relation
 
   @@map("users")
 }
@@ -239,6 +240,40 @@ model CustomerMaster {
 
   @@unique([userId, customerId]) // One customer per business owner
   @@map("customer_master")
+}
+
+// New Customers table - Simple customer information
+model Customers {
+  id              String   @id @default(cuid())
+  
+  // Basic fields
+  firstName       String?  // First name
+  lastName        String?  // Last name
+  
+  // Client required fields
+  customerPhone   String?  // Customer phone number
+  appointmentCount Int     @default(0) // Number of appointments
+  customerFullName String? // Full name in Hebrew/Arabic
+  selectedServices String? // Selected services
+  endDate         DateTime? // Appointment end date
+  duration        String?  // Appointment duration
+  startDate       DateTime? // Appointment start date
+  businessId      Int?     // Business ID
+  
+  // Image fields
+  profileImage    String?  // Profile image URL
+  coverImage      String?  // Cover image URL
+  documentImage   String?  // Document image URL
+  
+  // Relations
+  userId          String?  // Reference to User table (business owner)
+  user            User?    @relation(fields: [userId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("customers")
 } 
 
 model WebhookLog {

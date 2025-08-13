@@ -15,15 +15,99 @@ const handleAppointmentWebhook = async (req, res) => {
       }
     });
     
+    // Check if business exists in User table
+    let existingUser = null;
+    if (webhookData.BusinessName) {
+      existingUser = await prisma.user.findFirst({
+        where: {
+          businessName: webhookData.BusinessName
+        },
+        select: {
+          id: true,
+          businessName: true
+        }
+      });
+    }
+    
+    let userId;
+    
+    // If business doesn't exist, create new user
+    if (!existingUser) {
+      const newUser = await prisma.user.create({
+        data: {
+          businessName: webhookData.BusinessName || null,
+          role: 'user', // Default role for business
+          isActive: true
+        }
+      });
+      userId = newUser.id;
+      console.log('New business user created:', newUser.id);
+    } else {
+      userId = existingUser.id;
+      console.log('Existing business user found:', existingUser.id);
+    }
+    
+         // Helper function to parse date safely
+     const parseDateSafely = (dateString) => {
+       if (!dateString) return null;
+       
+       try {
+         // Handle format: "12/08/2025 19:30"
+         const [datePart, timePart] = dateString.split(' ');
+         const [day, month, year] = datePart.split('/');
+         
+         // Create date in format: YYYY-MM-DD HH:MM:SS
+         const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${timePart || '00:00'}:00`;
+         
+         const parsedDate = new Date(formattedDate);
+         
+         // Check if date is valid
+         if (isNaN(parsedDate.getTime())) {
+           console.log('Invalid date format:', dateString);
+           return null;
+         }
+         
+         return parsedDate;
+       } catch (error) {
+         console.log('Date parsing error:', error, 'for date:', dateString);
+         return null;
+       }
+     };
+     
+     // Now add customer data to Customers table with user reference
+     const customerData = {
+       firstName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ')[0] : null,
+       lastName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ').slice(1).join(' ') : null,
+       customerPhone: webhookData.CustomerPhone || null,
+       appointmentCount: webhookData.AppointmentCount || 0,
+       customerFullName: webhookData.CustomerFullName || null,
+       selectedServices: webhookData.SelectedServices || null,
+       endDate: parseDateSafely(webhookData.EndDate),
+       duration: webhookData.Duration || null,
+       startDate: parseDateSafely(webhookData.StartDate),
+       businessId: webhookData.BusinessId || null,
+       userId: userId // Reference to User table
+     };
+    
+    const newCustomer = await prisma.customers.create({
+      data: customerData
+    });
+    
+    console.log('New customer created:', newCustomer.id);
+    
     // Log the webhook data
     console.log('Appointment webhook received:', {
       id: webhookLog.id,
-      data: webhookData
+      data: webhookData,
+      userId: userId,
+      customerId: newCustomer.id
     });
     
     return successResponse(res, {
       webhookId: webhookLog.id,
-      message: 'Appointment webhook received successfully',
+      userId: userId,
+      customerId: newCustomer.id,
+      message: 'Appointment webhook processed and customer created successfully',
       data: webhookData
     }, 'Appointment webhook processed successfully', 201);
     
