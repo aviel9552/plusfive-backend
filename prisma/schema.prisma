@@ -8,6 +8,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -61,6 +62,7 @@ model User {
   customers         Customers[]      // New customers table relation
   appointments      Appointment[]    // Appointments relation
   customerUsers     CustomerUser[]   // Customer-User relations
+  paymentWebhooks   PaymentWebhook[] // Payment webhook relations
 
   @@map("users")
 }
@@ -254,13 +256,15 @@ model Customers {
   
   // Client required fields
   customerPhone   String?  // Customer phone number
-  appointmentCount Int     @default(0) // Number of appointments
+  appointmentCount Int?     @default(0) // Number of appointments
   customerFullName String? // Full name in Hebrew/Arabic
   selectedServices String? // Selected services
   endDate         DateTime? // Appointment end date
   duration        String?  // Appointment duration
   startDate       DateTime? // Appointment start date
   businessId      Int?     // Business ID
+  employeeId      Int?     // Employee ID
+  businessName    String?     // Business Name
   
   // Image fields
   profileImage    String?  // Profile image URL
@@ -272,6 +276,7 @@ model Customers {
   user            User?    @relation(fields: [userId], references: [id])
   appointments    Appointment[] // Appointments relation
   customerUsers   CustomerUser[] // Customer-User relations
+  paymentWebhooks PaymentWebhook[] // Payment webhook relations
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -331,6 +336,36 @@ model CustomerUser {
   @@map("customer_users")
 }
 
+// New Payment model for webhook data
+model PaymentWebhook {
+  id                String   @id @default(cuid())
+  
+  // Payment details
+  total             Float    @default(0.00)
+  totalWithoutVAT   Float    @default(0.00)
+  totalVAT          Float    @default(0.00)
+  
+  // Customer and Business references
+  customerId        String?  // Reference to Customers table (EmployeeId)
+  customer          Customers? @relation(fields: [customerId], references: [id])
+  userId            String?  // Reference to User table (BusinessId)
+  user              User?    @relation(fields: [userId], references: [id])
+  
+  // Additional fields
+  paymentDate       DateTime @default(now())
+  status            String   @default("success") // success, failed, pending
+  
+  // Webhook data
+  employeeId        Int?
+  businessId        Int?
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("payment_webhooks")
+}
+
 model WebhookLog {
   id          String   @id @default(cuid())
   data        Json     // Store JSON data from webhook body
@@ -339,4 +374,18 @@ model WebhookLog {
   type        String   // appointment, payment_checkout
   
   @@map("webhook_logs")
+}
+
+// New Payment Webhook Log Model - Completely Different
+model WebhookPaymentLog {
+  id                String   @id @default(cuid())
+  data              Json     // Store JSON data from webhook body
+  createdDate       DateTime @default(now())
+  type              String   // payment_checkout
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("webhook_payment_logs")
 } 

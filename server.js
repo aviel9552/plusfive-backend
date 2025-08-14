@@ -18,6 +18,7 @@ const userRoutes = require('./routes/users');
 const referralRoutes = require('./routes/referrals');
 const customerRoutes = require('./routes/customers');
 const webhookRoutes = require('./routes/webhooks');
+const reviewRoutes = require('./routes/reviews');
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

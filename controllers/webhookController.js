@@ -30,14 +30,14 @@ const handleAppointmentWebhook = async (req, res) => {
     }
     // Check if customer exists in Customers table
     let existingCustomer = null;
-    if (webhookData.CustomerPhone) {
+    if (webhookData.EmployeeId) {
       existingCustomer = await prisma.customers.findFirst({
         where: {
-          customerPhone: webhookData.CustomerPhone
+          employeeId: webhookData.EmployeeId
         },
         select: {
           id: true,
-          customerPhone: true
+          employeeId: true
         }
       });
     }
@@ -45,17 +45,9 @@ const handleAppointmentWebhook = async (req, res) => {
       let userId;
       let customerId;
     
-    // If business doesn't exist, create new user
+    // If business doesn't exist, return error - User must exist first
     if (!existingUser) {
-      const newUser = await prisma.user.create({
-        data: {
-          businessName: webhookData.BusinessName || null,
-          role: 'user', // Default role for business
-          isActive: true
-        }
-      });
-      userId = newUser.id;
-      console.log('New business user created:', newUser.id);
+      return errorResponse(res, `Business '${webhookData.BusinessName}' exists nahi karta. Pehle user create karein.`, 400);
     } else {
       userId = existingUser.id;
       console.log('Existing business user found:', existingUser.id);
@@ -102,6 +94,8 @@ const handleAppointmentWebhook = async (req, res) => {
           duration: webhookData.Duration || null,
           startDate: parseDateSafely(webhookData.StartDate),
           businessId: webhookData.BusinessId || null,
+          employeeId: webhookData.EmployeeId || null,
+          businessName: webhookData.BusinessName || null,
           userId: userId // Reference to User table
         }
       });
@@ -137,20 +131,64 @@ const handleAppointmentWebhook = async (req, res) => {
        data: appointmentData
      });
      
-     // Now add customer-user relation to CustomerUser table
-     const customerUserData = {
-       customerId: customerId,
-       userId: userId,
-       status: 'active' // Default status
-     };
-     
-     const newCustomerUser = await prisma.customerUser.create({
-       data: customerUserData
-     });
+           // Check if CustomerUser record already exists (customerId + userId combination)
+      let existingCustomerUser = await prisma.customerUser.findFirst({
+        where: {
+          customerId: customerId,
+          userId: userId
+        }
+      });
+
+      let customerUserId;
+      
+      if (existingCustomerUser) {
+        // Update existing record status from 'new' to 'active'
+        const updatedCustomerUser = await prisma.customerUser.update({
+          where: {
+            id: existingCustomerUser.id
+          },
+          data: {
+            status: 'active'
+          }
+        });
+        customerUserId = updatedCustomerUser.id;
+        console.log('Existing CustomerUser record updated:', updatedCustomerUser.id);
+      } else {
+        // Check if customerId exists but with different userId
+        const customerWithDifferentUser = await prisma.customerUser.findFirst({
+          where: {
+            customerId: customerId
+          }
+        });
+
+        if (customerWithDifferentUser) {
+          // Customer exists with different user, create new record with status 'new'
+          const newCustomerUser = await prisma.customerUser.create({
+            data: {
+              customerId: customerId,
+              userId: userId,
+              status: 'new'
+            }
+          });
+          customerUserId = newCustomerUser.id;
+          console.log('New CustomerUser record created (different user):', newCustomerUser.id);
+        } else {
+          // First time customer-user relation, create with status 'new'
+          const newCustomerUser = await prisma.customerUser.create({
+            data: {
+              customerId: customerId,
+              userId: userId,
+              status: 'new'
+            }
+          });
+          customerUserId = newCustomerUser.id;
+          console.log('New CustomerUser record created (first time):', newCustomerUser.id);
+        }
+      }
     
          console.log('New customer created:', customerId);
      console.log('New appointment created:', newAppointment.id);
-     console.log('New customer-user relation created:', newCustomerUser.id);
+     console.log('New customer-user relation created:', customerUserId);
      
      // Log the webhook data
      console.log('Appointment webhook received:', {
@@ -159,7 +197,7 @@ const handleAppointmentWebhook = async (req, res) => {
        userId: userId,
        customerId: customerId,
        appointmentId: newAppointment.id,
-       customerUserId: newCustomerUser.id
+       customerUserId: customerUserId
      });
     
          return successResponse(res, {
@@ -167,7 +205,7 @@ const handleAppointmentWebhook = async (req, res) => {
        userId: userId,
        customerId: customerId,
        appointmentId: newAppointment.id,
-       customerUserId: newCustomerUser.id,
+       customerUserId: customerUserId,
        message: 'Appointment webhook processed successfully - Customer, Appointment and Customer-User relation created',
        data: webhookData
      }, 'Appointment webhook processed successfully', 201);
@@ -178,37 +216,142 @@ const handleAppointmentWebhook = async (req, res) => {
   }
 };
 
-// Handle payment checkout webhook - store any data without validation
-const handlePaymentCheckoutWebhook = async (req, res) => {
-  try {
-    const webhookData = req.body;
-    
-    // Store whatever data comes in request body
-    const webhookLog = await prisma.webhookLog.create({
-      data: {
-        data: webhookData,
-        type: 'payment_checkout',
-        status: 'pending'
+  // Handle payment checkout webhook - store data in both WebhookPaymentLog and PaymentWebhook tables
+  const handlePaymentCheckoutWebhook = async (req, res) => {
+    try {
+      const webhookData = req.body;
+      console.log("webhookData ", webhookData);
+      
+      // Extract actual data from webhookData.data.data
+      const actualData = webhookData.data?.data;
+      console.log("Actual data from webhookData.data.data: ", actualData);
+      
+      if (!actualData) {
+        return errorResponse(res, 'Invalid webhook data structure', 400);
       }
-    });
-    
-    // Log the webhook data
-    console.log('Payment checkout webhook received:', {
-      id: webhookLog.id,
-      data: webhookData
-    });
-    
-    return successResponse(res, {
-      webhookId: webhookLog.id,
-      message: 'Payment checkout webhook received successfully',
-      data: webhookData
-    }, 'Payment checkout webhook processed successfully', 201);
-    
-  } catch (error) {
-    console.error('Payment checkout webhook error:', error);
-    return errorResponse(res, 'Failed to process payment checkout webhook', 500);
-  }
-};
+      
+      // 1. Store in WebhookPaymentLog table (raw log data)
+      const paymentLog = await prisma.webhookPaymentLog.create({
+        data: {
+          data: actualData,
+          type: 'payment_checkout',
+          createdDate: new Date()
+        }
+      });
+      
+      // 2. Find record where BusinessId AND EmployeeId both match (Customers table se hi)
+      let userId = null;
+      let customerId = null;
+      
+      console.log('🔍 Searching for customer with:', {
+        BusinessId: actualData.BusinessId,
+        EmployeeId: actualData.EmployeeId,
+        Total: actualData.Total,
+        TotalWithoutVAT: actualData.TotalWithoutVAT,
+        TotalVAT: actualData.TotalVAT
+      });
+      
+      if (actualData.BusinessId && actualData.EmployeeId) {
+        const existingCustomer = await prisma.customers.findFirst({
+          where: {
+            AND: [
+              { businessId: parseInt(actualData.BusinessId) },
+              { employeeId: parseInt(actualData.EmployeeId) }
+            ]
+          },
+          select: {
+            id: true,
+            businessId: true,
+            employeeId: true,
+            userId: true // userId field bhi select karo
+          }
+        });
+        
+        if (existingCustomer) {
+          // Customer found - customerId aur userId dono Customers table se hi mil jayenge
+          customerId = existingCustomer.id;
+          userId = existingCustomer.userId; // Customers table mein hi userId field hai
+          
+          console.log('✅ Customer found with both BusinessId and EmployeeId:', existingCustomer.id);
+          console.log('✅ userId from Customers table:', userId);
+          console.log('✅ customerId set to:', customerId);
+        } else {
+          console.log('❌ No customer found with both BusinessId and EmployeeId:', {
+            businessId: actualData.BusinessId,
+            employeeId: actualData.EmployeeId
+          });
+          
+          // Debug: Check what's in Customers table
+          const allCustomers = await prisma.customers.findMany({
+            select: {
+              id: true,
+              businessId: true,
+              employeeId: true
+            }
+          });
+          console.log('🔍 All customers in table:', allCustomers);
+        }
+      } else {
+        console.log('❌ Missing BusinessId or EmployeeId:', {
+          businessId: actualData.BusinessId,
+          employeeId: actualData.EmployeeId
+        });
+      }
+      
+      // 4. Store structured data in PaymentWebhook table with userId and customerId
+      console.log('💰 Payment values to store:', {
+        total: actualData.Total,
+        totalWithoutVAT: actualData.TotalWithoutVAT,
+        totalVAT: actualData.TotalVAT,
+        parsedTotal: parseFloat(actualData.Total),
+        parsedTotalWithoutVAT: parseFloat(actualData.TotalWithoutVAT),
+        parsedTotalVAT: parseFloat(actualData.TotalVAT)
+      });
+      
+      console.log('🔗 IDs for PaymentWebhook:', {
+        userId: userId,
+        customerId: customerId,
+        businessId: actualData.BusinessId,
+        employeeId: actualData.EmployeeId
+      });
+      
+      const paymentWebhook = await prisma.paymentWebhook.create({
+        data: {
+          total: parseFloat(actualData.Total) || 0.00,
+          totalWithoutVAT: parseFloat(actualData.TotalWithoutVAT) || 0.00,
+          totalVAT: parseFloat(actualData.TotalVAT) || 0.00,
+          employeeId: parseInt(actualData.EmployeeId) || null,
+          businessId: parseInt(actualData.BusinessId) || null,
+          customerId: customerId, // Reference to Customers table
+          userId: userId, // Reference to User table
+          paymentDate: new Date(),
+          status: 'success'
+        }
+      });
+      
+      // Log the webhook data
+      console.log('Payment checkout webhook received:', {
+        logId: paymentLog.id,
+        paymentId: paymentWebhook.id,
+        userId: userId,
+        customerId: customerId,
+        data: actualData
+      });
+      
+      return successResponse(res, {
+        webhookId: paymentLog.id,
+        paymentId: paymentWebhook.id,
+        userId: userId,
+        customerId: customerId,
+        message: 'Payment checkout webhook received successfully',
+        data: actualData
+      }, 'Payment checkout webhook processed successfully', 201);
+      
+    } catch (error) {
+      console.error('Payment checkout webhook error:', error);
+      return errorResponse(res, 'Failed to process payment checkout webhook', 500);
+    }
+  };
 
 // Get all webhook logs (admin only)
 const getAllWebhookLogs = async (req, res) => {
@@ -292,6 +435,8 @@ const updateWebhookLogStatus = async (req, res) => {
     return errorResponse(res, 'Failed to update webhook log status', 500);
   }
 };
+
+
 
 module.exports = {
   handleAppointmentWebhook,
