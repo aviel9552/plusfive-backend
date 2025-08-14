@@ -8,7 +8,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -60,6 +59,8 @@ model User {
   customersManaged  CustomerMaster[] @relation("User")
   customerOf        CustomerMaster[] @relation("Customer")
   customers         Customers[]      // New customers table relation
+  appointments      Appointment[]    // Appointments relation
+  customerUsers     CustomerUser[]   // Customer-User relations
 
   @@map("users")
 }
@@ -249,6 +250,7 @@ model Customers {
   // Basic fields
   firstName       String?  // First name
   lastName        String?  // Last name
+  email           String?  // Customer email address
   
   // Client required fields
   customerPhone   String?  // Customer phone number
@@ -268,6 +270,8 @@ model Customers {
   // Relations
   userId          String?  // Reference to User table (business owner)
   user            User?    @relation(fields: [userId], references: [id])
+  appointments    Appointment[] // Appointments relation
+  customerUsers   CustomerUser[] // Customer-User relations
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -275,6 +279,57 @@ model Customers {
 
   @@map("customers")
 } 
+
+// Appointment table - Store webhook appointment data
+model Appointment {
+  id              String   @id @default(cuid())
+  
+  // Webhook data fields
+  source          String?
+  endDate         DateTime?
+  duration        String?
+  startDate       DateTime?
+  businessId      Int?
+  byCustomer      Boolean  @default(false)
+  createDate      DateTime?
+  employeeId      Int?
+  businessName    String?
+  employeeName    String?
+  customerPhone   String?
+  appointmentCount Int     @default(0)
+  customerFullName String?
+  selectedServices String?
+  
+  // Relations
+  customerId      String?  // Reference to Customers table
+  customer        Customers? @relation(fields: [customerId], references: [id])
+  userId          String?  // Reference to User table (business owner)
+  user            User?    @relation(fields: [userId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("appointments")
+}
+
+// Customer_User table - Customer and User relations
+model CustomerUser {
+  id          String   @id @default(cuid())
+  customerId  String   // Reference to Customers table
+  userId      String   // Reference to User table
+  status      String   @default("active") // active, inactive, blocked
+  
+  // Relations
+  customer    Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("customer_users")
+}
 
 model WebhookLog {
   id          String   @id @default(cuid())

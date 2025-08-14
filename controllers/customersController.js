@@ -45,11 +45,42 @@ const getAllCustomers = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    // Calculate totalAppointmentCount and get CustomerUser status for each customer
+    const customersWithTotalCount = await Promise.all(
+      customers.map(async (customer) => {
+        // Get total appointments count
+        const totalAppointments = await prisma.appointment.count({
+          where: {
+            customerId: customer.id
+          }
+        });
+
+        // Get CustomerUser status (latest active status)
+        const customerUserStatus = await prisma.customerUser.findFirst({
+          where: {
+            customerId: customer.id
+          },
+          orderBy: {
+            createdAt: 'desc'
+          },
+          select: {
+            status: true
+          }
+        });
+
+        return {
+          ...customer,
+          totalAppointmentCount: totalAppointments,
+          customerStatus: customerUserStatus?.status || 'active' // Default to active if no status found
+        };
+      })
+    );
+
     // Get total count for pagination
     const total = await prisma.customers.count({ where });
 
     return successResponse(res, {
-      customers,
+      customers: customersWithTotalCount,  // ✅ totalAppointmentCount ke sath customers
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),

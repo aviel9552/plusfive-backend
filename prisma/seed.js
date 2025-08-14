@@ -44,7 +44,7 @@ async function main() {
       firstName: 'John',
       lastName: 'Doe',
       phoneNumber: '1234567892',
-      businessName: 'Test Business',
+      businessName: 'Jamili Barbershop RMG',
       businessType: 'Technology',
       address: '123 Test Street, Test City',
       whatsappNumber: '1234567892',
