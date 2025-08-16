@@ -8,7 +8,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -63,6 +62,7 @@ model User {
   appointments      Appointment[]    // Appointments relation
   customerUsers     CustomerUser[]   // Customer-User relations
   paymentWebhooks   PaymentWebhook[] // Payment webhook relations
+  reviews           Review[]         // Reviews received by business owner
 
   @@map("users")
 }
@@ -277,6 +277,7 @@ model Customers {
   appointments    Appointment[] // Appointments relation
   customerUsers   CustomerUser[] // Customer-User relations
   paymentWebhooks PaymentWebhook[] // Payment webhook relations
+  reviews         Review[] // Reviews given by customer
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -388,4 +389,30 @@ model WebhookPaymentLog {
   updatedAt         DateTime @updatedAt
 
   @@map("webhook_payment_logs")
+}
+
+// Review Rating table - Store customer reviews and ratings
+model Review {
+  id          String   @id @default(cuid())
+  
+  // Review details
+  rating      Int      // Rating from 1 to 5
+  message     String?  // Customer review message/feedback
+  status      String   @default("received") // received, processed, responded
+  
+  // Relations
+  customerId  String   // Reference to Customers table
+  customer    Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId      String   // Reference to User table (business owner)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // WhatsApp message tracking (optional)
+  whatsappMessageId String? // WhatsApp message ID if sent via WhatsApp
+  messageStatus     String? @default("sent") // sent, delivered, read, failed
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("reviews")
 } 
