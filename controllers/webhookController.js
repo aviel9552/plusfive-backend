@@ -47,7 +47,7 @@ const handleAppointmentWebhook = async (req, res) => {
     
     // If business doesn't exist, return error - User must exist first
     if (!existingUser) {
-      return errorResponse(res, `Business '${webhookData.BusinessName}' exists nahi karta. Pehle user create karein.`, 400);
+      return errorResponse(res, `Business '${webhookData.BusinessName}' does not exist. Please create user first.`, 400);
     } else {
       userId = existingUser.id;
       console.log('Existing business user found:', existingUser.id);
@@ -142,7 +142,7 @@ const handleAppointmentWebhook = async (req, res) => {
       let customerUserId;
       
       if (existingCustomerUser) {
-        // Update existing record status from 'new' to 'active'
+        // Update existing record status to 'active'
         const updatedCustomerUser = await prisma.customerUser.update({
           where: {
             id: existingCustomerUser.id
@@ -239,7 +239,7 @@ const handleAppointmentWebhook = async (req, res) => {
         }
       });
       
-      // 2. Find record where BusinessId AND EmployeeId both match (Customers table se hi)
+      // 2. Find record where BusinessId AND EmployeeId both match (from Customers table)
       let userId = null;
       let customerId = null;
       
@@ -263,14 +263,14 @@ const handleAppointmentWebhook = async (req, res) => {
             id: true,
             businessId: true,
             employeeId: true,
-            userId: true // userId field bhi select karo
+            userId: true // select userId field as well
           }
         });
         
         if (existingCustomer) {
-          // Customer found - customerId aur userId dono Customers table se hi mil jayenge
+          // Customer found - both customerId and userId available from Customers table
           customerId = existingCustomer.id;
-          userId = existingCustomer.userId; // Customers table mein hi userId field hai
+          userId = existingCustomer.userId; // userId field is present in Customers table
           
           console.log('✅ Customer found with both BusinessId and EmployeeId:', existingCustomer.id);
           console.log('✅ userId from Customers table:', userId);

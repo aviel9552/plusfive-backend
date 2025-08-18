@@ -45,7 +45,7 @@ const getAllCustomers = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    // Calculate totalAppointmentCount and get CustomerUser status for each customer
+    // Calculate totalAppointmentCount, get CustomerUser status and reviews for each customer
     const customersWithTotalCount = await Promise.all(
       customers.map(async (customer) => {
         // Get total appointments count
@@ -68,10 +68,67 @@ const getAllCustomers = async (req, res) => {
           }
         });
 
+        // Get all reviews for this customer that match with the business owner (userId)
+        const customerReviews = await prisma.review.findMany({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                businessName: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        // Calculate review statistics for this customer with specific userId
+        const reviewStats = await prisma.review.aggregate({
+          where: { 
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          _avg: { rating: true },
+          _count: { rating: true },
+          _min: { rating: true },
+          _max: { rating: true }
+        });
+
+        // Get latest review rating (most recent one) for "Last" star display
+        const latestReview = customerReviews.length > 0 ? customerReviews[0] : null;
+        const lastRating = latestReview ? latestReview.rating : 0;
+
+        // Get latest appointment updatedAt only
+        const lastVisit = await prisma.appointment.findFirst({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          orderBy: { updatedAt: 'desc' }, // Latest updated appointment
+          select: {
+            updatedAt: true // Only updatedAt field
+          }
+        });
+
         return {
           ...customer,
           totalAppointmentCount: totalAppointments,
-          customerStatus: customerUserStatus?.status || 'active' // Default to active if no status found
+          customerStatus: customerUserStatus?.status || 'active', // Default to active if no status found
+          reviews: customerReviews,
+          lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
+          lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          reviewStatistics: {
+            totalReviews: reviewStats._count.rating || 0,
+            averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
+            minRating: reviewStats._min.rating || 0,
+            maxRating: reviewStats._max.rating || 0,
+            lastRating: lastRating // Also include in statistics for easy access
+          }
         };
       })
     );
@@ -80,7 +137,7 @@ const getAllCustomers = async (req, res) => {
     const total = await prisma.customers.count({ where });
 
     return successResponse(res, {
-      customers: customersWithTotalCount,  // ✅ totalAppointmentCount ke sath customers
+      customers: customersWithTotalCount,  // ✅ customers with totalAppointmentCount
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -95,6 +152,93 @@ const getAllCustomers = async (req, res) => {
   }
 };
 
+// Get customer status counts for dashboard
+const getCustomersStatusCount = async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    // Build where clause
+    const where = {};
+    if (userId) {
+      where.userId = userId;
+    }
+
+    // Get all customers for this user
+    const allCustomers = await prisma.customers.findMany({
+      where,
+      select: {
+        id: true,
+        userId: true
+      }
+    });
+
+    // Initialize counters
+    const statusCounts = {
+      active: 0,
+      at_risk: 0,
+      lost: 0,
+      recovered: 0,
+      new: 0
+    };
+
+    // Get status for each customer from CustomerUser table
+    for (const customer of allCustomers) {
+      const customerUserStatus = await prisma.customerUser.findFirst({
+        where: {
+          customerId: customer.id,
+          userId: customer.userId
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        select: {
+          status: true
+        }
+      });
+
+      const status = customerUserStatus?.status || 'active';
+      if (statusCounts.hasOwnProperty(status)) {
+        statusCounts[status]++;
+      }
+    }
+
+    // Calculate total
+    const total = allCustomers.length;
+
+    return successResponse(res, {
+      statusCounts,
+      total,
+      breakdown: {
+        active: {
+          count: statusCounts.active,
+          percentage: total > 0 ? ((statusCounts.active / total) * 100).toFixed(1) : 0
+        },
+        at_risk: {
+          count: statusCounts.at_risk,
+          percentage: total > 0 ? ((statusCounts.at_risk / total) * 100).toFixed(1) : 0
+        },
+        lost: {
+          count: statusCounts.lost,
+          percentage: total > 0 ? ((statusCounts.lost / total) * 100).toFixed(1) : 0
+        },
+        recovered: {
+          count: statusCounts.recovered,
+          percentage: total > 0 ? ((statusCounts.recovered / total) * 100).toFixed(1) : 0
+        },
+        new: {
+          count: statusCounts.new,
+          percentage: total > 0 ? ((statusCounts.new / total) * 100).toFixed(1) : 0
+        }
+      }
+    }, 'Customer status counts retrieved successfully');
+
+  } catch (error) {
+    console.error('Get customer status counts error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 module.exports = {
-  getAllCustomers
+  getAllCustomers,
+  getCustomersStatusCount
 };

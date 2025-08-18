@@ -66,76 +66,31 @@ const sendRatingRequest = async (req, res) => {
       return errorResponse(res, 'Customer phone number not found', 400);
     }
 
-    // Get review link from environment with customer and user IDs
-    const baseUrl = process.env.FRONTEND_URL;
-    const reviewLink = `${baseUrl}/reviews?customerId=${customer.id}&userId=${customer.userId}`;
+    // Create time-limited review link (24 hours expiry) - Only query parameters
+    const currentTime = new Date();
+    const expiryTime = new Date(currentTime.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+    const timestamp = currentTime.getTime();
+    
+    const reviewLink = `reviews?customerId=${customer.id}&userId=${customer.userId}&timestamp=${timestamp}&expires=${expiryTime.getTime()}`;
 
-    // Send template message with fallback to text
-    let result;
-
-    try {
-      if (customerType === 'new') {
-        // Try new customer template first with review link
-        result = await whatsappService.sendNewCustomerRatingWithLink(
-          customer.customerFullName || customer.firstName || 'Customer',
-          customer.businessName || customer.user?.businessName || 'Business',
-          customer.customerPhone,
-          reviewLink
-        );
-      } else {
-        // Try regular customer template first with review link
-        result = await whatsappService.sendRegularCustomerRatingWithLink(
-          customer.customerFullName || customer.firstName || 'Customer',
-          customer.customerPhone,
-          reviewLink,
-          useAlt
-        );
-      }
-    } catch (templateError) {
-      console.log('Template failed, falling back to text message:', templateError.message);
-
-      // Fallback to simple text message if template fails
-      let message;
-      if (customerType === 'new') {
-        message = `היי ${customer.customerFullName || customer.firstName || 'Customer'}, זו עדי מ${customer.businessName || customer.user?.businessName || 'Business'}
-
-אשמח לדעת איך הייתה החוויה שלך בין 1-5?
-
-לביקורת מפורטת לחץ כאן:
-${reviewLink}`;
-      } else {
-        if (useAlt) {
-          message = `היי ${customer.customerFullName || customer.firstName || 'Customer'} מה קורה?
-
-אשמח לדעת איך הייתה החוויה בין 1-5?
-
-לביקורת מפורטת לחץ כאן:
-${reviewLink}`;
-        } else {
-          message = `היי ${customer.customerFullName || customer.firstName || 'Customer'} מה קורה?
-
-נו אז איך הייתה החוויה שלך הפעם בין 1-5?
-
-לביקורת מפורטת לחץ כאן:
-${reviewLink}`;
-        }
-      }
-
-      result = await whatsappService.sendMessage(
-        customer.customerPhone,
-        message,
-        'rating_request'
-      );
-    }
+    // Send 360dialog template only (no fallback)
+    const result = await whatsappService.sendEngTemplateReview(
+      customer.customerFullName || customer.firstName || 'Customer',
+      customer.customerPhone,
+      reviewLink
+    );
 
     return successResponse(res, {
       customerId: customer.id,
       customerName: customer.customerFullName,
       phoneNumber: customer.customerPhone,
       customerType,
-      templateUsed: customerType === 'new' ? 'new_customer_rating' : (useAlt ? 'regular_customer_rating_alt' : 'regular_customer_rating'),
+      templateUsed: 'test_link_eng_temp1', // Using 360dialog test_link_eng_temp1 template with button
+      reviewLink: reviewLink,
+      linkExpiresAt: expiryTime.toISOString(),
+      linkValidFor: '24 hours',
       whatsappResponse: result
-    }, 'Rating request sent successfully', 200);
+    }, 'Rating request sent successfully using test_link_eng_temp1 template with button link', 200);
 
   } catch (error) {
     console.error('Send rating request error:', error);
@@ -188,51 +143,18 @@ const processRating = async (req, res) => {
     let responseMessage;
 
     if (ratingNumber >= 1 && ratingNumber <= 3) {
-      // Low rating (1-3 stars) - Send alert to business owner
-
-      try {
-        // Try template message first, fallback to text
-        await whatsappService.sendTemplateMessage(
-          customer.customerPhone,
-          'low_rating_response',
-          'he',
-          []
-        );
-      } catch (templateError) {
-        // Fallback to text message
-        await whatsappService.sendMessage(
-          customer.customerPhone,
-          'תודה על הביקורת, בזכות לקוחות כמוך יש לנו את האפשרות לשפר את השירות והחוייה ולשאוף תמיד לעלות ברמה.',
-          'low_rating_response'
-        );
-      }
+      // Low rating (1-3 stars) - Send simple text message
+      await whatsappService.sendMessage(
+        customer.customerPhone,
+        'תודה על הביקורת, בזכות לקוחות כמוך יש לנו את האפשרות לשפר את השירות והחוייה ולשאוף תמיד לעלות ברמה.',
+        'low_rating_response'
+      );
 
       // Send alert to business owner
       if (customer.user?.phoneNumber) {
-        try {
-          // Try template for business owner alert
-          await whatsappService.sendTemplateMessage(
-            customer.user.phoneNumber,
-            'business_owner_alert',
-            'he',
-            [
-              {
-                type: 'body',
-                parameters: [
-                  { type: 'text', text: customer.businessName || customer.user?.businessName || 'Business' },
-                  { type: 'text', text: customer.customerFullName || customer.firstName || 'Customer' },
-                  { type: 'text', text: customer.customerPhone },
-                  { type: 'text', text: ratingNumber.toString() },
-                  { type: 'text', text: customer.selectedServices || 'Service not specified' }
-                ]
-              }
-            ]
-          );
-        } catch (templateError) {
-          // Fallback to text message
-          await whatsappService.sendMessage(
-            customer.user.phoneNumber,
-            `🚨 התראת דירוג נמוך מ-${customer.businessName || customer.user?.businessName || 'Business'}
+        await whatsappService.sendMessage(
+          customer.user.phoneNumber,
+          `🚨 התראת דירוג נמוך מ-${customer.businessName || customer.user?.businessName || 'Business'}
 
 לקוח: ${customer.customerFullName || customer.firstName || 'Customer'}
 טלפון: ${customer.customerPhone}
@@ -240,31 +162,19 @@ const processRating = async (req, res) => {
 שירות: ${customer.selectedServices || 'Service not specified'}
 
 מומלץ ליצור קשר לחוויה מתקנת`,
-            'low_rating_alert'
-          );
-        }
+          'low_rating_alert'
+        );
       }
 
       responseMessage = 'Low rating processed - Customer thanked and business owner alerted';
 
     } else if (ratingNumber >= 4 && ratingNumber <= 5) {
-      // Good rating (4-5 stars) - Send thank you
-      try {
-        // Try template message first
-        await whatsappService.sendTemplateMessage(
-          customer.customerPhone,
-          'thank_you_rating',
-          'he',
-          []
-        );
-      } catch (templateError) {
-        // Fallback to text message
-        await whatsappService.sendMessage(
-          customer.customerPhone,
-          'תודה על השיתוף פעולה 😉',
-          'thank_you_rating'
-        );
-      }
+      // Good rating (4-5 stars) - Send simple thank you text
+      await whatsappService.sendMessage(
+        customer.customerPhone,
+        'תודה על השיתוף פעולה 😉',
+        'thank_you_rating'
+      );
       responseMessage = 'Good rating processed - Thank you message sent';
     }
 
@@ -356,11 +266,11 @@ const handleButtonInteraction = async (req, res) => {
                 from,
                 `🌟 טופס ביקורת מפורט
 
-📝 לביקורת מלאה ומפורטת, לחץ על הקישור הבא:
+                📝 לביקורת מלאה ומפורטת, לחץ על הקישור הבא:
 
-${reviewLink}
+                ${reviewLink}
 
-🔗 הקישור יפתח את טופס הביקורת במלואו`,
+                🔗 הקישור יפתח את טופס הביקורת במלואו`,
                 'review_form_link'
               );
 
@@ -448,10 +358,10 @@ const processRatingFromButton = async (customerId, rating, phoneNumber) => {
   }
 };
 
-// Add review - Simple API
+// Add review - Simple API with timer validation
 const addReview = async (req, res) => {
   try {
-    const { customerId, userId, rating, message } = req.body;
+    const { customerId, userId, rating, message, timestamp, expires } = req.body;
 
     if (!customerId || !userId || !rating) {
       return errorResponse(res, 'Missing required fields: customerId, userId, rating', 400);
@@ -460,6 +370,41 @@ const addReview = async (req, res) => {
     const ratingNumber = parseInt(rating);
     if (ratingNumber < 1 || ratingNumber > 5) {
       return errorResponse(res, 'Rating must be between 1 and 5', 400);
+    }
+
+    // Validate timer-based link (if timestamp and expires are provided)
+    if (timestamp && expires) {
+      const currentTime = new Date().getTime();
+      const expiryTime = parseInt(expires);
+      const linkTimestamp = parseInt(timestamp);
+
+      // Check if link has expired (24 hours)
+      if (currentTime > expiryTime) {
+        return errorResponse(res, 'Review link has expired. Please request a new link.', 410);
+      }
+
+      // Check if link is older than 24 hours (additional safety check)
+      const linkAge = currentTime - linkTimestamp;
+      const twentyFourHours = 24 * 60 * 60 * 1000;
+      if (linkAge > twentyFourHours) {
+        return errorResponse(res, 'Review link has expired. Please request a new link.', 410);
+      }
+
+      // Check if user already submitted review within last 24 hours
+      const recentReview = await prisma.review.findFirst({
+        where: {
+          customerId: customerId,
+          userId: userId,
+          createdAt: {
+            gte: new Date(linkTimestamp) // Reviews created after link was generated
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (recentReview) {
+        return errorResponse(res, 'You have already submitted a review using this link.', 409);
+      }
     }
 
     // Check if review already exists for this customer and user

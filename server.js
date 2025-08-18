@@ -4,6 +4,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+// Import Cron Job Service
+const CronJobService = require('./services/CronJobService');
+
 // Import configurations
 const { getConfig, validateConfig } = require('./config');
 const config = getConfig();
@@ -19,6 +22,7 @@ const referralRoutes = require('./routes/referrals');
 const customerRoutes = require('./routes/customers');
 const webhookRoutes = require('./routes/webhooks');
 const reviewRoutes = require('./routes/reviews');
+const customerStatusRoutes = require('./routes/customerStatus');
 
 const app = express();
 
@@ -76,6 +80,7 @@ app.use('/api/referrals', referralRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/customer-status', customerStatusRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -115,11 +120,28 @@ const PORT = config.server.port;
 const HOST = config.server.host;
 
 if (require.main === module) {
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`🚀 Server running on http://${HOST}:${PORT}`);
     console.log(`📊 Environment: ${config.server.environment}`);
     console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
     console.log(`📝 Log level: ${config.logging.level}`);
+    
+    // Start Cron Jobs after server is running
+    if (config.server.environment === 'production' || process.env.ENABLE_CRON === 'true') {
+      const cronService = new CronJobService();
+      cronService.startAllJobs();
+      console.log('🕒 Customer Status Cron Jobs Started');
+    } else {
+      console.log('⏸️ Cron Jobs disabled (set ENABLE_CRON=true to enable)');
+    }
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    server.close(() => {
+      console.log('Process terminated');
+    });
   });
 }
 

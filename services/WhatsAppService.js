@@ -144,127 +144,7 @@ class WhatsAppService {
     }
   }
 
-  // Send interactive button message with rating options
-  async sendButtonMessage(to, bodyText, reviewLink) {
-    try {
-      const formattedNumber = this.formatPhoneNumber(to);
-      if (!formattedNumber) {
-        throw new Error('Invalid phone number');
-      }
 
-      console.log('=== Sending WhatsApp Button Message ===');
-      console.log('To:', formattedNumber);
-      console.log('Body:', bodyText);
-      console.log('Review Link:', reviewLink);
-
-      // Send first message with rating buttons 1-3
-      const payload1 = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: formattedNumber,
-        type: 'interactive',
-        interactive: {
-          type: 'button',
-          body: {
-            text: bodyText
-          },
-          action: {
-            buttons: [
-              {
-                type: 'reply',
-                reply: {
-                  id: 'rating_1',
-                  title: 'דירוג 1'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'rating_2',
-                  title: 'דירוג 2'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'rating_3',
-                  title: 'דירוג 3'
-                }
-              }
-            ]
-          }
-        }
-      };
-
-      await this.client.post('/messages', payload1);
-
-      // Send second message with rating buttons 4-5
-      const payload2 = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: formattedNumber,
-        type: 'interactive',
-        interactive: {
-          type: 'button',
-          body: {
-            text: 'או בחר דירוג גבוה יותר:'
-          },
-          action: {
-            buttons: [
-              {
-                type: 'reply',
-                reply: {
-                  id: 'rating_4',
-                  title: 'דירוג 4'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'rating_5',
-                  title: 'דירוג 5'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'open_review_form',
-                  title: 'ביקורת מפורטת'
-                }
-              }
-            ]
-          }
-        }
-      };
-
-      await this.client.post('/messages', payload2);
-
-      // Send URL as clickable link
-      const urlPayload = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: formattedNumber,
-        type: 'text',
-        text: {
-          preview_url: true,
-          body: `🔗 לביקורת מפורטת באתר לחץ כאן: ${reviewLink}`
-        }
-      };
-
-      await this.client.post('/messages', urlPayload);
-
-      return true;
-    } catch (error) {
-      console.error('=== WhatsApp Button Error Details ===');
-      console.error('Error Message:', error.message);
-      if (error.response) {
-        console.error('Error Response:', error.response.data);
-        console.error('Error Status:', error.response.status);
-        console.error('Error Headers:', error.response.headers);
-      }
-      return false;
-    }
-  }
 
   // Send template message
   async sendTemplateMessage(to, templateName, languageCode, components) {
@@ -302,51 +182,43 @@ class WhatsAppService {
     }
   }
 
-  // Send rating request to new customer
-  async sendNewCustomerRating(customerName, businessName, phoneNumber) {
+
+
+
+
+  // Send review request using test_link_eng_temp1 template with button (360dialog)
+  async sendEngTemplateReview(customerName, phoneNumber, reviewLink) {
     try {
+      // reviewLink is already just query parameters, no need to extract
+      const urlParams = reviewLink;
+      
       const components = [
         {
           type: 'body',
           parameters: [
-            { type: 'text', text: customerName },
-            { type: 'text', text: businessName }
+            { type: 'text', text: customerName }
           ]
-        }
-      ];
-
-      return await this.sendTemplateMessage(phoneNumber, 'new_customer_rating', 'he', components);
-    } catch (error) {
-      console.error('Error sending new customer rating:', error);
-      throw error;
-    }
-  }
-
-  // Send rating request to new customer with review link
-  async sendNewCustomerRatingWithLink(customerName, businessName, phoneNumber, reviewLink) {
-    try {
-      const components = [
+        },
         {
-          type: 'body',
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
           parameters: [
-            { type: 'text', text: customerName },
-            { type: 'text', text: businessName },
-            { type: 'text', text: reviewLink }
+            { type: 'text', text: urlParams } // Pass the query parameters as {{2}}
           ]
         }
       ];
 
-      return await this.sendTemplateMessage(phoneNumber, 'new_customer_rating_with_link', 'he', components);
+      return await this.sendTemplateMessage(phoneNumber, 'test_link_eng_temp1', 'en', components);
     } catch (error) {
-      console.error('Error sending new customer rating with link:', error);
+      console.error('Error sending test_link_eng_temp1 template:', error);
       throw error;
     }
   }
 
-  // Send rating request to regular customer  
-  async sendRegularCustomerRating(customerName, phoneNumber, useAlt = false) {
+  // Send At Risk message using at_risk_eng_temp template (360dialog)
+  async sendAtRiskTemplate(customerName, phoneNumber) {
     try {
-      const templateName = useAlt ? 'regular_customer_rating_alt' : 'regular_customer_rating';
       const components = [
         {
           type: 'body',
@@ -356,100 +228,56 @@ class WhatsAppService {
         }
       ];
 
-      return await this.sendTemplateMessage(phoneNumber, templateName, 'he', components);
+      return await this.sendTemplateMessage(phoneNumber, 'at_risk_eng_temp', 'en', components);
     } catch (error) {
-      console.error('Error sending regular customer rating:', error);
+      console.error('Error sending at_risk_eng_temp template:', error);
       throw error;
     }
   }
 
-  // Send rating request to regular customer with review link
-  async sendRegularCustomerRatingWithLink(customerName, phoneNumber, reviewLink, useAlt = false) {
-    try {
-      const templateName = useAlt ? 'regular_customer_rating_alt_with_link' : 'regular_customer_rating_with_link';
-      const components = [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: customerName },
-            { type: 'text', text: reviewLink }
-          ]
-        }
-      ];
-
-      return await this.sendTemplateMessage(phoneNumber, templateName, 'he', components);
-    } catch (error) {
-      console.error('Error sending regular customer rating with link:', error);
-      throw error;
-    }
-  }
-
-  // Send low rating alert to business owner
-  async sendLowRatingAlert(businessName, customerName, customerPhone, service, lastPayment, rating, ownerPhone) {
+  // Send Lost message using lost_eng_temp template (360dialog)
+  async sendLostTemplate(customerName, phoneNumber) {
     try {
       const components = [
         {
           type: 'body',
           parameters: [
-            { type: 'text', text: businessName },
-            { type: 'text', text: customerName },
-            { type: 'text', text: customerPhone },
-            { type: 'text', text: service },
-            { type: 'text', text: lastPayment },
-            { type: 'text', text: rating.toString() }
+            { type: 'text', text: customerName }
           ]
         }
       ];
 
-      return await this.sendTemplateMessage(ownerPhone, 'low_rating_alert', 'he', components);
+      return await this.sendTemplateMessage(phoneNumber, 'lost_eng_temp', 'en', components);
     } catch (error) {
-      console.error('Error sending low rating alert:', error);
+      console.error('Error sending lost_eng_temp template:', error);
       throw error;
     }
   }
 
-  // Send thank you message for good rating
-  async sendThankYouRating(phoneNumber) {
+  // Send Recovered notification to business owner using recovered_eng_temp template (360dialog)
+  async sendRecoveredTemplate(businessName, lastStatus, customerName, customerPhone, futureAppointment, businessOwnerPhone) {
     try {
-      return await this.sendTemplateMessage(phoneNumber, 'thank_you_rating', 'he', []);
+      const components = [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: businessName },        // {{1}} Business name
+            { type: 'text', text: lastStatus },          // {{2}} Last status (at_risk/lost)
+            { type: 'text', text: customerName },        // {{3}} Customer name
+            { type: 'text', text: customerPhone },       // {{4}} Customer phone
+            { type: 'text', text: futureAppointment }    // {{5}} Future appointment
+          ]
+        }
+      ];
+
+      return await this.sendTemplateMessage(businessOwnerPhone, 'recovered_eng_temp', 'en', components);
     } catch (error) {
-      console.error('Error sending thank you rating:', error);
+      console.error('Error sending recovered_eng_temp template:', error);
       throw error;
     }
   }
 
-  // Send review request
-  async sendReviewRequest(customer, businessName) {
-    if (!businessName) {
-      throw new Error('Business name is required');
-    }
-    const message = `Hi ${customer.fullName}! How was your experience at ${businessName}? Please rate your visit from 1 to 5 stars. Reply with a number between 1-5.`;
-    return this.sendMessage(customer.phoneNumber, message, 'review_request');
-  }
 
-  // Send thank you message with review link
-  async sendThankYouMessage(customer, businessName, reviewLink) {
-    const message = `Thank you for your positive feedback! Would you mind sharing your experience on Google? Here's our review link: ${reviewLink}`;
-    return this.sendMessage(customer.phoneNumber, message, 'thank_you');
-  }
-
-  // Notify business owner about low rating
-  async notifyBusinessOwner(customer, rating, feedback) {
-    const message = `⚠️ Low Rating Alert: ${customer.fullName} rated their experience ${rating}/5. Feedback: ${feedback || 'No feedback provided'}`;
-    return this.sendMessage(process.env.BUSINESS_OWNER_PHONE, message, 'low_rating_alert');
-  }
-
-  // Send re-engagement message to at-risk customers
-  async sendReEngagementMessage(customer, businessName, bookingLink, specialOffer) {
-    const message = `Hi ${customer.fullName}! We miss you at ${businessName}. Book your next visit now and get ${specialOffer}. Click here to book: ${bookingLink}`;
-    return this.sendMessage(customer.phoneNumber, message, 're_engagement');
-  }
-
-  // Send lost customer recovery message
-  async sendRecoveryMessage(customer, businessName, bookingLink, specialOffer) {
-    const message = `Hi ${customer.fullName}! We'd love to have you back at ${businessName}. As a special welcome back offer, you'll get ${specialOffer}. Book now: ${bookingLink}`;
-    return this.sendMessage(customer.phoneNumber, message, 'recovery');
-  }
 
   // Get message status
   async getMessageStatus(messageId) {

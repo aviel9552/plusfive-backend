@@ -34,8 +34,8 @@ const createReferral = async (req, res) => {
     // Create referral with both IDs
     const referral = await prisma.referral.create({
       data: {
-        referrerId: referrer.id,        // referrerCode se user table se ID
-        referredUserId: referredUserId, // new user ki ID (jo abhi register hui)
+        referrerId: referrer.id,        // ID from user table based on referrerCode
+        referredUserId: referredUserId, // ID of newly registered user
         status: 'pending',
         commission: 0
       },
