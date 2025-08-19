@@ -238,7 +238,181 @@ const getCustomersStatusCount = async (req, res) => {
   }
 };
 
+// Get customer by ID with detailed information
+const getCustomerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.query; // Optional filter by userId
+
+    if (!id) {
+      return errorResponse(res, 'Customer ID is required', 400);
+    }
+
+    // Build where clause
+    const where = { id };
+    if (userId) {
+      where.userId = userId;
+    }
+
+    // Get customer by ID with user data
+    const customer = await prisma.customers.findFirst({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            businessType: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phoneNumber: true
+          }
+        }
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Get total appointments count
+    const totalAppointments = await prisma.appointment.count({
+      where: {
+        customerId: customer.id
+      }
+    });
+
+    // Get all appointments for this customer
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        customerId: customer.id,
+        userId: customer.userId // Match with business owner
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10 // Latest 10 appointments
+    });
+
+    // Get CustomerUser status (latest active status)
+    const customerUserStatus = await prisma.customerUser.findFirst({
+      where: {
+        customerId: customer.id
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      select: {
+        status: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    // Get all reviews for this customer that match with the business owner (userId)
+    const customerReviews = await prisma.review.findMany({
+      where: {
+        customerId: customer.id,
+        userId: customer.userId // Match with business owner
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Calculate review statistics for this customer with specific userId
+    const reviewStats = await prisma.review.aggregate({
+      where: { 
+        customerId: customer.id,
+        userId: customer.userId // Match with business owner
+      },
+      _avg: { rating: true },
+      _count: { rating: true },
+      _min: { rating: true },
+      _max: { rating: true },
+      _sum: { rating: true }
+    });
+
+    // Get latest review rating (most recent one) for "Last" star display
+    const latestReview = customerReviews.length > 0 ? customerReviews[0] : null;
+    const lastRating = latestReview ? latestReview.rating : 0;
+
+    // Get latest appointment updatedAt only
+    const lastVisit = await prisma.appointment.findFirst({
+      where: {
+        customerId: customer.id,
+        userId: customer.userId // Match with business owner
+      },
+      orderBy: { updatedAt: 'desc' }, // Latest updated appointment
+      select: {
+        updatedAt: true,
+        startDate: true,
+        endDate: true,
+        selectedServices: true
+      }
+    });
+
+    // Get payment webhooks for this customer
+    const paymentHistory = await prisma.paymentWebhook.findMany({
+      where: {
+        customerId: customer.id,
+        userId: customer.userId
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10 // Latest 10 payments
+    });
+
+    // Calculate total spent
+    const totalSpentResult = await prisma.paymentWebhook.aggregate({
+      where: {
+        customerId: customer.id,
+        userId: customer.userId,
+        status: 'success'
+      },
+      _sum: { total: true }
+    });
+
+    const customerWithDetails = {
+      ...customer,
+      totalAppointmentCount: totalAppointments,
+      customerStatus: customerUserStatus?.status || 'active',
+      customerStatusDetails: customerUserStatus,
+      reviews: customerReviews,
+      lastRating: lastRating,
+      lastVisit: lastVisit?.updatedAt || null,
+      lastAppointmentDetails: lastVisit,
+      appointments: appointments,
+      paymentHistory: paymentHistory,
+      totalSpent: totalSpentResult._sum.total || 0,
+      reviewStatistics: {
+        totalReviews: reviewStats._count.rating || 0,
+        averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
+        minRating: reviewStats._min.rating || 0,
+        maxRating: reviewStats._max.rating || 0,
+        totalRatingSum: reviewStats._sum.rating || 0,
+        lastRating: lastRating
+      }
+    };
+
+    return successResponse(res, {
+      customer: customerWithDetails
+    }, 'Customer details retrieved successfully');
+
+  } catch (error) {
+    console.error('Get customer by ID error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 module.exports = {
   getAllCustomers,
-  getCustomersStatusCount
+  getCustomersStatusCount,
+  getCustomerById
 };

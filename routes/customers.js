@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getAllCustomers, getCustomersStatusCount } = require('../controllers/customersController');
+const { getAllCustomers, getCustomersStatusCount, getCustomerById } = require('../controllers/customersController');
 const { authenticateToken } = require('../middleware/auth');
 
 // All customer routes require authentication
@@ -11,5 +11,8 @@ router.get('/', getAllCustomers);
 
 // GET /api/customers/status-count - Get customer status counts for dashboard
 router.get('/status-count', getCustomersStatusCount);
+
+// GET /api/customers/:id - Get customer by ID with detailed information
+router.get('/:id', getCustomerById);
 
 module.exports = router;
