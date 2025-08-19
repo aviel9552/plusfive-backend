@@ -1,6 +1,27 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 
+// Helper function to format Israeli phone numbers
+const formatIsraeliPhone = (phoneNumber) => {
+  if (!phoneNumber) return null;
+  
+  // Remove any existing country code or special characters
+  let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
+  
+  // If phone already starts with 972, just add +
+  if (cleanPhone.startsWith('972')) {
+    return `+${cleanPhone}`;
+  }
+  
+  // If phone starts with 0, remove it and add +972
+  if (cleanPhone.startsWith('0')) {
+    cleanPhone = cleanPhone.substring(1);
+  }
+  
+  // Add Israel country code +972
+  return `+972${cleanPhone}`;
+};
+
 // Handle appointment webhook - store any data without validation
 const handleAppointmentWebhook = async (req, res) => {
   try {
@@ -82,11 +103,16 @@ const handleAppointmentWebhook = async (req, res) => {
         };
     // If customer doesn't exist, create new customer
     if (!existingCustomer) {
+      const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
+      console.log('📞 Phone number formatting:', {
+        original: webhookData.CustomerPhone,
+        formatted: formattedPhone
+      });
       const newCustomer = await prisma.customers.create({
         data: {
           firstName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ')[0] : null,
           lastName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ').slice(1).join(' ') : null,
-          customerPhone: webhookData.CustomerPhone || null,
+          customerPhone: formattedPhone,
           appointmentCount: webhookData.AppointmentCount || 0,
           customerFullName: webhookData.CustomerFullName || null,
           selectedServices: webhookData.SelectedServices || null,
@@ -108,6 +134,7 @@ const handleAppointmentWebhook = async (req, res) => {
      
      
      // Now add appointment data to Appointment table
+     const formattedPhoneForAppointment = formatIsraeliPhone(webhookData.CustomerPhone);
      const appointmentData = {
        source: webhookData.Source || null,
        endDate: parseDateSafely(webhookData.EndDate),
@@ -119,7 +146,7 @@ const handleAppointmentWebhook = async (req, res) => {
        employeeId: webhookData.EmployeeId || null,
        businessName: webhookData.BusinessName || null,
        employeeName: webhookData.EmployeeName || null,
-       customerPhone: webhookData.CustomerPhone || null,
+       customerPhone: formattedPhoneForAppointment,
        appointmentCount: webhookData.AppointmentCount || 0,
        customerFullName: webhookData.CustomerFullName || null,
        selectedServices: webhookData.SelectedServices || null,

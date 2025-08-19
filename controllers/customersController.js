@@ -271,7 +271,6 @@ const getCustomerById = async (req, res) => {
         }
       }
     });
-
     if (!customer) {
       return errorResponse(res, 'Customer not found', 404);
     }
