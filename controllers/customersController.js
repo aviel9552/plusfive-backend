@@ -175,7 +175,7 @@ const getCustomersStatusCount = async (req, res) => {
     // Initialize counters
     const statusCounts = {
       active: 0,
-      at_risk: 0,
+      risk: 0,
       lost: 0,
       recovered: 0,
       new: 0
@@ -213,9 +213,9 @@ const getCustomersStatusCount = async (req, res) => {
           count: statusCounts.active,
           percentage: total > 0 ? ((statusCounts.active / total) * 100).toFixed(1) : 0
         },
-        at_risk: {
-          count: statusCounts.at_risk,
-          percentage: total > 0 ? ((statusCounts.at_risk / total) * 100).toFixed(1) : 0
+        risk: {
+          count: statusCounts.risk,
+          percentage: total > 0 ? ((statusCounts.risk / total) * 100).toFixed(1) : 0
         },
         lost: {
           count: statusCounts.lost,

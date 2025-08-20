@@ -25,14 +25,12 @@ class WhatsAppService {
   async checkNumberStatus(phoneNumber) {
     try {
       const formattedNumber = this.formatPhoneNumber(phoneNumber);
-      // console.log('Checking number status:', formattedNumber);
 
       const response = await this.client.post('/contacts', {
         blocking: 'wait',
         contacts: [formattedNumber]
       });
 
-      // console.log('Number status response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error checking number status:', error.response?.data || error.message);
@@ -48,11 +46,6 @@ class WhatsAppService {
         throw new Error('Invalid phone number');
       }
 
-      // console.log('=== WhatsApp Test Details ===');
-      // console.log('Phone Number:', formattedNumber);
-      // console.log('API Key:', this.apiKey);
-      // console.log('Base URL:', this.baseURL);
-
       // Try template message first
       const templatePayload = {
         messaging_product: 'whatsapp',
@@ -66,15 +59,10 @@ class WhatsAppService {
         }
       };
 
-      // console.log('Template Request Payload:', JSON.stringify(templatePayload, null, 2));
-
       try {
         const templateResponse = await this.client.post('/messages', templatePayload);
-        // console.log('Template Response:', JSON.stringify(templateResponse.data, null, 2));
         return true;
       } catch (templateError) {
-        // console.log('Template message failed, trying text message...');
-        
         // Fallback to text message
         const textPayload = {
           messaging_product: 'whatsapp',
@@ -87,18 +75,14 @@ class WhatsAppService {
           }
         };
 
-        // console.log('Text Request Payload:', JSON.stringify(textPayload, null, 2));
         const textResponse = await this.client.post('/messages', textPayload);
-        // console.log('Text Response:', JSON.stringify(textResponse.data, null, 2));
         return true;
       }
     } catch (error) {
-      console.error('=== Error Details ===');
-      console.error('Error Message:', error.message);
+      console.error('WhatsApp test error:', error.message);
       if (error.response) {
         console.error('Error Response:', error.response.data);
         console.error('Error Status:', error.response.status);
-        console.error('Error Headers:', error.response.headers);
       }
       return false;
     }
@@ -112,11 +96,6 @@ class WhatsAppService {
         throw new Error('Invalid phone number');
       }
 
-      // console.log('=== Sending WhatsApp Message ===');
-      // console.log('To:', formattedNumber);
-      // console.log('Message:', message);
-      // console.log('Type:', type);
-
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -129,22 +108,16 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('WhatsApp API Response:', JSON.stringify(response.data, null, 2));
-
       return true;
     } catch (error) {
-      console.error('=== WhatsApp Error Details ===');
-      console.error('Error Message:', error.message);
+      console.error('WhatsApp send message error:', error.message);
       if (error.response) {
         console.error('Error Response:', error.response.data);
         console.error('Error Status:', error.response.status);
-        console.error('Error Headers:', error.response.headers);
       }
       return false;
     }
   }
-
-
 
   // Send template message
   async sendTemplateMessage(to, templateName, languageCode, components) {
@@ -153,12 +126,6 @@ class WhatsAppService {
       if (!formattedNumber) {
         throw new Error('Invalid phone number');
       }
-
-      console.log('=== Sending WhatsApp Template ===');
-      console.log('To:', formattedNumber);
-      console.log('Template:', templateName);
-      console.log('Language:', languageCode);
-      console.log('Components:', JSON.stringify(components, null, 2));
 
       const response = await this.client.post('/messages', {
         messaging_product: 'whatsapp',
@@ -174,17 +141,12 @@ class WhatsAppService {
         }
       });
 
-      console.log('Template Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending WhatsApp template:', error.response?.data || error.message);
       throw error;
     }
   }
-
-
-
-
 
   // Send review request using test_link_eng_temp1 template with button (360dialog)
   async sendEngTemplateReview(customerName, phoneNumber, reviewLink) {
@@ -233,7 +195,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('At Risk Hebrew Initial Message Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending at risk Hebrew message:', error);
@@ -258,7 +219,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('At Risk Hebrew Follow-up Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending at risk follow-up Hebrew message:', error);
@@ -283,7 +243,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('At Risk YES Response Hebrew:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending at risk YES response Hebrew:', error);
@@ -308,7 +267,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('At Risk NO Response Hebrew:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending at risk NO response Hebrew:', error);
@@ -333,7 +291,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('At Risk Closure Hebrew:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending at risk closure Hebrew:', error);
@@ -341,8 +298,6 @@ class WhatsAppService {
     }
   }
 
-
-  
   // Send Lost message (without template)
   async sendLostMessage(customerName, phoneNumber) {
     try {
@@ -360,7 +315,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('Lost Customer Message Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending lost customer message:', error);
@@ -385,7 +339,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('Recovered Customer Notification Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending recovered customer notification:', error);
@@ -393,7 +346,29 @@ class WhatsAppService {
     }
   }
 
+  // Send recovered customer notification to business owner using direct text message
+  async sendRecoveredCustomerTemplate(businessName, customerName, customerPhone, futureAppointment, customerService, businessOwnerPhone) {
+    try {
+      const message = `היי ${businessName} זו עדי מ-Plusfive\nעשינו את זה שוב, החזרנו לקוח שהיה בסיכון 🤍\n\nשם לקוח: ${customerName}\nמספר נייד: ${customerPhone}\nתור עתידי: ${futureAppointment}\nשירות: ${customerService}`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: businessOwnerPhone,
+        type: 'text',
+        text: {
+          preview_url: false,
+          body: message
+        }
+      };
 
+      const response = await this.client.post('/messages', payload);
+      return response.data;
+    } catch (error) {
+      console.error('Error sending recovered customer notification:', error);
+      throw error;
+    }
+  }
 
   // Send custom rating request - NEW CUSTOMER (first purchase)
   async sendNewCustomerRatingRequest(customerName, businessName, phoneNumber) {
@@ -412,7 +387,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('New Customer Rating Request Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending new customer rating request:', error);
@@ -443,7 +417,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('Regular Customer Rating Request Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending regular customer rating request:', error);
@@ -468,7 +441,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('Low Rating Thank You Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending low rating thank you:', error);
@@ -493,7 +465,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('Low Rating Business Alert Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending low rating business alert:', error);
@@ -518,7 +489,6 @@ class WhatsAppService {
       };
 
       const response = await this.client.post('/messages', payload);
-      console.log('High Rating Thank You Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error) {
       console.error('Error sending high rating thank you:', error);

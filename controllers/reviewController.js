@@ -56,7 +56,6 @@ const sendRatingRequest = async (req, res) => {
         }
       }
     });
-    console.log('customer', customer);
 
     if (!customer) {
       return errorResponse(res, 'Customer not found', 404);
@@ -198,9 +197,6 @@ const handleButtonInteraction = async (req, res) => {
   try {
     const webhookData = req.body;
 
-    console.log('=== WhatsApp Button Interaction ===');
-    console.log('Webhook Data:', JSON.stringify(webhookData, null, 2));
-
     // Extract interaction data
     const entry = webhookData.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -216,8 +212,6 @@ const handleButtonInteraction = async (req, res) => {
 
         if (buttonReply) {
           const buttonId = buttonReply.id;
-          console.log('Button clicked:', buttonId);
-          console.log('From number:', from);
 
           // Find customer by phone number (try multiple formats)
           let customer = await prisma.customers.findFirst({
@@ -256,9 +250,6 @@ const handleButtonInteraction = async (req, res) => {
               // Send review form URL with better formatting
               const reviewLink = `${process.env.FRONTEND_URL}/reviews?customerId=${customer.id}&userId=${customer.userId}`;
 
-              console.log('Sending review form link:', reviewLink);
-              console.log('Customer found:', customer.id, customer.customerFullName);
-
               const whatsappService = new (require('../services/WhatsAppService'))();
 
               // Send a more attractive message with the link
@@ -273,8 +264,6 @@ const handleButtonInteraction = async (req, res) => {
                 🔗 הקישור יפתח את טופס הביקורת במלואו`,
                 'review_form_link'
               );
-
-              console.log('Review form link sent successfully');
             }
           }
         }
@@ -350,8 +339,6 @@ const processRatingFromButton = async (customerId, rating, phoneNumber) => {
         'thank_you_rating'
       );
     }
-
-    console.log(`Rating ${rating} processed for customer ${customerId}`);
 
   } catch (error) {
     console.error('Process rating from button error:', error);

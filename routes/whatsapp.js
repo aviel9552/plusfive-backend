@@ -605,6 +605,53 @@ router.post('/customer-status/recovered', async (req, res) => {
   }
 });
 
+// Send recovered customer notification to business owner
+router.post('/recovered/notify-business', authenticateToken, async (req, res) => {
+  try {
+    const { businessName, customerName, customerPhone, futureAppointment, customerService, businessOwnerPhone } = req.body;
+
+    if (!businessName || !customerName || !customerPhone || !futureAppointment || !customerService || !businessOwnerPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: businessName, customerName, customerPhone, futureAppointment, customerService, businessOwnerPhone'
+      });
+    }
+
+    const whatsappService = new WhatsAppService();
+    const result = await whatsappService.sendRecoveredCustomerTemplate(
+      businessName,
+      customerName,
+      customerPhone,
+      futureAppointment,
+      customerService,
+      businessOwnerPhone
+    );
+
+    res.json({
+      success: true,
+      message: 'Recovered customer notification sent successfully to business owner',
+      data: {
+        template: 'recovered_customer_template',
+        businessName,
+        customerName,
+        customerPhone,
+        futureAppointment,
+        customerService,
+        businessOwnerPhone,
+        whatsappResponse: result
+      }
+    });
+
+  } catch (error) {
+    console.error('Error sending recovered customer notification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send recovered customer notification',
+      error: error.message
+    });
+  }
+});
+
 // Check WhatsApp number status
 router.post('/check-number', async (req, res) => {
   try {

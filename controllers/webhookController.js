@@ -169,17 +169,66 @@ const handleAppointmentWebhook = async (req, res) => {
       let customerUserId;
       
       if (existingCustomerUser) {
-        // Update existing record status to 'active'
-        const updatedCustomerUser = await prisma.customerUser.update({
-          where: {
-            id: existingCustomerUser.id
-          },
-          data: {
-            status: 'active'
+        // Check previous status before updating
+        const previousStatus = existingCustomerUser.status;
+        
+        if (previousStatus === 'lost' || previousStatus === 'risk') {
+          // Update to recovered if customer was lost or at risk
+          const updatedCustomerUser = await prisma.customerUser.update({
+            where: {
+              id: existingCustomerUser.id
+            },
+            data: {
+              status: 'recovered'
+            }
+          });
+          customerUserId = updatedCustomerUser.id;
+          console.log(`Customer status updated from ${previousStatus} to recovered:`, updatedCustomerUser.id);
+          
+          // Send recovered customer notification to business owner
+          const businessOwner = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { phoneNumber: true, businessName: true }
+          });
+
+          if (businessOwner && businessOwner.phoneNumber) {
+            try {
+              const WhatsAppService = require('../services/WhatsAppService');
+              const whatsappService = new WhatsAppService();
+              
+              await whatsappService.sendRecoveredCustomerTemplate(
+                businessOwner.businessName || webhookData.BusinessName,
+                webhookData.CustomerFullName,
+                formattedPhoneForAppointment,
+                webhookData.StartDate,
+                webhookData.SelectedServices,
+                businessOwner.phoneNumber
+              );
+              
+              console.log('Recovered customer notification sent to business owner');
+            } catch (whatsappError) {
+              console.error('Failed to send recovered customer notification:', whatsappError.message);
+            }
+          } else {
+            console.log('Business owner phone number not found, notification skipped');
           }
-        });
-        customerUserId = updatedCustomerUser.id;
-        console.log('Existing CustomerUser record updated:', updatedCustomerUser.id);
+        } else if (previousStatus === 'new') {
+          // Update to active only if status was 'new'
+          const updatedCustomerUser = await prisma.customerUser.update({
+            where: {
+              id: existingCustomerUser.id
+            },
+            data: {
+              status: 'active'
+            }
+          });
+          customerUserId = updatedCustomerUser.id;
+          console.log('Customer status updated from new to active:', updatedCustomerUser.id);
+        } else {
+          // Keep existing status (active, recovered, etc.)
+          customerUserId = existingCustomerUser.id;
+          console.log('Customer status unchanged:', existingCustomerUser.status);
+        }
       } else {
         // Check if customerId exists but with different userId
         const customerWithDifferentUser = await prisma.customerUser.findFirst({
@@ -210,6 +259,40 @@ const handleAppointmentWebhook = async (req, res) => {
           });
           customerUserId = newCustomerUser.id;
           console.log('New CustomerUser record created (first time):', newCustomerUser.id);
+        }
+      }
+
+      // Check if customer was previously lost or at_risk, update to recovered and send notification
+      if (existingCustomerUser && (existingCustomerUser.status === 'lost' || existingCustomerUser.status === 'at_risk')) {
+        console.log(`Customer status changed from ${existingCustomerUser.status} to recovered`);
+        
+        // Get business owner's phone number
+        const businessOwner = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { phoneNumber: true, businessName: true }
+        });
+
+        if (businessOwner && businessOwner.phoneNumber) {
+          try {
+            // Send recovered customer notification to business owner
+            const WhatsAppService = require('../services/WhatsAppService');
+            const whatsappService = new WhatsAppService();
+            
+            await whatsappService.sendRecoveredCustomerTemplate(
+              businessOwner.businessName || webhookData.BusinessName,
+              webhookData.CustomerFullName,
+              formattedPhoneForAppointment,
+              webhookData.StartDate,
+              webhookData.SelectedServices,
+              businessOwner.phoneNumber
+            );
+            
+            console.log('Recovered customer notification sent to business owner');
+          } catch (whatsappError) {
+            console.error('Failed to send recovered customer notification:', whatsappError.message);
+          }
+        } else {
+          console.log('Business owner phone number not found, notification skipped');
         }
       }
     
