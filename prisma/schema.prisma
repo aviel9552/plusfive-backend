@@ -63,6 +63,7 @@ model User {
   customerUsers     CustomerUser[]   // Customer-User relations
   paymentWebhooks   PaymentWebhook[] // Payment webhook relations
   reviews           Review[]         // Reviews received by business owner
+  conversationStates ConversationState[] // WhatsApp conversation states
 
   @@map("users")
 }
@@ -278,6 +279,7 @@ model Customers {
   customerUsers   CustomerUser[] // Customer-User relations
   paymentWebhooks PaymentWebhook[] // Payment webhook relations
   reviews         Review[] // Reviews given by customer
+  conversationStates ConversationState[] // WhatsApp conversation states
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -335,6 +337,36 @@ model CustomerUser {
   updatedAt   DateTime @updatedAt
 
   @@map("customer_users")
+}
+
+// Conversation State table - Store WhatsApp conversation states
+model ConversationState {
+  id              String   @id @default(cuid())
+  phoneNumber     String   @unique // Customer phone number
+  customerName    String?  // Customer name
+  step            String   // Conversation step: initial_sent, followup_sent, etc.
+  lastMessage     String?  // Last message sent
+  customerResponse String? // Customer response type: yes, no, unknown
+  status          String   @default("at_risk") // Conversation type: at_risk, at_lost, at_review
+  conversationEnded Boolean @default(false) // Is conversation completed
+  
+  // Timestamps
+  startTime       DateTime @default(now()) // When conversation started
+  followupTime    DateTime? // When follow-up was sent
+  responseTime    DateTime? // When customer responded
+  closureTime     DateTime? // When conversation ended
+  
+  // Relations
+  userId          String?  // Reference to User table (business owner)
+  customerId      String?  // Reference to Customers table
+  user            User?    @relation(fields: [userId], references: [id])
+  customer        Customers? @relation(fields: [customerId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("conversation_states")
 }
 
 // New Payment model for webhook data

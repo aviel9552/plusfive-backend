@@ -6,12 +6,18 @@ const {
   handlePaymentCheckoutWebhook,
   getAllWebhookLogs,
   getWebhookLogById,
-  updateWebhookLogStatus
+  updateWebhookLogStatus,
+  handleWhatsAppIncomingMessage,
+  verifyWhatsAppWebhook
 } = require('../controllers/webhookController');
 
 // Webhook endpoints (no authentication required)
 router.post('/appointment', handleAppointmentWebhook);
 router.post('/payment-checkout', handlePaymentCheckoutWebhook);
+
+// WhatsApp webhook endpoints
+router.get('/whatsapp', verifyWhatsAppWebhook);  // For webhook verification
+router.post('/whatsapp', handleWhatsAppIncomingMessage);  // For incoming messages
 
 // Admin endpoints (authentication required)
 router.get('/logs', authenticateToken, getAllWebhookLogs);

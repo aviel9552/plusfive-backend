@@ -6,6 +6,8 @@
   "scripts": {
     "start": "nodemon server.js",
     "dev": "nodemon server.js",
+    "dev:tunnel": "concurrently \"nodemon server.js\" \"sleep 3 && lt --port 3000 --subdomain plusfive-webhook --print-requests\"",
+    "tunnel": "lt --port 3000 --subdomain plusfive-webhook",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -32,6 +34,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "concurrently": "^9.2.0",
     "nodemon": "^3.0.2"
   }
 }

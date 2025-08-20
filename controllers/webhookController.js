@@ -465,10 +465,343 @@ const updateWebhookLogStatus = async (req, res) => {
 
 
 
+// Handle incoming WhatsApp messages from 360dialog
+const handleWhatsAppIncomingMessage = async (req, res) => {
+  try {
+    const webhookData = req.body;
+    
+    // Import services for handling different conversation types
+    const RiskService = require('../services/Whatsapp/RiskService');
+    const LostService = require('../services/Whatsapp/LostService');
+    const ReviewService = require('../services/Whatsapp/ReviewService');
+    const { PrismaClient } = require('@prisma/client');
+    const riskService = new RiskService();
+    const lostService = new LostService();
+    const reviewService = new ReviewService();
+    const prisma = new PrismaClient();
+    
+    // Log the complete webhook payload for debugging
+    console.log('📩 WhatsApp Incoming Webhook:', JSON.stringify(webhookData, null, 2));
+    
+    // Check if it's a message webhook
+    if (webhookData.entry && webhookData.entry.length > 0) {
+      const entry = webhookData.entry[0];
+      const changes = entry.changes;
+      
+      if (changes && changes.length > 0) {
+        const change = changes[0];
+        const value = change.value;
+        
+        // Check for incoming messages
+        if (value.messages && value.messages.length > 0) {
+          for (const message of value.messages) {
+            const from = message.from; // Sender's phone number
+            const messageId = message.id;
+            const timestamp = message.timestamp;
+            
+            // Extract message content based on type
+            let messageContent = '';
+            let messageType = message.type;
+            
+            switch (messageType) {
+              case 'text':
+                messageContent = message.text.body;
+                break;
+              case 'button':
+                messageContent = message.button.text;
+                break;
+              case 'interactive':
+                if (message.interactive.type === 'button_reply') {
+                  // For rating buttons, use the button ID (e.g., rating_5) for easier processing
+                  const buttonId = message.interactive.button_reply.id;
+                  const buttonTitle = message.interactive.button_reply.title;
+                  messageContent = buttonId.startsWith('rating_') ? buttonId : buttonTitle;
+                } else if (message.interactive.type === 'list_reply') {
+                  messageContent = message.interactive.list_reply.title;
+                }
+                break;
+              default:
+                messageContent = `Unsupported message type: ${messageType}`;
+            }
+            
+            console.log('🔥 Processed WhatsApp Message:', {
+              from: from,
+              messageId: messageId,
+              type: messageType,
+              content: messageContent,
+              timestamp: new Date(parseInt(timestamp) * 1000).toISOString()
+            });
+            
+            // Try to find customer by phone number (try both with and without +)
+            let existingCustomer = await prisma.customers.findFirst({
+              where: {
+                customerPhone: from
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    businessName: true,
+                    firstName: true,
+                    lastName: true
+                  }
+                }
+              }
+            });
+            
+            // If not found, try with + prefix
+            if (!existingCustomer) {
+              const phoneWithPlus = `+${from}`;
+              existingCustomer = await prisma.customers.findFirst({
+                where: {
+                  customerPhone: phoneWithPlus
+                },
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      businessName: true,
+                      firstName: true,
+                      lastName: true
+                    }
+                  }
+                }
+              });
+              console.log('🔍 Trying with +:', phoneWithPlus);
+            }
+            
+            if (existingCustomer) {
+              console.log('✅ Customer found:', {
+                customerId: existingCustomer.id,
+                customerName: existingCustomer.customerFullName,
+                businessOwner: existingCustomer.user?.businessName
+              });
+              
+              // Check if message content is a rating (1-5)
+              const rating = parseInt(messageContent);
+              if (rating >= 1 && rating <= 5) {
+                console.log('⭐ Rating detected:', rating);
+                
+                // Store rating in Review table
+                const newReview = await prisma.review.create({
+                  data: {
+                    rating: rating,
+                    message: `WhatsApp Rating: ${messageContent}`,
+                    customerId: existingCustomer.id,
+                    userId: existingCustomer.userId,
+                    whatsappMessageId: messageId,
+                    messageStatus: 'received'
+                  }
+                });
+                
+                console.log('💾 Rating saved to database:', newReview.id);
+              }
+              
+              // ===== HEBREW CONVERSATION FLOWS (AT-RISK, LOST & REVIEW CUSTOMERS) =====
+              // Check if this is part of a review conversation (HIGHEST PRIORITY - for ratings)
+              const reviewConversationState = await reviewService.getConversationState(from);
+              // Check if this is part of an at-risk conversation
+              const riskConversationState = await riskService.getConversationState(from);
+              // Check if this is part of a lost customer conversation
+              const lostConversationState = await lostService.getConversationState(from);
+              
+              // Check conversation status to determine priority (but only if conversation is NOT ended)
+              if (reviewConversationState && reviewConversationState.status === 'at_review' && !reviewConversationState.conversationEnded) {
+                console.log('🎯 Found active review conversation for', from);
+                console.log('📊 Review conversation state:', reviewConversationState);
+                
+                try {
+                  // Get business owner info for potential alert
+                  const businessOwnerPhone = existingCustomer.user?.whatsappNumber || existingCustomer.user?.phoneNumber || null;
+                  
+                  const reviewResult = await reviewService.handleIncomingMessage(
+                    from, 
+                    messageContent, 
+                    existingCustomer.customerFullName,
+                    existingCustomer.businessName || existingCustomer.user?.businessName,
+                    existingCustomer.selectedServices || 'Service details not available',
+                    'Last payment amount', // You can enhance this
+                    businessOwnerPhone
+                  );
+                  
+                  console.log('🤖 Review service response:', reviewResult);
+                  
+                  if (reviewResult.action !== 'no_active_conversation') {
+                    console.log('✅ Review conversation step completed:', reviewResult.type || reviewResult.action);
+                    
+                    // Extract and save rating to database if provided
+                    const rating = reviewService.extractRating(messageContent);
+                    if (rating !== null) {
+                      console.log(`⭐ Review rating received: ${rating}/5`);
+                      
+                      // Update existing review record or create new one
+                      const recentReview = await prisma.review.findFirst({
+                        where: { 
+                          customerId: existingCustomer.id, 
+                          rating: 0 // Placeholder rating
+                        },
+                        orderBy: { createdAt: 'desc' }
+                      });
+                      
+                      if (recentReview) {
+                        await prisma.review.update({
+                          where: { id: recentReview.id },
+                          data: { 
+                            rating: rating,
+                            message: `Customer rated ${rating}/5 via WhatsApp button`,
+                            status: rating >= 4 ? 'positive' : 'needs_attention',
+                            messageStatus: 'responded'
+                          }
+                        });
+                        console.log('💾 Review rating updated in database:', recentReview.id);
+                      } else {
+                        // Create new review record
+                        const newReview = await prisma.review.create({
+                          data: {
+                            customerId: existingCustomer.id,
+                            userId: existingCustomer.userId,
+                            rating: rating,
+                            message: `Customer rated ${rating}/5 via WhatsApp button (direct response)`,
+                            status: rating >= 4 ? 'positive' : 'needs_attention',
+                            messageStatus: 'responded'
+                          }
+                        });
+                        console.log('💾 New review rating saved to database:', newReview.id);
+                      }
+                    }
+                  }
+                } catch (reviewError) {
+                  console.error('❌ Error handling review conversation:', reviewError);
+                }
+              } else if (riskConversationState && riskConversationState.status === 'at_risk' && !riskConversationState.conversationEnded) {
+                console.log('🎯 Found active at-risk conversation for', from);
+                console.log('📊 Risk conversation state:', riskConversationState);
+                
+                try {
+                  const riskResult = await riskService.handleIncomingMessage(
+                    from, 
+                    messageContent, 
+                    existingCustomer.customerFullName
+                  );
+                  
+                  console.log('🤖 Risk service response:', riskResult);
+                  
+                  if (riskResult.action !== 'no_active_conversation') {
+                    console.log('✅ At-risk conversation step completed:', riskResult.type || riskResult.action);
+                  }
+                } catch (riskError) {
+                  console.error('❌ Error handling at-risk conversation:', riskError);
+                }
+              } else if (lostConversationState && lostConversationState.status === 'at_lost' && !lostConversationState.conversationEnded) {
+                console.log('🎯 Found active lost customer conversation for', from);
+                console.log('📊 Lost conversation state:', lostConversationState);
+                
+                try {
+                  const lostResult = await lostService.handleIncomingMessage(
+                    from, 
+                    messageContent, 
+                    existingCustomer.customerFullName
+                  );
+                  
+                  console.log('🤖 Lost service response:', lostResult);
+                  
+                  if (lostResult.action !== 'no_active_conversation') {
+                    console.log('✅ Lost customer conversation step completed:', lostResult.type || lostResult.action);
+                  }
+                } catch (lostError) {
+                  console.error('❌ Error handling lost customer conversation:', lostError);
+                }
+
+              } else {
+                // Check if there are ended conversations
+                const hasEndedReview = reviewConversationState && reviewConversationState.conversationEnded;
+                const hasEndedRisk = riskConversationState && riskConversationState.conversationEnded;
+                const hasEndedLost = lostConversationState && lostConversationState.conversationEnded;
+                
+                if (hasEndedReview || hasEndedRisk || hasEndedLost) {
+                  console.log('🏁 Message ignored - conversation already ended for', from, {
+                    endedReview: hasEndedReview,
+                    endedRisk: hasEndedRisk,
+                    endedLost: hasEndedLost,
+                    customerMessage: messageContent
+                  });
+                } else {
+                  console.log('ℹ️ No active conversation (risk, lost or review) for', from);
+                }
+              }
+              
+              // Store the message in a general log (you can create a new table for this)
+              console.log('💬 Message from customer:', {
+                customer: existingCustomer.customerFullName,
+                business: existingCustomer.user?.businessName,
+                message: messageContent,
+                type: messageType,
+                hasAtRiskConversation: !!riskConversationState,
+                hasLostConversation: !!lostConversationState,
+                hasReviewConversation: !!reviewConversationState,
+                activeConversationType: riskConversationState ? 'at-risk' : 
+                                       lostConversationState ? 'lost' : 
+                                       reviewConversationState ? 'review' : 'none'
+              });
+              
+            } else {
+              console.log('❌ Customer not found for phone:', from);
+            }
+          }
+        }
+        
+        // Check for message status updates (delivered, read, etc.)
+        if (value.statuses && value.statuses.length > 0) {
+          for (const status of value.statuses) {
+            console.log('📋 Message Status Update:', {
+              messageId: status.id,
+              status: status.status,
+              timestamp: new Date(parseInt(status.timestamp) * 1000).toISOString(),
+              recipientId: status.recipient_id
+            });
+          }
+        }
+      }
+    }
+    
+    // Always respond with 200 to acknowledge webhook
+    return res.status(200).json({ message: 'Webhook received successfully' });
+    
+  } catch (error) {
+    console.error('❌ WhatsApp webhook error:', error);
+    return res.status(500).json({ error: 'Failed to process WhatsApp webhook' });
+  }
+};
+
+// Webhook verification for 360dialog (required for webhook setup)
+const verifyWhatsAppWebhook = async (req, res) => {
+  try {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    
+    // Verify token (you can set this in your 360dialog webhook settings)
+    const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
+    
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log('✅ WhatsApp Webhook verified successfully');
+      return res.status(200).send(challenge);
+    } else {
+      console.log('❌ WhatsApp Webhook verification failed');
+      return res.status(403).json({ error: 'Verification failed' });
+    }
+  } catch (error) {
+    console.error('❌ WhatsApp webhook verification error:', error);
+    return res.status(500).json({ error: 'Verification error' });
+  }
+};
+
 module.exports = {
   handleAppointmentWebhook,
   handlePaymentCheckoutWebhook,
   getAllWebhookLogs,
   getWebhookLogById,
-  updateWebhookLogStatus
+  updateWebhookLogStatus,
+  handleWhatsAppIncomingMessage,
+  verifyWhatsAppWebhook
 };
