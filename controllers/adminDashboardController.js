@@ -248,24 +248,29 @@ class AdminDashboardController {
       const threeMonthsAgo = new Date();
       threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
-      const activeCustomers = await prisma.customers.count({
+      // const activeCustomers = await prisma.customers.count({
+      //   where: {
+      //     user: {
+      //       payments: {
+      //         some: {
+      //           createdAt: {
+      //             gte: threeMonthsAgo
+      //           }
+      //         }
+      //       }
+      //     }
+      //   }
+      // });
+      const activeCustomers = await prisma.customerUser.count({
         where: {
-          user: {
-            payments: {
-              some: {
-                createdAt: {
-                  gte: threeMonthsAgo
-                }
-              }
-            }
-          }
+          status: 'active',
         }
       });
 
       // At risk customers
       const atRiskCustomers = await prisma.customerUser.count({
         where: {
-          status: 'at_risk'
+          status: 'risk'
         }
       });
 
@@ -586,17 +591,20 @@ class AdminDashboardController {
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
     const [activeCustomers, atRiskCustomers, lostCustomers, recoveredCustomers, newCustomers] = await Promise.all([
-      prisma.customers.count({
-        where: {
-          user: {
-            payments: {
-              some: { createdAt: { gte: threeMonthsAgo } }
-            }
-          }
-        }
+      // prisma.customers.count({
+      //   where: {
+      //     user: {
+      //       payments: {
+      //         some: { createdAt: { gte: threeMonthsAgo } }
+      //       }
+      //     }
+      //   }
+      // }),
+      prisma.customerUser.count({
+        where: { status: 'active' }
       }),
       prisma.customerUser.count({
-        where: { status: 'at_risk' }
+        where: { status: 'risk' }
       }),
       prisma.customerUser.count({
         where: { status: 'lost' }
