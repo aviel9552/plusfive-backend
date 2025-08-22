@@ -24,6 +24,7 @@ const webhookRoutes = require('./routes/webhooks');
 const reviewRoutes = require('./routes/reviews');
 const customerStatusRoutes = require('./routes/customerStatus');
 const whatsappRoutes = require('./routes/whatsapp');
+const adminDashboardRoutes = require('./routes/adminDashboard');
 
 const app = express();
 
@@ -84,6 +85,7 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/customer-status', customerStatusRoutes);
 
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/admin-dashboard', adminDashboardRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
