@@ -4,11 +4,17 @@ const { successResponse, errorResponse } = require('../lib/utils');
 // Get all customers with pagination and search
 const getAllCustomers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, businessId, userId } = req.query;
+    const { page = 1, limit = 10, search, businessId } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get user ID from authenticated token
+    const authenticatedUserId = req.user.userId;
+    console.log('authenticatedUserId', authenticatedUserId);
 
-    // Build where clause
-    const where = {};
+    // Build where clause - Always filter by authenticated user's ID
+    const where = {
+      userId: authenticatedUserId // Filter by authenticated user only
+    };
     
     if (search) {
       where.OR = [
@@ -22,10 +28,6 @@ const getAllCustomers = async (req, res) => {
 
     if (businessId) {
       where.businessId = parseInt(businessId);
-    }
-
-    if (userId) {
-      where.userId = userId;
     }
 
     // Get customers with pagination and include user data
@@ -58,7 +60,8 @@ const getAllCustomers = async (req, res) => {
         // Get CustomerUser status (latest active status)
         const customerUserStatus = await prisma.customerUser.findFirst({
           where: {
-            customerId: customer.id
+            customerId: customer.id,
+            isDeleted: false // Only get active relationships
           },
           orderBy: {
             createdAt: 'desc'
@@ -155,13 +158,13 @@ const getAllCustomers = async (req, res) => {
 // Get customer status counts for dashboard
 const getCustomersStatusCount = async (req, res) => {
   try {
-    const { userId } = req.query;
+    // Get user ID from authenticated token
+    const authenticatedUserId = req.user.userId;
 
-    // Build where clause
-    const where = {};
-    if (userId) {
-      where.userId = userId;
-    }
+    // Build where clause - Always filter by authenticated user's ID
+    const where = {
+      userId: authenticatedUserId // Filter by authenticated user only
+    };
 
     // Get all customers for this user
     const allCustomers = await prisma.customers.findMany({
@@ -186,7 +189,8 @@ const getCustomersStatusCount = async (req, res) => {
       const customerUserStatus = await prisma.customerUser.findFirst({
         where: {
           customerId: customer.id,
-          userId: customer.userId
+          userId: customer.userId,
+          isDeleted: false // Only count active relationships
         },
         orderBy: {
           createdAt: 'desc'
@@ -242,17 +246,19 @@ const getCustomersStatusCount = async (req, res) => {
 const getCustomerById = async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId } = req.query; // Optional filter by userId
+    
+    // Get user ID from authenticated token
+    const authenticatedUserId = req.user.userId;
 
     if (!id) {
       return errorResponse(res, 'Customer ID is required', 400);
     }
 
-    // Build where clause
-    const where = { id };
-    if (userId) {
-      where.userId = userId;
-    }
+    // Build where clause - Always filter by authenticated user's ID
+    const where = { 
+      id,
+      userId: authenticatedUserId // Filter by authenticated user only
+    };
 
     // Get customer by ID with user data
     const customer = await prisma.customers.findFirst({
@@ -271,6 +277,7 @@ const getCustomerById = async (req, res) => {
         }
       }
     });
+    
     if (!customer) {
       return errorResponse(res, 'Customer not found', 404);
     }

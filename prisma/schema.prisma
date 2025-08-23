@@ -24,6 +24,7 @@ model User {
   directChatMessage String?
   role              String    @default("user") // user, admin, customer
   isActive          Boolean   @default(true)
+  isDeleted         Boolean   @default(false) // New field for soft delete
   emailVerified     DateTime?
   image             String?
 
@@ -327,6 +328,7 @@ model CustomerUser {
   customerId  String   // Reference to Customers table
   userId      String   // Reference to User table
   status      String   @default("active") // active, inactive, blocked
+  isDeleted   Boolean  @default(false) // Soft delete flag for customer-user relation
   
   // Relations
   customer    Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)

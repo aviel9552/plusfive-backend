@@ -7,15 +7,26 @@ const crypto = require('crypto');
 // Register user
 const register = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, referralCode, ...otherFields } = req.body;
+    const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
+    // Check if user already exists with this email
+    const existingUserByEmail = await prisma.user.findUnique({
       where: { email }
     });
 
-    if (existingUser) {
+    if (existingUserByEmail) {
       return errorResponse(res, 'User with this email already exists', 400);
+    }
+
+    // Check if user already exists with this phone number
+    if (phoneNumber) {
+      const existingUserByPhone = await prisma.user.findUnique({
+        where: { phoneNumber }
+      });
+
+      if (existingUserByPhone) {
+        return errorResponse(res, 'User with this phone number already exists', 400);
+      }
     }
 
     // Hash password
@@ -23,7 +34,7 @@ const register = async (req, res) => {
 
     // Filter valid fields for user creation
     const validUserFields = {
-      phoneNumber: otherFields.phoneNumber,
+      phoneNumber: phoneNumber,
       businessName: otherFields.businessName,
       businessType: otherFields.businessType,
       address: otherFields.address,
@@ -118,6 +129,11 @@ const login = async (req, res) => {
 
     if (!user) {
       return errorResponse(res, 'Invalid email or password', 401);
+    }
+
+    // Check if user is deleted
+    if (user.isDeleted) {
+      return errorResponse(res, 'Account has been deleted. Please contact support for assistance.', 401);
     }
 
     // Check if user is active
