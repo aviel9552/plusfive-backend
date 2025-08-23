@@ -48,6 +48,7 @@ model User {
   orders            Order[]
   payments          Payment[]
   qrCodes           QRCode[]
+  qrCodeScans       QRCodeScan[] // QR code scan history
   supportTickets    SupportTicket[]
   emailVerifications EmailVerification[]
   passwordResets    PasswordReset[]
