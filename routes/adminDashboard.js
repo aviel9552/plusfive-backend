@@ -3,9 +3,9 @@ const router = express.Router();
 const adminDashboardController = require('../controllers/adminDashboardController');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 
-// Apply authentication and admin authorization to all routes
+// Apply authentication and role-based authorization to all routes
 router.use(authenticateToken);
-router.use(authorizeRole(['admin']));
+router.use(authorizeRole(['admin', 'user'])); // Allow both admin and business owners
 
 // Get monthly performance metrics
 // GET /api/admin-dashboard/monthly-performance?month=7&year=2024

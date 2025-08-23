@@ -183,8 +183,27 @@ model QRCode {
   updatedAt   DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scans QRCodeScan[] // Relationship to scan records
 
   @@map("qr_codes")
+}
+
+// QR Code Scan tracking model
+model QRCodeScan {
+  id          String   @id @default(cuid())
+  qrCodeId    String
+  userId      String   // Business owner who owns the QR code
+  referrer    String?  // Where the scan came from (URL, app, etc.)
+  userAgent   String?  // Browser/device information
+  ipAddress   String?  // IP address of the scanner
+  scanData    String?  // Additional data from the scan
+  scanTime    DateTime @default(now())
+  
+  // Relations
+  qRCode      QRCode   @relation(fields: [qrCodeId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("qr_code_scans")
 }
 
 model SupportTicket {
