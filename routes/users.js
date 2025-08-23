@@ -8,7 +8,8 @@ const {
   getAllUsers, 
   updateUserById, 
   deleteUserById,
-  changePassword
+  changePassword,
+  softDeleteUser
 } = require('../controllers/userController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
@@ -22,16 +23,7 @@ router.post('/', authenticateToken, adminOnly, validateRequest(userCreateSchema)
 // GET /api/users - Get all users
 router.get('/', authenticateToken, adminOnly, getAllUsers);
 
-// GET /api/users/:id - Get user by ID
-router.get('/:id', authenticateToken, adminOnly, getUserById);
-
-// PUT /api/users/:id - Update user by ID
-router.put('/:id', authenticateToken, validateRequest(adminUserUpdateSchema), updateUserById);
-
-// DELETE /api/users/:id - Delete user by ID
-router.delete('/:id', authenticateToken, adminOnly, deleteUserById);
-
-// User profile routes (for authenticated users)
+// User profile routes (for authenticated users) - PUT THESE BEFORE PARAMETERIZED ROUTES
 // GET /api/users/profile - Get user profile
 router.get('/profile', authenticateToken, getProfile);
 
@@ -40,5 +32,18 @@ router.put('/profile', authenticateToken, validateRequest(userUpdateSchema), upd
 
 // PUT /api/users/change-password - Change password
 router.put('/change-password', authenticateToken, validateRequest(changePasswordSchema), changePassword);
+
+// PATCH /api/users/soft-delete - Soft delete user account (self-deletion)
+router.patch('/soft-delete', authenticateToken, softDeleteUser);
+
+// Parameterized routes (admin only) - PUT THESE AFTER SPECIFIC ROUTES
+// GET /api/users/:id - Get user by ID
+router.get('/:id', authenticateToken, adminOnly, getUserById);
+
+// PUT /api/users/:id - Update user by ID
+router.put('/:id', authenticateToken, validateRequest(adminUserUpdateSchema), updateUserById);
+
+// DELETE /api/users/:id - Delete user by ID
+router.delete('/:id', authenticateToken, adminOnly, deleteUserById);
 
 module.exports = router; 

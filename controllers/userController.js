@@ -44,6 +44,7 @@ const createUser = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: false,
         createdAt: true,
         updatedAt: true,
       }
@@ -79,6 +80,7 @@ const getProfile = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: true,
         createdAt: true,
         updatedAt: true,
       }
@@ -120,6 +122,7 @@ const getUserById = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: true,
         createdAt: true,
         updatedAt: true,
       }
@@ -143,7 +146,8 @@ const getAllUsers = async (req, res) => {
       where: {
         role: {
           not: 'admin'
-        }
+        },
+        isDeleted: false // Exclude deleted users
       },
       select: {
         id: true,
@@ -163,6 +167,7 @@ const getAllUsers = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: true,
         createdAt: true,
         updatedAt: true,
       }
@@ -199,6 +204,7 @@ const updateProfile = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: true,
         createdAt: true,
         updatedAt: true,
       }
@@ -238,6 +244,7 @@ const updateUserById = async (req, res) => {
         subscriptionStartDate: true,
         subscriptionStatus: true,
         isActive: true,
+        isDeleted: true,
         createdAt: true,
         updatedAt: true,
       }
@@ -310,6 +317,92 @@ const changePassword = async (req, res) => {
   }
 };
 
+// Soft delete user account and update customer statuses
+const softDeleteUser = async (req, res) => {
+  try {
+    // Get user ID from authenticated token
+    const currentUserId = req.user.userId;
+
+    // First, check if user exists and is not already deleted
+    const existingUser = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: {
+        id: true,
+        isDeleted: true,
+        role: true
+      }
+    });
+
+    if (!existingUser) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    if (existingUser.isDeleted) {
+      return errorResponse(res, 'User is already deleted', 400);
+    }
+
+    // Prevent admin users from being deleted
+    if (existingUser.role === 'admin') {
+      return errorResponse(res, 'Admin users cannot be deleted', 403);
+    }
+
+    // Use transaction to ensure data consistency
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Mark user as deleted
+      const updatedUser = await tx.user.update({
+        where: { id: currentUserId },
+        data: { isDeleted: true },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          isDeleted: true,
+          updatedAt: true
+        }
+      });
+
+      // 2. Find all customers assigned to this user
+      const customerUsers = await tx.customerUser.findMany({
+        where: { userId: currentUserId },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              customerPhone: true
+            }
+          }
+        }
+      });
+
+      // 3. Update customer status to 'deleted' in CustomerUser table
+      if (customerUsers.length > 0) {
+        await tx.customerUser.updateMany({
+          where: { userId: currentUserId },
+          data: { isDeleted: true }
+        });
+      }
+
+      return {
+        user: updatedUser,
+        affectedCustomers: customerUsers.length,
+        customerDetails: customerUsers.map(cu => ({
+          customerId: cu.customer.id,
+          customerName: `${cu.customer.firstName || ''} ${cu.customer.lastName || ''}`.trim(),
+          phone: cu.customer.customerPhone
+        }))
+      };
+    });
+
+    return successResponse(res, result, `User soft deleted successfully. ${result.affectedCustomers} customers affected.`);
+  } catch (error) {
+    console.error('Soft delete user error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 module.exports = {
   createUser,
   getProfile,
@@ -318,5 +411,6 @@ module.exports = {
   updateProfile,
   updateUserById,
   deleteUserById,
-  changePassword
+  changePassword,
+  softDeleteUser
 }; 
