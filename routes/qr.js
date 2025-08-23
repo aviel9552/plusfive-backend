@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes } = require('../controllers/qrController');
+const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics } = require('../controllers/qrController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { qrCodeCreateSchema, qrCodeUpdateSchema } = require('../lib/validations');
+const prisma = require('../lib/prisma');
 
 // Public redirect route for QR code scanning
 router.get('/redirect/:id', async (req, res) => {
@@ -44,14 +45,29 @@ router.get('/', authenticateToken, getAllQRCodes);
 // GET /api/qr/my-qr-codes - Get user's own QR codes only
 router.get('/my-qr-codes', authenticateToken, getUserOwnQRCodes);
 
+// GET /api/qr/analytics - Get QR codes with enhanced analytics for dashboard
+router.get('/analytics', authenticateToken, getQRCodesWithAnalytics);
+
+// GET /api/qr/performance - Get overall QR performance summary
+router.get('/performance', authenticateToken, getQRPerformance);
+
 // POST /api/qr - Create new QR code (with optional direct generation)
 router.post('/', authenticateToken, validateRequest(qrCodeCreateSchema), createQRCode);
 
 // POST /api/qr/generate-with-user-info - Generate QR code with user's information
 router.post('/generate-with-user-info', authenticateToken, generateQRCodeWithUserInfo);
 
+// POST /api/qr/:id/share - Increment share count
+router.post('/:id/share', authenticateToken, incrementShareCount);
+
+// POST /api/qr/:id/scan - Increment scan count
+router.post('/:id/scan', authenticateToken, incrementScanCount);
+
 // GET /api/qr/:id - Get QR code by ID
 router.get('/:id', authenticateToken, getQRCodeById);
+
+// GET /api/qr/:id/analytics - Get analytics for a specific QR code
+router.get('/:id/analytics', authenticateToken, getQRAnalytics);
 
 // PUT /api/qr/:id - Update QR code
 router.put('/:id', authenticateToken, validateRequest(qrCodeUpdateSchema), updateQRCode);
@@ -61,11 +77,5 @@ router.delete('/:id', authenticateToken, deleteQRCode);
 
 // GET /api/qr/:id/image - Serve QR code image directly
 router.get('/:id/image', authenticateToken, serveQRCodeImage);
-
-// POST /api/qr/:id/share - Increment share count
-router.post('/:id/share', authenticateToken, incrementShareCount);
-
-// POST /api/qr/:id/scan - Increment scan count
-router.post('/:id/scan', incrementScanCount);
 
 module.exports = router; 

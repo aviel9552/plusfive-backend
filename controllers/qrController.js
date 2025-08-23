@@ -348,7 +348,7 @@ const deleteQRCode = async (req, res) => {
   }
 };
 
-// Increment scan count for QR code (public endpoint - no auth required)
+// Increment scan count for QR code (authenticated endpoint)
 const incrementScanCount = async (req, res) => {
   try {
     const { id } = req.params;
@@ -560,6 +560,181 @@ const getUserOwnQRCodes = async (req, res) => {
   }
 };
 
+// NEW: Get QR code analytics for a specific QR code
+const getQRAnalytics = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    const userId = req.user.userId;
+
+    // Build where clause based on role
+    const whereClause = {
+      id,
+      ...(userRole === 'user' ? { userId } : {})
+    };
+
+    // Get QR code with scan analytics
+    const qrCode = await prisma.qRCode.findFirst({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+
+    if (!qrCode) {
+      return errorResponse(res, 'QR Code not found or access denied', 404);
+    }
+
+    // Calculate analytics
+    const totalScans = qrCode.scanCount || 0;
+    const todayScans = 0; // Placeholder - implement if you want daily tracking
+    const thisWeekScans = 0; // Placeholder - implement if you want weekly tracking
+    const thisMonthScans = 0; // Placeholder - implement if you want monthly tracking
+
+    const analytics = {
+      totalScans,
+      todayScans,
+      thisWeekScans,
+      thisMonthScans,
+      sharedCount: qrCode.shareCount || 0,
+      averageScansPerDay: totalScans > 0 ? Math.round(totalScans / Math.max(1, Math.ceil((Date.now() - new Date(qrCode.createdAt).getTime()) / (1000 * 60 * 60 * 24)))) : 0
+    };
+
+    return successResponse(res, {
+      qrCode: {
+        id: qrCode.id,
+        name: qrCode.name,
+        qrData: qrCode.qrData,
+        url: qrCode.url,
+        createdAt: qrCode.createdAt,
+        status: qrCode.isActive ? 'Active' : 'Inactive',
+        businessOwner: qrCode.user ? (qrCode.user.businessName || `${qrCode.user.firstName || ''} ${qrCode.user.lastName || ''}`.trim() || 'Unknown') : 'Unknown'
+      },
+      analytics
+    });
+
+  } catch (error) {
+    console.error('Error getting QR analytics:', error);
+    return errorResponse(res, 'Failed to fetch QR analytics', 500);
+  }
+};
+
+// NEW: Get QR code performance summary for the user
+const getQRPerformance = async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const userId = req.user.userId;
+
+    // Build where clause based on role
+    const whereClause = userRole === 'user' ? { userId } : {};
+
+    // Get performance metrics
+    const [totalQRCodes, totalScans, totalShares] = await Promise.all([
+      prisma.qRCode.count({ where: whereClause }),
+      prisma.qRCode.aggregate({
+        where: whereClause,
+        _sum: { scanCount: true }
+      }),
+      prisma.qRCode.aggregate({
+        where: whereClause,
+        _sum: { shareCount: true }
+      })
+    ]);
+
+    const performance = {
+      totalQRCodes,
+      totalScans: totalScans._sum.scanCount || 0,
+      totalShares: totalShares._sum.shareCount || 0,
+      averageScansPerQR: totalQRCodes > 0 ? Math.round((totalScans._sum.scanCount || 0) / totalQRCodes) : 0,
+      averageSharesPerQR: totalQRCodes > 0 ? Math.round((totalShares._sum.shareCount || 0) / totalQRCodes) : 0
+    };
+
+    return successResponse(res, performance);
+
+  } catch (error) {
+    console.error('Error getting QR performance:', error);
+    return errorResponse(res, 'Failed to fetch QR performance', 500);
+  }
+};
+
+// NEW: Get QR codes with enhanced analytics for dashboard
+const getQRCodesWithAnalytics = async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const userId = req.user.userId;
+
+    // Build where clause based on role
+    const whereClause = userRole === 'user' ? { userId } : {};
+
+    // Get QR codes with analytics
+    const qrCodes = await prisma.qRCode.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            businessName: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+
+    // Calculate analytics for each QR code
+    const qrCodesWithAnalytics = qrCodes.map(qr => {
+      const daysSinceCreation = Math.ceil((Date.now() - new Date(qr.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+      
+      return {
+        id: qr.id,
+        name: qr.name,
+        qrData: qr.qrData,
+        url: qr.url,
+        isActive: qr.isActive,
+        scanCount: qr.scanCount,
+        shareCount: qr.shareCount,
+        createdAt: qr.createdAt,
+        businessOwner: qr.user ? (qr.user.businessName || `${qr.user.firstName || ''} ${qr.user.lastName || ''}`.trim() || 'Unknown') : 'Unknown',
+        analytics: {
+          totalScans: qr.scanCount,
+          totalShares: qr.shareCount,
+          averageScansPerDay: daysSinceCreation > 0 ? (qr.scanCount / daysSinceCreation).toFixed(2) : 0,
+          averageSharesPerDay: daysSinceCreation > 0 ? (qr.shareCount / daysSinceCreation).toFixed(2) : 0,
+          daysSinceCreation
+        }
+      };
+    });
+
+    // Calculate overall statistics
+    const totalScans = qrCodes.reduce((sum, qr) => sum + qr.scanCount, 0);
+    const totalShares = qrCodes.reduce((sum, qr) => sum + qr.shareCount, 0);
+    const activeQRCodes = qrCodes.filter(qr => qr.isActive).length;
+
+    return successResponse(res, {
+      qrCodes: qrCodesWithAnalytics,
+      summary: {
+        totalQRCodes: qrCodes.length,
+        totalScans,
+        totalShares,
+        activeQRCodes,
+        averageScansPerQR: qrCodes.length > 0 ? Math.round(totalScans / qrCodes.length) : 0,
+        averageSharesPerQR: qrCodes.length > 0 ? Math.round(totalShares / qrCodes.length) : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting QR codes with analytics:', error);
+    return errorResponse(res, 'Failed to fetch QR codes with analytics', 500);
+  }
+};
+
 module.exports = {
   getAllQRCodes,
   createQRCode,
@@ -571,4 +746,8 @@ module.exports = {
   incrementShareCount,
   incrementScanCount,
   getUserOwnQRCodes,
+  // New analytics methods
+  getQRAnalytics,
+  getQRPerformance,
+  getQRCodesWithAnalytics
 }; 

@@ -26,7 +26,22 @@ const generateToken = (userId, email, role = 'user') => {
   );
 };
 
+const authorizeRole = (allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return errorResponse(res, 'User not authenticated', 401);
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return errorResponse(res, 'Insufficient permissions', 403);
+    }
+
+    next();
+  };
+};
+
 module.exports = {
   authenticateToken,
-  generateToken
+  generateToken,
+  authorizeRole
 }; 
