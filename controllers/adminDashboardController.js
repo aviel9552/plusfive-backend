@@ -304,7 +304,7 @@ class AdminDashboardController {
               status: 'Active',
               count: activeCustomers,
               percentage: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#8B5CF6'
+              color: '#675DFF'
             },
             {
               status: 'New',
@@ -316,19 +316,19 @@ class AdminDashboardController {
               status: 'At Risk',
               count: atRiskCustomers,
               percentage: totalCustomers > 0 ? ((atRiskCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#F97316'
+              color: '#FE5D39'
             },
             {
               status: 'Lost',
               count: lostCustomers,
               percentage: totalCustomers > 0 ? ((lostCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#DC2626'
+              color: '#912018'
             },
             {
               status: 'Recovered',
               count: recoveredCustomers,
               percentage: totalCustomers > 0 ? ((recoveredCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#EC4899'
+              color: '#DF64CC'
             }
           ]
         }

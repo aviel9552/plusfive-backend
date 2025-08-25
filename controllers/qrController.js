@@ -234,7 +234,78 @@ const getQRCodeById = async (req, res) => {
     
     const qrCode = await prisma.qRCode.findFirst({
       where: {
-        qrData: req.params.id
+        id: req.params.id
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phoneNumber: true,
+            businessName: true,
+            businessType: true,
+            address: true,
+            whatsappNumber: true,
+            role: true,
+            subscriptionStatus: true,
+            subscriptionPlan: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+    
+    if (!qrCode) {
+      return errorResponse(res, 'QR code not found', 404);
+    }
+    
+    // If QR code image doesn't exist, generate it
+    if (!qrCode.qrCodeImage) {
+      const qrCodeImage = await QRCode.toDataURL(qrCode.qrData, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        quality: 0.92,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+      
+      // Update the QR code with the generated image
+      await prisma.qRCode.update({
+        where: { id: req.params.id },
+        data: { qrCodeImage: qrCodeImage }
+      });
+      
+      qrCode.qrCodeImage = qrCodeImage;
+    }
+    
+    return successResponse(res, {
+      ...qrCode,
+      userRole: req.user.role,
+      isAdmin: req.user.role === 'admin'
+    });
+    
+  } catch (error) {
+    console.error('Get QR code error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+// Get QR code by code
+const getQRCodeByCode = async (req, res) => {
+  try {
+    // If user is admin, can access any QR code, otherwise only user's own QR codes
+    // const where = {
+    //   id: req.params.id,
+    //   ...(req.user.role !== 'admin' && { userId: req.user.userId })
+    // };
+    
+    const qrCode = await prisma.qRCode.findFirst({
+      where: {
+        qrData: req.params.code
       },
       include: {
         user: {
@@ -744,6 +815,7 @@ module.exports = {
   createQRCode,
   generateQRCodeWithUserInfo,
   getQRCodeById,
+  getQRCodeByCode,
   updateQRCode,
   deleteQRCode,
   serveQRCodeImage,

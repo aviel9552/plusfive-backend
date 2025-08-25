@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics } = require('../controllers/qrController');
+const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, getQRCodeByCode, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics } = require('../controllers/qrController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { qrCodeCreateSchema, qrCodeUpdateSchema } = require('../lib/validations');
@@ -65,6 +65,9 @@ router.post('/:id/scan', authenticateToken, incrementScanCount);
 
 // GET /api/qr/:id - Get QR code by ID
 router.get('/:id', authenticateToken, getQRCodeById);
+
+// GET /api/qr/:id - Get QR code by Code
+router.get('/:code', authenticateToken, getQRCodeByCode);
 
 // GET /api/qr/:id/analytics - Get analytics for a specific QR code
 router.get('/:id/analytics', authenticateToken, getQRAnalytics);
