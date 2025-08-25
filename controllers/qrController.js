@@ -172,8 +172,9 @@ const generateQRCodeWithUserInfo = async (req, res) => {
     const whatsappNumber = user.whatsappNumber || '';
     const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(directMsg)}`;
     
-    // Generate QR code image using the random code
-    const qrCodeImage = await QRCode.toDataURL(randomCode, {
+    // Generate QR code image using the full redirect URL
+    const redirectUrl = `${process.env.FRONTEND_URL}/qr/redirect/${randomCode}`;
+    const qrCodeImage = await QRCode.toDataURL(redirectUrl, {
       errorCorrectionLevel: 'M',
       type: 'image/png',
       quality: 0.92,
@@ -191,10 +192,11 @@ const generateQRCodeWithUserInfo = async (req, res) => {
         userId: req.user.userId,
         name: name || `${user.businessName || user.firstName}'s QR Code`,
         url: `${process.env.FRONTEND_URL}/qr/redirect/${randomCode}`, // Store frontend redirect URL
-        qrData: randomCode, // Store the random code as QR data
+        qrData: randomCode, // Store the frontend redirect URL as QR data
         qrCodeImage: qrCodeImage,
       }
     });
+    
     
     return successResponse(res, {
       ...qrCode,
@@ -231,7 +233,9 @@ const getQRCodeById = async (req, res) => {
     // };
     
     const qrCode = await prisma.qRCode.findFirst({
-      // where,
+      where: {
+        qrData: req.params.id
+      },
       include: {
         user: {
           select: {
