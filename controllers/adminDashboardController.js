@@ -559,7 +559,7 @@ class AdminDashboardController {
   }
 
   async getRevenueImpactData(req) {
-    const { months = 6 } = req.query;
+    const { months = 7 } = req.query;
     const currentDate = new Date();
     const revenueData = [];
 
