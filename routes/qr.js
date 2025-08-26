@@ -1,10 +1,49 @@
 const express = require('express');
 const router = express.Router();
-const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, getQRCodeById, getQRCodeByCode, updateQRCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics } = require('../controllers/qrController');
+const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, generateWhatsAppQRCode, getQRCodeById, getQRCodeByCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics, scanQRCode, shareQRCode } = require('../controllers/qrController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { qrCodeCreateSchema, qrCodeUpdateSchema } = require('../lib/validations');
+const { qrCodeCreateSchema } = require('../lib/validations');
 const prisma = require('../lib/prisma');
+
+// Redirect route for short links (when QR codes are scanned)
+router.get('/qr/:shortCode', async (req, res) => {
+  try {
+    const { shortCode } = req.params;
+    
+    // Find QR code by short code
+    const qrCode = await prisma.qRCode.findFirst({
+      where: { qrData: shortCode }
+    });
+    
+    if (!qrCode) {
+      return res.status(404).send('QR Code not found');
+    }
+    
+    // Increment scan count
+    await prisma.qRCode.update({
+      where: { id: qrCode.id },
+      data: {
+        scanCount: {
+          increment: 1
+        }
+      }
+    });
+    
+    // Redirect to the actual WhatsApp URL
+    res.redirect(qrCode.url);
+    
+  } catch (error) {
+    console.error('QR redirect error:', error);
+    res.status(500).send('Internal server error');
+  }
+});
+
+// POST /api/qr/scan/:shortCode - Scan QR code and increment scan count
+router.post('/scan/:shortCode', scanQRCode);
+
+// POST /api/qr/share/:shortCode - Share QR code and increment share count
+router.post('/share/:shortCode', shareQRCode);
 
 // Public redirect route for QR code scanning
 router.get('/redirect/:id', async (req, res) => {
@@ -57,6 +96,9 @@ router.post('/', authenticateToken, validateRequest(qrCodeCreateSchema), createQ
 // POST /api/qr/generate-with-user-info - Generate QR code with user's information
 router.post('/generate-with-user-info', authenticateToken, generateQRCodeWithUserInfo);
 
+// POST /api/qr/generate-whatsapp - Generate WhatsApp QR codes with short links (Client's requirement)
+router.post('/generate-whatsapp', authenticateToken, generateWhatsAppQRCode);
+
 // GET /api/qr/qr-code/:code - Get QR code by Code (View Only - No Scan Tracking)
 router.get('/qr-code/:code', getQRCodeByCode);
 
@@ -71,9 +113,6 @@ router.post('/:id/scan', incrementScanCount);
 
 // GET /api/qr/:id/image - Serve QR code image directly
 router.get('/:id/image', authenticateToken, serveQRCodeImage);
-
-// PUT /api/qr/:id - Update QR code
-router.put('/:id', authenticateToken, validateRequest(qrCodeUpdateSchema), updateQRCode);
 
 // DELETE /api/qr/:id - Delete QR code
 router.delete('/:id', authenticateToken, deleteQRCode);

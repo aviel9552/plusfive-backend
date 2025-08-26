@@ -140,10 +140,19 @@ const createQRCode = async (req, res) => {
   }
 };
 
-// Generate QR code with user's information
+// Generate QR code with user's information (One QR code per user lifetime)
 const generateQRCodeWithUserInfo = async (req, res) => {
   try {
-    const { name, messageForCustomer, directMessage, size = 200, color = '#000000', backgroundColor = '#FFFFFF' } = req.body;
+    const { name, messageForCustomer, directMessage, directUrl, messageUrl, size = 200, color = '#000000', backgroundColor = '#FFFFFF' } = req.body;
+    
+    // Check if user already has a QR code
+    const existingQRCode = await prisma.qRCode.findFirst({
+      where: { userId: req.user.userId }
+    });
+    
+    if (existingQRCode) {
+      return errorResponse(res, 'User already has a QR code. Only one QR code allowed per user.', 400);
+    }
     
     // Get user information
     const user = await prisma.user.findUnique({
@@ -164,9 +173,9 @@ const generateQRCodeWithUserInfo = async (req, res) => {
     // Generate unique random code
     const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     
-    // Use dynamic messages - user input first, then profile default, then fallback
-    const customerMessage = messageForCustomer || user.directChatMessage || `Hi ${user.firstName}! I found your business through QR code.`;
-    const directMsg = directMessage || user.directChatMessage || `Hi ${user.firstName}! I'm interested in your services.`;
+    // Use exact values from request body
+    const customerMessage = messageForCustomer;
+    const directMsg = directMessage;
     
     // Create WhatsApp URL with dynamic message
     const whatsappNumber = user.whatsappNumber || '';
@@ -186,17 +195,20 @@ const generateQRCodeWithUserInfo = async (req, res) => {
       }
     });
     
-    // Store in database with random code as qrData and redirect URL as url
+    // Store in database with all the new fields
     const qrCode = await prisma.qRCode.create({
       data: {
         userId: req.user.userId,
         name: name || `${user.businessName || user.firstName}'s QR Code`,
         url: `${process.env.FRONTEND_URL}/qr/redirect/${randomCode}`, // Store frontend redirect URL
-        qrData: randomCode, // Store the frontend redirect URL as QR data
+        qrData: randomCode, // Store the random code as QR data
         qrCodeImage: qrCodeImage,
+        messageForCustomer: customerMessage, // Store custom message for customers
+        directMessage: directMsg, // Store direct message for WhatsApp/contact
+        directUrl: directUrl || whatsappUrl, // Store direct URL (WhatsApp or custom)
+        messageUrl: messageUrl || `${process.env.FRONTEND_URL}/qr/${randomCode}`, // Store message URL (redirect or custom)
       }
     });
-    
     
     return successResponse(res, {
       ...qrCode,
@@ -210,9 +222,13 @@ const generateQRCodeWithUserInfo = async (req, res) => {
         directMessage: directMsg,
         whatsappUrl, 
         randomCode,
+        directUrl: directUrl || whatsappUrl,
+        messageUrl: messageUrl || redirectUrl,
         messageSource: {
           customerMessage: messageForCustomer ? 'user_input' : user.directChatMessage ? 'profile_default' : 'system_default',
-          directMessage: directMessage ? 'user_input' : user.directChatMessage ? 'profile_default' : 'system_default'
+          directMessage: directMessage ? 'user_input' : user.directChatMessage ? 'profile_default' : 'system_default',
+          directUrl: directUrl ? 'user_input' : 'whatsapp_default',
+          messageUrl: messageUrl ? 'user_input' : 'redirect_default'
         }
       }
     }, 'QR code generated successfully with user information');
@@ -358,35 +374,6 @@ const getQRCodeByCode = async (req, res) => {
     
   } catch (error) {
     console.error('Get QR code error:', error);
-    return errorResponse(res, 'Internal server error', 500);
-  }
-};
-
-// Update QR code
-const updateQRCode = async (req, res) => {
-  try {
-    // Check if QR code exists and belongs to user
-    const existingQRCode = await prisma.qRCode.findFirst({
-      where: {
-        id: req.params.id,
-        userId: req.user.userId
-      }
-    });
-    
-    if (!existingQRCode) {
-      return errorResponse(res, 'QR code not found', 404);
-    }
-    
-    // Update QR code
-    const qrCode = await prisma.qRCode.update({
-      where: { id: req.params.id },
-      data: req.body
-    });
-    
-    return successResponse(res, qrCode, 'QR code updated successfully');
-    
-  } catch (error) {
-    console.error('Update QR code error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
 };
@@ -828,13 +815,192 @@ const getQRCodesWithAnalytics = async (req, res) => {
   }
 };
 
+// Generate WhatsApp QR code with short links (Client's requirement)
+const generateWhatsAppQRCode = async (req, res) => {
+  try {
+    const { userMessage, directChatPhone, directChatMessage } = req.body;
+    
+    if (!userMessage || !directChatPhone || !directChatMessage) {
+      return errorResponse(res, 'Missing required data: userMessage, directChatPhone, directChatMessage', 400);
+    }
+
+    const appUrl = process.env.FRONTEND_URL || 'https://www.plusfive.io';
+
+    // 1. Direct Chat short link (with /he/)
+    const directChatShortCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const encodedDirectChatMsg = encodeURIComponent(directChatMessage);
+    const directChatTargetUrl = `https://api.whatsapp.com/send?phone=${directChatPhone}&text=${encodedDirectChatMsg}`;
+
+    // Store direct chat link in database
+    const directChatLink = await prisma.qRCode.create({
+      data: {
+        userId: req.user.userId,
+        name: `Direct Chat - ${directChatPhone}`,
+        url: directChatTargetUrl,
+        qrData: directChatShortCode,
+        messageForCustomer: directChatMessage,
+        directMessage: directChatMessage,
+        directUrl: directChatTargetUrl,
+        messageUrl: `${appUrl}/${directChatShortCode}`,
+        qrCodeImage: null, // Will be generated later
+      }
+    });
+
+    const directChatShortLink = `${appUrl}/${directChatShortCode}`;
+
+    // 2. Main short link (with /he/)
+    const finalMessage = `${userMessage}\n\n${directChatShortLink}`;
+    const encodedFinalMessage = encodeURIComponent(finalMessage);
+    const mainTargetUrl = `https://api.whatsapp.com/send?text=${encodedFinalMessage}`;
+
+    const mainShortCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const mainLink = await prisma.qRCode.create({
+      data: {
+        userId: req.user.userId,
+        name: `Main Message - ${req.user.userId}`,
+        url: mainTargetUrl,
+        qrData: mainShortCode,
+        messageForCustomer: userMessage,
+        directMessage: finalMessage,
+        directUrl: mainTargetUrl,
+        messageUrl: `${appUrl}/${mainShortCode}`,
+        qrCodeImage: null, // Will be generated later
+      }
+    });
+
+    const mainShortLink = `${appUrl}/${mainShortCode}`;
+
+    // Generate QR code images for both links
+    const [directChatQRImage, mainQRImage] = await Promise.all([
+      QRCode.toDataURL(directChatShortLink, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        quality: 0.92,
+        margin: 1,
+        width: 200,
+        color: { dark: '#000000', light: '#FFFFFF' }
+      }),
+      QRCode.toDataURL(mainShortLink, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        quality: 0.92,
+        margin: 1,
+        width: 200,
+        color: { dark: '#000000', light: '#FFFFFF' }
+      })
+    ]);
+
+    // Update both QR codes with generated images
+    await Promise.all([
+      prisma.qRCode.update({
+        where: { id: directChatLink.id },
+        data: { qrCodeImage: directChatQRImage }
+      }),
+      prisma.qRCode.update({
+        where: { id: mainLink.id },
+        data: { qrCodeImage: mainQRImage }
+      })
+    ]);
+
+    return successResponse(res, {
+      mainShortLink,
+      directChatShortLink,
+      mainLinkId: mainLink.id,
+      directChatLinkId: directChatLink.id,
+      mainQRImage,
+      directChatQRImage,
+      links: {
+        main: {
+          shortCode: mainShortCode,
+          targetUrl: mainTargetUrl,
+          shortLink: mainShortLink
+        },
+        directChat: {
+          shortCode: directChatShortCode,
+          targetUrl: directChatTargetUrl,
+          shortLink: directChatShortLink
+        }
+      }
+    }, 'WhatsApp QR codes generated successfully');
+
+  } catch (error) {
+    console.error('Generate WhatsApp QR code error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+// Scan QR code and increment scan count
+const scanQRCode = async (req, res) => {
+  try {
+    const { shortCode } = req.params;
+    
+    // Find QR code by short code
+    const qrCode = await prisma.qRCode.findFirst({
+      where: { qrData: shortCode }
+    });
+    
+    if (!qrCode) {
+      return res.status(404).send('QR Code not found');
+    }
+    
+    // Increment scan count
+    await prisma.qRCode.update({
+      where: { id: qrCode.id },
+      data: {
+        scanCount: {
+          increment: 1
+        }
+      }
+    });
+    
+    // Redirect to the actual WhatsApp URL
+    res.redirect(qrCode.url);
+    
+  } catch (error) {
+    console.error('QR scan error:', error);
+    res.status(500).send('Internal server error');
+  }
+};
+
+// Share QR code and increment share count
+const shareQRCode = async (req, res) => {
+  try {
+    const { shortCode } = req.params;
+    
+    // Find QR code by short code
+    const qrCode = await prisma.qRCode.findFirst({
+      where: { qrData: shortCode }
+    });
+    
+    if (!qrCode) {
+      return res.status(404).send('QR Code not found');
+    }
+    
+    // Increment share count
+    await prisma.qRCode.update({
+      where: { id: qrCode.id },
+      data: {
+        shareCount: {
+          increment: 1
+        }
+      }
+    });
+    
+    // Redirect to the actual WhatsApp URL
+    res.redirect(qrCode.url);
+    
+  } catch (error) {
+    console.error('QR share error:', error);
+    res.status(500).send('Internal server error');
+  }
+};
+
 module.exports = {
   getAllQRCodes,
   createQRCode,
   generateQRCodeWithUserInfo,
   getQRCodeById,
   getQRCodeByCode,
-  updateQRCode,
   deleteQRCode,
   serveQRCodeImage,
   incrementShareCount,
@@ -843,5 +1009,8 @@ module.exports = {
   // New analytics methods
   getQRAnalytics,
   getQRPerformance,
-  getQRCodesWithAnalytics
+  getQRCodesWithAnalytics,
+  generateWhatsAppQRCode,
+  scanQRCode,
+  shareQRCode
 }; 
