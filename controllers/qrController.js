@@ -161,7 +161,7 @@ const generateQRCodeWithUserInfo = async (req, res) => {
         firstName: true,
         lastName: true,
         businessName: true,
-        whatsappNumber: true,
+        phoneNumber: true,
         directChatMessage: true
       }
     });
@@ -178,8 +178,8 @@ const generateQRCodeWithUserInfo = async (req, res) => {
     const directMsg = directMessage;
     
     // Create WhatsApp URL with dynamic message
-    const whatsappNumber = user.whatsappNumber || '';
-    const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(directMsg)}`;
+    const phoneNumber = user.phoneNumber || '';
+    const whatsappUrl = `https://wa.me/${phoneNumber.replace(/\D/g, '')}?text=${encodeURIComponent(directMsg)}`;
     
     // Generate QR code image using the full redirect URL
     const redirectUrl = `${process.env.FRONTEND_URL}/qr/redirect/${randomCode}`;
@@ -217,7 +217,7 @@ const generateQRCodeWithUserInfo = async (req, res) => {
         firstName: user.firstName,
         lastName: user.lastName,
         businessName: user.businessName,
-        whatsappNumber: user.whatsappNumber,
+        phoneNumber: user.phoneNumber,
         customerMessage,
         directMessage: directMsg,
         whatsappUrl, 
