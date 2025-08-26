@@ -57,20 +57,20 @@ router.post('/', authenticateToken, validateRequest(qrCodeCreateSchema), createQ
 // POST /api/qr/generate-with-user-info - Generate QR code with user's information
 router.post('/generate-with-user-info', authenticateToken, generateQRCodeWithUserInfo);
 
-// POST /api/qr/:id/share - Increment share count
-router.post('/:id/share', authenticateToken, incrementShareCount);
-
-// POST /api/qr/:id/scan - Increment scan count
-router.post('/:id/scan', authenticateToken, incrementScanCount);
-
-// GET /api/qr/:id - Get QR code by ID
-router.get('/:id', authenticateToken, getQRCodeById);
-
-// GET /api/qr/:id - Get QR code by Code
-router.get('/:code', authenticateToken, getQRCodeByCode);
+// GET /api/qr/qr-code/:code - Get QR code by Code (View Only - No Scan Tracking)
+router.get('/qr-code/:code', getQRCodeByCode);
 
 // GET /api/qr/:id/analytics - Get analytics for a specific QR code
 router.get('/:id/analytics', authenticateToken, getQRAnalytics);
+
+// POST /api/qr/:id/share - Increment share count
+router.post('/:id/share', authenticateToken, incrementShareCount);
+
+// POST /api/qr/:id/scan - Increment scan count (Public API - No Authentication Required)
+router.post('/:id/scan', incrementScanCount);
+
+// GET /api/qr/:id/image - Serve QR code image directly
+router.get('/:id/image', authenticateToken, serveQRCodeImage);
 
 // PUT /api/qr/:id - Update QR code
 router.put('/:id', authenticateToken, validateRequest(qrCodeUpdateSchema), updateQRCode);
@@ -78,7 +78,7 @@ router.put('/:id', authenticateToken, validateRequest(qrCodeUpdateSchema), updat
 // DELETE /api/qr/:id - Delete QR code
 router.delete('/:id', authenticateToken, deleteQRCode);
 
-// GET /api/qr/:id/image - Serve QR code image directly
-router.get('/:id/image', authenticateToken, serveQRCodeImage);
+// GET /api/qr/:id - Get QR code by ID (Must be last to avoid conflicts)
+router.get('/:id', authenticateToken, getQRCodeById);
 
 module.exports = router; 

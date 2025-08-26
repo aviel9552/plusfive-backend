@@ -294,18 +294,15 @@ const getQRCodeById = async (req, res) => {
     return errorResponse(res, 'Internal server error', 500);
   }
 };
-// Get QR code by code
+
+// Get QR code by CODE (View Only - No Scan Tracking)
 const getQRCodeByCode = async (req, res) => {
   try {
-    // If user is admin, can access any QR code, otherwise only user's own QR codes
-    // const where = {
-    //   id: req.params.id,
-    //   ...(req.user.role !== 'admin' && { userId: req.user.userId })
-    // };
+    const { code } = req.params;
     
     const qrCode = await prisma.qRCode.findFirst({
       where: {
-        qrData: req.params.code
+        qrData: code
       },
       include: {
         user: {
@@ -347,7 +344,7 @@ const getQRCodeByCode = async (req, res) => {
       
       // Update the QR code with the generated image
       await prisma.qRCode.update({
-        where: { id: req.params.id },
+        where: { id: qrCode.id },
         data: { qrCodeImage: qrCodeImage }
       });
       
@@ -356,8 +353,7 @@ const getQRCodeByCode = async (req, res) => {
     
     return successResponse(res, {
       ...qrCode,
-      userRole: req.user.role,
-      isAdmin: req.user.role === 'admin'
+      message: 'QR code retrieved successfully'
     });
     
   } catch (error) {
@@ -423,7 +419,7 @@ const deleteQRCode = async (req, res) => {
   }
 };
 
-// Increment scan count for QR code (authenticated endpoint)
+// Increment scan count for QR code (Public API - No Authentication Required)
 const incrementScanCount = async (req, res) => {
   try {
     const { id } = req.params;
@@ -435,6 +431,28 @@ const incrementScanCount = async (req, res) => {
     
     if (!qrCode) {
       return errorResponse(res, 'QR code not found', 404);
+    }
+    
+    // Track the scan with detailed information
+    try {
+      await prisma.qRCodeScan.create({
+        data: {
+          qrCodeId: qrCode.id,
+          userId: qrCode.userId,
+          referrer: req.get('Referer') || 'Direct Access',
+          userAgent: req.get('User-Agent') || 'Unknown',
+          ipAddress: req.ip || req.connection.remoteAddress || 'Unknown',
+          scanData: JSON.stringify({
+            timestamp: new Date().toISOString(),
+            method: req.method,
+            path: req.path,
+            source: 'scan_endpoint'
+          })
+        }
+      });
+    } catch (scanError) {
+      console.error('Error tracking QR code scan:', scanError);
+      // Don't fail the main request if scan tracking fails
     }
     
     // Increment scan count

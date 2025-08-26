@@ -3,7 +3,7 @@ const prisma = new PrismaClient();
 
 class AdminDashboardController {
   // Get monthly performance metrics
-  async getMonthlyPerformance(req, res) {
+  getMonthlyPerformance = async (req, res) => {
     try {
       const { month, year } = req.query;
       const currentDate = new Date();
@@ -195,12 +195,13 @@ class AdminDashboardController {
   }
 
   // Get revenue impact over months
-  async getRevenueImpact(req, res) {
+  getRevenueImpact = async (req, res) => {
+    console.log("getRevenueImpact 2222222222222222222222222222222222222222222222222222222", req.query);
     try {
       const { months = 7 } = req.query;
       const currentDate = new Date();
       const revenueData = [];
-
+      
       for (let i = months - 1; i >= 0; i--) {
         const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
         const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
@@ -229,6 +230,7 @@ class AdminDashboardController {
         success: true,
         data: revenueData
       });
+      console.log("revenueData ", revenueData);
     } catch (error) {
       console.error('Error getting revenue impact:', error);
       res.status(500).json({
@@ -240,7 +242,7 @@ class AdminDashboardController {
   }
 
   // Get customer status breakdown
-  async getCustomerStatusBreakdown(req, res) {
+  getCustomerStatusBreakdown = async (req, res) => {
     try {
       const totalCustomers = await prisma.customers.count();
 
@@ -346,7 +348,7 @@ class AdminDashboardController {
   }
 
   // Get admin summary
-  async getAdminSummary(req, res) {
+  getAdminSummary = async (req, res) => {
     try {
       const totalAdmins = await prisma.user.count({
         where: {
@@ -412,7 +414,7 @@ class AdminDashboardController {
   }
 
   // Get dashboard overview (all metrics in one call)
-  async getDashboardOverview(req, res) {
+  getDashboardOverview = async (req, res) => {
     try {
       const [monthlyPerformance, revenueImpact, customerStatus, adminSummary] = await Promise.all([
         this.getMonthlyPerformanceData(req),

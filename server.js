@@ -61,6 +61,9 @@ app.use('/api/auth/', loginLimiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Trust proxy for proper IP address handling
+app.set('trust proxy', true);
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
