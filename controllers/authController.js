@@ -20,8 +20,11 @@ const register = async (req, res) => {
 
     // Check if user already exists with this phone number
     if (phoneNumber) {
+      // Format phone number before checking
+      const formattedPhoneNumber = formatPhoneNumber(phoneNumber);
+      
       const existingUserByPhone = await prisma.user.findUnique({
-        where: { phoneNumber }
+        where: { phoneNumber: formattedPhoneNumber }
       });
 
       if (existingUserByPhone) {
@@ -34,7 +37,7 @@ const register = async (req, res) => {
 
     // Filter valid fields for user creation
     const validUserFields = {
-      phoneNumber: phoneNumber,
+      phoneNumber: phoneNumber ? formatPhoneNumber(phoneNumber) : phoneNumber,
       businessName: otherFields.businessName,
       businessType: otherFields.businessType,
       address: otherFields.address,
@@ -393,6 +396,22 @@ const changePassword = async (req, res) => {
     console.error('Change password error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
+};
+
+// Helper function to format phone number
+const formatPhoneNumber = (phoneNumber) => {
+  if (!phoneNumber) return phoneNumber;
+  
+  // Remove all non-digit characters
+  let cleanNumber = phoneNumber.replace(/\D/g, '');
+  
+  // If number starts with 0, remove it
+  if (cleanNumber.startsWith('0')) {
+    cleanNumber = cleanNumber.substring(1);
+  }
+  
+  // Add +972 prefix
+  return `+972${cleanNumber}`;
 };
 
 module.exports = {

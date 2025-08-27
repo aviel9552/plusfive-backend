@@ -219,13 +219,22 @@ const updateProfile = async (req, res) => {
 
 // Update user by ID (admin only)
 const updateUserById = async (req, res) => {
-  console.log('updateUserById', req.body);
   try {
     const { id } = req.params;
+    
+    // Format phone number if provided
+    let updateData = { ...req.body };
+    let originalPhoneNumber = null;
+    
+    if (updateData.phoneNumber) {
+      originalPhoneNumber = updateData.phoneNumber; // Store original for response
+      updateData.phoneNumber = formatPhoneNumber(updateData.phoneNumber);
+      updateData.whatsappNumber = updateData.phoneNumber;
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id },
-      data: req.body,
+      data: updateData,
       select: {
         id: true,
         email: true,
@@ -250,11 +259,32 @@ const updateUserById = async (req, res) => {
       }
     });
 
+    // Override phone number in response to show original formatted number
+    if (originalPhoneNumber) {
+      updatedUser.phoneNumber = originalPhoneNumber;
+    }
+
     return successResponse(res, updatedUser, 'User updated successfully');
   } catch (error) {
     console.error('Update user by ID error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
+};
+
+// Helper function to format phone number
+const formatPhoneNumber = (phoneNumber) => {
+  if (!phoneNumber) return phoneNumber;
+  
+  // Remove all non-digit characters
+  let cleanNumber = phoneNumber.replace(/\D/g, '');
+  
+  // If number starts with 0, remove it
+  if (cleanNumber.startsWith('0')) {
+    cleanNumber = cleanNumber.substring(1);
+  }
+  
+  // Add +972 prefix
+  return `+972${cleanNumber}`;
 };
 
 // Delete user by ID (admin only)

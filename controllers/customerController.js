@@ -452,7 +452,7 @@ const updateCustomer = async (req, res) => {
         if (email) userUpdateData.email = email;
         if (firstName) userUpdateData.firstName = firstName;
         if (lastName) userUpdateData.lastName = lastName;
-        if (phoneNumber !== undefined) userUpdateData.phoneNumber = phoneNumber;
+        if (phoneNumber !== undefined) userUpdateData.phoneNumber = formatPhoneNumber(phoneNumber);
         if (businessName !== undefined) userUpdateData.businessName = businessName;
         if (businessType !== undefined) userUpdateData.businessType = businessType;
         if (address !== undefined) userUpdateData.address = address;
@@ -749,6 +749,22 @@ const recordCustomerVisit = async (req, res) => {
     console.error('Record customer visit error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
+};
+
+// Helper function to format phone number
+const formatPhoneNumber = (phoneNumber) => {
+  if (!phoneNumber) return phoneNumber;
+  
+  // Remove all non-digit characters
+  let cleanNumber = phoneNumber.replace(/\D/g, '');
+  
+  // If number starts with 0, remove it
+  if (cleanNumber.startsWith('0')) {
+    cleanNumber = cleanNumber.substring(1);
+  }
+  
+  // Add +972 prefix
+  return `+972${cleanNumber}`;
 };
 
 module.exports = {

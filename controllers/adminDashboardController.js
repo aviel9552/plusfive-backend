@@ -5,6 +5,63 @@ class AdminDashboardController {
   // Get monthly performance metrics
   getMonthlyPerformance = async (req, res) => {
     try {
+
+      const authenticatedUser = req.user;
+      const where = {
+        userId: authenticatedUser.userId // Filter by authenticated user only
+      };
+
+      let allCustomers;
+      if (authenticatedUser.role === 'user') {
+        // Get all customers for this user
+        allCustomers = await prisma.customers.findMany({
+          where,
+          select: {
+            id: true,
+            userId: true
+          }
+        });
+      } else {
+        // Get all customers for all users
+        allCustomers = await prisma.customers.findMany({
+          select: {
+            id: true,
+            userId: true
+          }
+        });
+      }
+
+      // Initialize counters
+      const statusCounts = {
+        active: 0,
+        at_risk: 0,
+        lost: 0,
+        recovered: 0,
+        new: 0
+      };
+
+      // Get status for each customer from CustomerUser table
+      for (const customer of allCustomers) {
+        const customerUserStatus = await prisma.customerUser.findFirst({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId,
+            isDeleted: false // Only count active relationships
+          },
+          orderBy: {
+            createdAt: 'desc'
+          },
+          select: {
+            status: true
+          }
+        });
+
+        const status = customerUserStatus?.status || 'active';
+        if (statusCounts.hasOwnProperty(status)) {
+          statusCounts[status]++;
+        }
+      }
+
       const { month, year } = req.query;
       const currentDate = new Date();
       const targetMonth = month || currentDate.getMonth() + 1;
@@ -153,19 +210,21 @@ class AdminDashboardController {
         data: {
           recoveredCustomers: {
             value: recoveredCustomers,
+            count: statusCounts.recovered || 0,
             change: calculatePercentageChange(recoveredCustomers, prevRecoveredCustomers),
             trend: recoveredCustomers >= prevRecoveredCustomers ? 'up' : 'down'
           },
           recoveredRevenue: {
-            value: recoveredRevenue._sum.amount || 0,
+            value: Math.round(recoveredRevenue._sum.amount) || 0,
             change: calculatePercentageChange(
-              recoveredRevenue._sum.amount || 0,
-              prevRecoveredRevenue._sum.amount || 0
+              Math.round(recoveredRevenue._sum.amount) || 0,
+              Math.round(prevRecoveredRevenue._sum.amount) || 0
             ),
-            trend: (recoveredRevenue._sum.amount || 0) >= (prevRecoveredRevenue._sum.amount || 0) ? 'up' : 'down'
+            trend: (Math.round(recoveredRevenue._sum.amount) || 0) >= (Math.round(prevRecoveredRevenue._sum.amount) || 0) ? 'up' : 'down'
           },
           lostRevenue: {
-            value: lostRevenue._sum.amount || 0,
+            value:  Math.round(lostRevenue._sum.amount) || 0,
+            count: statusCounts.lost || 0,
             change: calculatePercentageChange(
               lostRevenue._sum.amount || 0,
               prevLostRevenue._sum.amount || 0
@@ -173,7 +232,7 @@ class AdminDashboardController {
             trend: (lostRevenue._sum.amount || 0) >= (prevLostRevenue._sum.amount || 0) ? 'up' : 'down'
           },
           customerLTV: {
-            value: (customerLTV._avg.amount || 0).toFixed(1),
+            value: Math.round(customerLTV._avg.amount || 0),
             change: calculatePercentageChange(
               customerLTV._avg.amount || 0,
               prevCustomerLTV._avg.amount || 0
@@ -196,12 +255,12 @@ class AdminDashboardController {
 
   // Get revenue impact over months
   getRevenueImpact = async (req, res) => {
-    console.log("getRevenueImpact 2222222222222222222222222222222222222222222222222222222", req.query);
+    // console.log("getRevenueImpact 2222222222222222222222222222222222222222222222222222222", req.query);
     try {
       const { months = 7 } = req.query;
       const currentDate = new Date();
       const revenueData = [];
-      
+
       for (let i = months - 1; i >= 0; i--) {
         const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
         const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
@@ -230,7 +289,7 @@ class AdminDashboardController {
         success: true,
         data: revenueData
       });
-      console.log("revenueData ", revenueData);
+      // console.log("revenueData ", revenueData);
     } catch (error) {
       console.error('Error getting revenue impact:', error);
       res.status(500).json({
@@ -272,7 +331,7 @@ class AdminDashboardController {
       // At risk customers
       const atRiskCustomers = await prisma.customerUser.count({
         where: {
-          status: 'risk'
+          status: 'at_risk' || 'risk' || 'at risk' || 'risk'
         }
       });
 
@@ -454,73 +513,73 @@ class AdminDashboardController {
     const prevStartDate = new Date(targetYear, targetMonth - 2, 1);
     const prevEndDate = new Date(targetYear, targetMonth - 1, 0, 23, 59, 59);
 
-    const [recoveredCustomers, prevRecoveredCustomers, recoveredRevenue, prevRecoveredRevenue, 
-           lostRevenue, prevLostRevenue, customerLTV, prevCustomerLTV] = await Promise.all([
-      prisma.customerUser.count({
-        where: {
-          status: 'recovered',
-          updatedAt: { gte: startDate, lte: endDate }
-        }
-      }),
-      prisma.customerUser.count({
-        where: {
-          status: 'recovered',
-          updatedAt: { gte: prevStartDate, lte: prevEndDate }
-        }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          createdAt: { gte: startDate, lte: endDate },
-          user: {
-            customerUsers: {
-              some: { status: 'recovered' }
-            }
+    const [recoveredCustomers, prevRecoveredCustomers, recoveredRevenue, prevRecoveredRevenue,
+      lostRevenue, prevLostRevenue, customerLTV, prevCustomerLTV] = await Promise.all([
+        prisma.customerUser.count({
+          where: {
+            status: 'recovered',
+            updatedAt: { gte: startDate, lte: endDate }
           }
-        },
-        _sum: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          createdAt: { gte: prevStartDate, lte: prevEndDate },
-          user: {
-            customerUsers: {
-              some: { status: 'recovered' }
-            }
+        }),
+        prisma.customerUser.count({
+          where: {
+            status: 'recovered',
+            updatedAt: { gte: prevStartDate, lte: prevEndDate }
           }
-        },
-        _sum: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          createdAt: { gte: startDate, lte: endDate },
-          user: {
-            customerUsers: {
-              some: { status: 'lost' }
+        }),
+        prisma.payment.aggregate({
+          where: {
+            createdAt: { gte: startDate, lte: endDate },
+            user: {
+              customerUsers: {
+                some: { status: 'recovered' }
+              }
             }
-          }
-        },
-        _sum: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          createdAt: { gte: prevStartDate, lte: prevEndDate },
-          user: {
-            customerUsers: {
-              some: { status: 'lost' }
+          },
+          _sum: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: {
+            createdAt: { gte: prevStartDate, lte: prevEndDate },
+            user: {
+              customerUsers: {
+                some: { status: 'recovered' }
+              }
             }
-          }
-        },
-        _sum: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: { createdAt: { gte: startDate, lte: endDate } },
-        _avg: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: { createdAt: { gte: prevStartDate, lte: prevEndDate } },
-        _avg: { amount: true }
-      })
-    ]);
+          },
+          _sum: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: {
+            createdAt: { gte: startDate, lte: endDate },
+            user: {
+              customerUsers: {
+                some: { status: 'lost' }
+              }
+            }
+          },
+          _sum: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: {
+            createdAt: { gte: prevStartDate, lte: prevEndDate },
+            user: {
+              customerUsers: {
+                some: { status: 'lost' }
+              }
+            }
+          },
+          _sum: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: { createdAt: { gte: startDate, lte: endDate } },
+          _avg: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: { createdAt: { gte: prevStartDate, lte: prevEndDate } },
+          _avg: { amount: true }
+        })
+      ]);
 
     const calculatePercentageChange = (current, previous) => {
       if (previous === 0) return current > 0 ? 100 : 0;
@@ -606,7 +665,7 @@ class AdminDashboardController {
         where: { status: 'active' }
       }),
       prisma.customerUser.count({
-        where: { status: 'risk' }
+        where: { status: 'risk' || 'at_risk' || 'at risk' || 'risk' }
       }),
       prisma.customerUser.count({
         where: { status: 'lost' }
