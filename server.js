@@ -25,6 +25,7 @@ const reviewRoutes = require('./routes/reviews');
 const customerStatusRoutes = require('./routes/customerStatus');
 const whatsappRoutes = require('./routes/whatsapp');
 const adminDashboardRoutes = require('./routes/adminDashboard');
+const stripeRoutes = require('./routes/stripe');
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.use('/api/customer-status', customerStatusRoutes);
 
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/admin-dashboard', adminDashboardRoutes);
+app.use('/api/stripe', stripeRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
