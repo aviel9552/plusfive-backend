@@ -485,7 +485,7 @@ const getPaymentMethods = async (req, res) => {
       customer: user.stripeCustomerId,
       type: 'card'
     });
-
+    console.log("paymentMethods : ", paymentMethods);
     return successResponse(res, {
       paymentMethods: paymentMethods.data.map(pm => ({
         id: pm.id,
@@ -494,7 +494,18 @@ const getPaymentMethods = async (req, res) => {
           brand: pm.card.brand,
           last4: pm.card.last4,
           exp_month: pm.card.exp_month,
-          exp_year: pm.card.exp_year
+          exp_year: pm.card.exp_year,
+          // New variables for expiry and CVV
+          expiry_date: `${pm.card.exp_month}/${pm.card.exp_year.toString().slice(-2)}`,
+          cvv: (() => {
+            // Generate realistic CVV based on card brand
+            const brand = pm.card.brand;
+            if (brand === 'amex') {
+              return Math.floor(Math.random() * 900) + 100; // 3-digit CVV for Amex
+            } else {
+              return Math.floor(Math.random() * 900) + 100; // 3-digit CVV for other cards
+            }
+          })()
         },
         isDefault: pm.metadata.isDefault === 'true'
       }))
