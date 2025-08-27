@@ -176,17 +176,21 @@ model Payment {
 }
 
 model QRCode {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  url         String
-  qrData      String
-  qrCodeImage String?  // Store the generated QR code image as data URL
-  isActive    Boolean  @default(true)
-  scanCount   Int      @default(0)
-  shareCount  Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(cuid())
+  userId            String
+  name              String
+  url               String
+  qrData            String
+  qrCodeImage       String?  // Store the generated QR code image as data URL
+  messageForCustomer String? // Custom message for customers
+  directMessage     String?  // Direct message for WhatsApp/contact
+  directUrl         String?  // Direct URL for business
+  messageUrl        String?  // Message URL for customers
+  isActive          Boolean  @default(true)
+  scanCount         Int      @default(0)
+  shareCount        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   scans QRCodeScan[] // Relationship to scan records
