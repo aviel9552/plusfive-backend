@@ -447,6 +447,82 @@ const handleAppointmentWebhook = async (req, res) => {
         customerId: customerId,
         data: actualData
       });
+
+      // If customerId is found, send WhatsApp review request
+      if (customerId) {
+        try {
+          console.log('📱 Sending WhatsApp review request for customerId:', customerId);
+          
+          // Import review service
+          const reviewService = require('../services/Whatsapp/ReviewService');
+          
+          // Fetch customer details to get business info
+          const customer = await prisma.customers.findUnique({
+            where: { id: customerId },
+            include: {
+              user: {
+                select: {
+                  businessName: true,
+                  firstName: true,
+                  lastName: true,
+                  phoneNumber: true,
+                  whatsappNumber: true
+                }
+              }
+            }
+          });
+          
+          if (customer && customer.user) {
+            // Determine if this is a new or regular customer based on appointmentCount
+            const isNewCustomer = customer.appointmentCount <= 1;
+            
+            let result;
+            if (isNewCustomer) {
+              // Send new customer rating request
+              result = await reviewService.sendNewCustomerRatingRequest(
+                customer.customerFullName,
+                customer.user.businessName,
+                customer.customerPhone
+              );
+            } else {
+              // Send regular customer rating request (randomly choose v1 or v2)
+              const useV1 = Math.random() < 0.5;
+              if (useV1) {
+                result = await reviewService.sendRegularCustomerRatingRequest1(
+                  customer.customerFullName,
+                  customer.user.businessName,
+                  customer.customerPhone
+                );
+              } else {
+                result = await reviewService.sendRegularCustomerRatingRequest2(
+                  customer.customerFullName,
+                  customer.user.businessName,
+                  customer.customerPhone
+                );
+              }
+            }
+            
+            // Store in database for tracking
+            const reviewRecord = await prisma.review.create({
+              data: {
+                customerId: customer.id,
+                userId: customer.userId,
+                rating: 0, // Placeholder - will be updated when customer responds
+                message: `Rating request sent to ${isNewCustomer ? 'new' : 'regular'} customer via WhatsApp after payment`,
+                status: 'sent',
+                whatsappMessageId: result.whatsappResponse?.messages?.[0]?.id || null,
+                messageStatus: 'sent'
+              }
+            });
+            
+            console.log(`📊 Review request tracked in database after payment:`, reviewRecord.id);
+            console.log(`✅ WhatsApp review request sent successfully for customer:`, customer.customerFullName);
+          }
+        } catch (whatsappError) {
+          console.error('❌ Error sending WhatsApp review request after payment:', whatsappError);
+          // Don't fail the webhook if WhatsApp fails
+        }
+      }
       
       return successResponse(res, {
         webhookId: paymentLog.id,
@@ -454,7 +530,8 @@ const handleAppointmentWebhook = async (req, res) => {
         userId: userId,
         customerId: customerId,
         message: 'Payment checkout webhook received successfully',
-        data: actualData
+        data: actualData,
+        whatsappReviewSent: customerId ? true : false
       }, 'Payment checkout webhook processed successfully', 201);
       
     } catch (error) {
