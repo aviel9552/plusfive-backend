@@ -36,6 +36,10 @@ model User {
   termsAccepted     Boolean   @default(false)
   subscriptionStatus String   @default("active")
   
+  // Stripe integration
+  stripeCustomerId  String?   @unique
+  stripeSubscriptionId String?
+  
   // Referral system
   referralCode      String?   @unique
 
