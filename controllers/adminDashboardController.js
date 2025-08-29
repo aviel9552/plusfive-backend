@@ -196,7 +196,6 @@ class AdminDashboardController {
 
   // Get revenue impact over months
   getRevenueImpact = async (req, res) => {
-    console.log("getRevenueImpact 2222222222222222222222222222222222222222222222222222222", req.query);
     try {
       const { months = 7 } = req.query;
       const currentDate = new Date();
