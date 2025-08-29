@@ -342,7 +342,6 @@ const handleWebhook = async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  console.log(`✅ Webhook received: ${event.type}`);
 
   try {
     switch (event.type) {
@@ -485,7 +484,11 @@ const getPaymentMethods = async (req, res) => {
       customer: user.stripeCustomerId,
       type: 'card'
     });
-    console.log("paymentMethods : ", paymentMethods);
+
+    // Get customer to check default payment method
+    const customer = await stripe.customers.retrieve(user.stripeCustomerId);
+    const defaultPaymentMethodId = customer.invoice_settings?.default_payment_method;
+    
     return successResponse(res, {
       paymentMethods: paymentMethods.data.map(pm => ({
         id: pm.id,
@@ -495,19 +498,21 @@ const getPaymentMethods = async (req, res) => {
           last4: pm.card.last4,
           exp_month: pm.card.exp_month,
           exp_year: pm.card.exp_year,
-          // New variables for expiry and CVV
-          expiry_date: `${pm.card.exp_month}/${pm.card.exp_year.toString().slice(-2)}`,
-          cvv: (() => {
-            // Generate realistic CVV based on card brand
-            const brand = pm.card.brand;
-            if (brand === 'amex') {
-              return Math.floor(Math.random() * 900) + 100; // 3-digit CVV for Amex
-            } else {
-              return Math.floor(Math.random() * 900) + 100; // 3-digit CVV for other cards
-            }
-          })()
+          // Professional expiry display
+          expiry_date: `${pm.card.exp_month.toString().padStart(2, '0')}/${pm.card.exp_year.toString().slice(-2)}`,
+          // Card brand icon and display name
+          brand_display: pm.card.brand.charAt(0).toUpperCase() + pm.card.brand.slice(1),
+          // Masked card number for display
+          masked_number: `•••• •••• •••• ${pm.card.last4}`,
+          // Check if card is expired
+          is_expired: new Date(pm.card.exp_year, pm.card.exp_month - 1) < new Date()
         },
-        isDefault: pm.metadata.isDefault === 'true'
+        billing_details: pm.billing_details || null,
+        // Check if this is the default payment method
+        isDefault: pm.id === defaultPaymentMethodId,
+        // Additional metadata
+        created: pm.created,
+        livemode: pm.livemode
       }))
     });
 
@@ -518,16 +523,11 @@ const getPaymentMethods = async (req, res) => {
 };
 
 /**
- * Add new payment method
+ * Get comprehensive billing dashboard data
  */
-const addPaymentMethod = async (req, res) => {
+const getBillingDashboard = async (req, res) => {
   try {
-    const { paymentMethodId, isDefault = false, billingDetails } = req.body;
     const userId = req.user.userId;
-
-    if (!paymentMethodId) {
-      return errorResponse(res, 'Missing paymentMethodId', 400);
-    }
 
     // Get user from database
     const user = await prisma.user.findUnique({
@@ -546,25 +546,258 @@ const addPaymentMethod = async (req, res) => {
       return errorResponse(res, 'No Stripe customer found', 400);
     }
 
+    // Get customer and subscription data
+    const [customer, subscriptions, invoices] = await Promise.all([
+      stripe.customers.retrieve(user.stripeCustomerId),
+      stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: 'active',
+        limit: 1
+      }),
+      stripe.invoices.list({
+        customer: user.stripeCustomerId,
+        status: 'paid',
+        limit: 10
+      })
+    ]);
+
+    // Get payment methods
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: user.stripeCustomerId,
+      type: 'card'
+    });
+
+    const defaultPaymentMethodId = customer.invoice_settings?.default_payment_method;
+    const activeSubscription = subscriptions.data[0];
+    
+    // Calculate billing cycle dates
+    let currentBillingCycle = null;
+    let nextBillingDate = null;
+    let amountToBeCharged = null;
+
+    if (activeSubscription) {
+      const now = new Date();
+      const periodStart = new Date(activeSubscription.current_period_start * 1000);
+      const periodEnd = new Date(activeSubscription.current_period_end * 1000);
+      
+      // Format billing cycle dates
+      currentBillingCycle = {
+        start: periodStart.toLocaleDateString('en-US', { 
+          month: 'long', 
+          day: 'numeric' 
+        }),
+        end: periodEnd.toLocaleDateString('en-US', { 
+          month: 'long', 
+          day: 'numeric', 
+          year: 'numeric' 
+        }),
+        full_range: `${periodStart.toLocaleDateString('en-US', { 
+          month: 'long', 
+          day: 'numeric' 
+        })} - ${periodEnd.toLocaleDateString('en-US', { 
+          month: 'long', 
+          day: 'numeric', 
+          year: 'numeric' 
+        })}`
+      };
+
+      nextBillingDate = periodEnd.toLocaleDateString('en-US', { 
+        month: 'long', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+
+      // Get amount from subscription
+      if (activeSubscription.items?.data[0]?.price) {
+        const price = activeSubscription.items.data[0].price;
+        amountToBeCharged = {
+          amount: (price.unit_amount / 100).toFixed(2),
+          currency: price.currency.toUpperCase(),
+          formatted: `$${(price.unit_amount / 100).toFixed(2)}`
+        };
+      }
+    }
+
+    // Get default payment method for display with enhanced information
+    let defaultPaymentMethod = null;
+    if (defaultPaymentMethodId) {
+      const defaultPM = paymentMethods.data.find(pm => pm.id === defaultPaymentMethodId);
+      if (defaultPM) {
+        defaultPaymentMethod = {
+          id: defaultPM.id,
+          brand: defaultPM.card.brand,
+          last4: defaultPM.card.last4,
+          exp_month: defaultPM.card.exp_month,
+          exp_year: defaultPM.card.exp_year,
+          expiry_date: `${defaultPM.card.exp_month.toString().padStart(2, '0')}/${defaultPM.card.exp_year.toString().slice(-2)}`,
+          brand_display: defaultPM.card.brand.charAt(0).toUpperCase() + defaultPM.card.brand.slice(1),
+          display: `${defaultPM.card.brand.charAt(0).toUpperCase() + defaultPM.card.brand.slice(1)} **** ${defaultPM.card.last4}`,
+          masked_number: `•••• •••• •••• ${defaultPM.card.last4}`,
+          is_expired: new Date(defaultPM.card.exp_year, defaultPM.card.exp_month - 1) < new Date(),
+          billing_details: defaultPM.billing_details || null
+        };
+      }
+    }
+
+    return successResponse(res, {
+      // Security info (for the purple shield section)
+      security: {
+        encrypted: true,
+        ssl_protection: "256-bit SSL protection",
+        message: "All payment information is encrypted and securely stored with 256-bit SSL protection"
+      },
+      
+      // Payment methods (for the cards section)
+      paymentMethods: paymentMethods.data.map(pm => ({
+        id: pm.id,
+        type: pm.type,
+        card: {
+          brand: pm.card.brand,
+          last4: pm.card.last4,
+          exp_month: pm.card.exp_month,
+          exp_year: pm.card.exp_year,
+          expiry_date: `${pm.card.exp_month.toString().padStart(2, '0')}/${pm.card.exp_year.toString().slice(-2)}`,
+          brand_display: pm.card.brand.charAt(0).toUpperCase() + pm.card.brand.slice(1),
+          masked_number: `•••• •••• •••• ${pm.card.last4}`,
+          is_expired: new Date(pm.card.exp_year, pm.card.exp_month - 1) < new Date()
+        },
+        billing_details: pm.billing_details || null,
+        isDefault: pm.id === defaultPaymentMethodId,
+        created: pm.created,
+        livemode: pm.livemode
+      })),
+      
+      // Billing information (for the right section) - ENHANCED with active payment method
+      billing: {
+        current_billing_cycle: currentBillingCycle,
+        next_billing_date: nextBillingDate,
+        amount_to_be_charged: amountToBeCharged,
+        payment_method: defaultPaymentMethod,
+        subscription_status: activeSubscription ? activeSubscription.status : 'inactive',
+        subscription_plan: activeSubscription?.items?.data[0]?.price?.nickname || 'No active plan',
+        // Additional billing details
+        has_active_payment_method: !!defaultPaymentMethod,
+        payment_method_count: paymentMethods.data.length,
+        next_payment_date: nextBillingDate,
+        subscription_id: activeSubscription?.id || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get billing dashboard error:', error);
+    return errorResponse(res, 'Failed to fetch billing dashboard data', 500);
+  }
+};
+
+/**
+ * Add new payment method - Professional Implementation
+ */
+const addPaymentMethod = async (req, res) => {
+  try {
+    const { 
+      paymentMethodId, 
+      isDefault = false, 
+      cardholderName,
+      billingAddress,
+      city,
+      state,
+      postalCode,
+      country = 'US',
+      // Additional card details for validation and display
+      last4,
+      brand,
+      expMonth,
+      expYear
+    } = req.body;
+    
+    const userId = req.user.userId;
+
+    // Enhanced input validation
+    if (!paymentMethodId) {
+      return errorResponse(res, 'Payment method ID is required', 400);
+    }
+
+    if (!cardholderName || !billingAddress || !city || !postalCode) {
+      return errorResponse(res, 'Missing required billing information: cardholderName, billingAddress, city, and postalCode are required', 400);
+    }
+
+    // Validate card details if provided
+    if (last4 && !/^\d{4}$/.test(last4)) {
+      return errorResponse(res, 'Invalid last4 digits format', 400);
+    }
+
+    if (expMonth && (expMonth < 1 || expMonth > 12)) {
+      return errorResponse(res, 'Invalid expiration month (1-12)', 400);
+    }
+
+    if (expYear && expYear < new Date().getFullYear()) {
+      return errorResponse(res, 'Card has expired', 400);
+    }
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        id: true, 
+        email: true,
+        stripeCustomerId: true 
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    if (!user.stripeCustomerId) {
+      return errorResponse(res, 'No Stripe customer found', 400);
+    }
+
+    // Verify payment method exists and is not already attached
+    let paymentMethod;
+    try {
+      paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+      
+      // Check if already attached to another customer
+      if (paymentMethod.customer && paymentMethod.customer !== user.stripeCustomerId) {
+        return errorResponse(res, 'Payment method is already attached to another account', 400);
+      }
+      
+      // Check if already attached to this customer
+      if (paymentMethod.customer === user.stripeCustomerId) {
+        return errorResponse(res, 'Payment method is already added to your account', 400);
+      }
+    } catch (stripeError) {
+      if (stripeError.code === 'resource_missing') {
+        return errorResponse(res, 'Invalid payment method ID', 400);
+      }
+      throw stripeError;
+    }
+
     // Attach payment method to customer
     await stripe.paymentMethods.attach(paymentMethodId, {
       customer: user.stripeCustomerId
     });
 
-    // Update payment method with billing details if provided
-    if (billingDetails) {
-      await stripe.paymentMethods.update(paymentMethodId, {
-        billing_details: {
-          name: billingDetails.cardholderName,
-          address: {
-            line1: billingDetails.billingAddress,
-            city: billingDetails.city,
-            postal_code: billingDetails.zipCode,
-            country: billingDetails.country || 'US'
-          }
-        }
-      });
-    }
+    // Update payment method with comprehensive billing details
+    const billingDetails = {
+      name: cardholderName,
+      address: {
+        line1: billingAddress,
+        city: city,
+        state: state,
+        postal_code: postalCode,
+        country: country
+      }
+    };
+
+    await stripe.paymentMethods.update(paymentMethodId, {
+      billing_details: billingDetails,
+      metadata: {
+        added_by: userId,
+        added_at: new Date().toISOString(),
+        source: 'web_dashboard'
+      }
+    });
 
     // If this is the default payment method, update customer
     if (isDefault) {
@@ -575,14 +808,78 @@ const addPaymentMethod = async (req, res) => {
       });
     }
 
+    // Get updated payment method with all details
+    const updatedPaymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId, {
+      expand: ['customer']
+    });
+
+    // Format response data
+    const responseData = {
+      id: updatedPaymentMethod.id,
+      type: updatedPaymentMethod.type,
+      card: {
+        brand: updatedPaymentMethod.card.brand,
+        last4: updatedPaymentMethod.card.last4,
+        exp_month: updatedPaymentMethod.card.exp_month,
+        exp_year: updatedPaymentMethod.card.exp_year,
+        expiry_date: `${updatedPaymentMethod.card.exp_month.toString().padStart(2, '0')}/${updatedPaymentMethod.card.exp_year.toString().slice(-2)}`,
+        brand_display: updatedPaymentMethod.card.brand.charAt(0).toUpperCase() + updatedPaymentMethod.card.brand.slice(1),
+        masked_number: `•••• •••• •••• ${updatedPaymentMethod.card.last4}`,
+        is_expired: new Date(updatedPaymentMethod.card.exp_year, updatedPaymentMethod.card.exp_month - 1) < new Date()
+      },
+      billing_details: {
+        name: updatedPaymentMethod.billing_details.name,
+        address: updatedPaymentMethod.billing_details.address
+      },
+      isDefault: isDefault,
+      created: updatedPaymentMethod.created,
+      livemode: updatedPaymentMethod.livemode
+    };
+
+    // Log successful addition for audit
+    console.log(`✅ Payment method added: userId=${userId}, paymentMethodId=${paymentMethodId}, brand=${updatedPaymentMethod.card.brand}, last4=${updatedPaymentMethod.card.last4}`);
+
     return successResponse(res, {
       message: 'Payment method added successfully',
-      paymentMethodId
+      data: responseData,
+      metadata: {
+        added_at: new Date().toISOString(),
+        is_default: isDefault,
+        total_payment_methods: await getPaymentMethodCount(user.stripeCustomerId)
+      }
     });
 
   } catch (error) {
     console.error('Add payment method error:', error);
-    return errorResponse(res, 'Failed to add payment method', 500);
+    
+    // Handle specific Stripe errors professionally
+    if (error.type === 'StripeCardError') {
+      return errorResponse(res, `Card error: ${error.message}`, 400);
+    } else if (error.type === 'StripeInvalidRequestError') {
+      return errorResponse(res, `Invalid request: ${error.message}`, 400);
+    } else if (error.type === 'StripeAPIError') {
+      return errorResponse(res, 'Payment service temporarily unavailable. Please try again.', 503);
+    } else if (error.code === 'resource_missing') {
+      return errorResponse(res, 'Invalid payment method ID provided', 400);
+    }
+    
+    return errorResponse(res, 'Failed to add payment method. Please try again.', 500);
+  }
+};
+
+/**
+ * Helper function to get payment method count
+ */
+const getPaymentMethodCount = async (stripeCustomerId) => {
+  try {
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: 'card'
+    });
+    return paymentMethods.data.length;
+  } catch (error) {
+    console.error('Error getting payment method count:', error);
+    return 0;
   }
 };
 
@@ -642,12 +939,17 @@ const updatePaymentMethod = async (req, res) => {
 };
 
 /**
- * Remove payment method
+ * Remove payment method - Professional Implementation
  */
 const removePaymentMethod = async (req, res) => {
   try {
     const { paymentMethodId } = req.params;
     const userId = req.user.userId;
+
+    // Input validation
+    if (!paymentMethodId) {
+      return errorResponse(res, 'Payment method ID is required', 400);
+    }
 
     // Get user from database
     const user = await prisma.user.findUnique({
@@ -666,22 +968,90 @@ const removePaymentMethod = async (req, res) => {
       return errorResponse(res, 'No Stripe customer found', 400);
     }
 
-    // Verify payment method belongs to user
-    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
-    if (paymentMethod.customer !== user.stripeCustomerId) {
-      return errorResponse(res, 'Payment method not found or access denied', 404);
+    // Verify payment method exists and belongs to user
+    let paymentMethod;
+    try {
+      paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+    } catch (stripeError) {
+      if (stripeError.code === 'resource_missing') {
+        return errorResponse(res, 'Payment method not found', 404);
+      }
+      throw stripeError;
     }
 
-    // Detach payment method
+    // Security check: Verify payment method belongs to user
+    if (paymentMethod.customer !== user.stripeCustomerId) {
+      return errorResponse(res, 'Payment method not found or access denied', 403);
+    }
+
+    // Check if this is the default payment method
+    const customer = await stripe.customers.retrieve(user.stripeCustomerId);
+    const isDefault = customer.invoice_settings?.default_payment_method === paymentMethodId;
+
+    // Additional safety check: Prevent removing if it's the only payment method
+    const allPaymentMethods = await stripe.paymentMethods.list({
+      customer: user.stripeCustomerId,
+      type: 'card'
+    });
+
+    if (allPaymentMethods.data.length === 1) {
+      return errorResponse(res, 'Cannot remove the only payment method. Please add another one first.', 400);
+    }
+
+    // Check if this payment method is used in active subscriptions
+    const subscriptions = await stripe.subscriptions.list({
+      customer: user.stripeCustomerId,
+      status: 'active'
+    });
+
+    const isUsedInSubscription = subscriptions.data.some(sub => 
+      sub.default_payment_method === paymentMethodId
+    );
+
+    if (isUsedInSubscription) {
+      return errorResponse(res, 'Cannot remove payment method that is used in active subscriptions. Please update your subscription first.', 400);
+    }
+
+    // Detach payment method from Stripe
     await stripe.paymentMethods.detach(paymentMethodId);
 
+    // If this was the default payment method, set another one as default
+    if (isDefault) {
+      const remainingPaymentMethods = allPaymentMethods.data.filter(pm => pm.id !== paymentMethodId);
+      if (remainingPaymentMethods.length > 0) {
+        await stripe.customers.update(user.stripeCustomerId, {
+          invoice_settings: {
+            default_payment_method: remainingPaymentMethods[0].id
+          }
+        });
+      }
+    }
+
+   
     return successResponse(res, {
       message: 'Payment method removed successfully',
-      paymentMethodId
+      data: {
+        paymentMethodId,
+        wasDefault: isDefault,
+        remainingPaymentMethods: allPaymentMethods.data.length - 1,
+        message: isDefault 
+          ? 'Payment method removed and another one set as default'
+          : 'Payment method removed successfully'
+      }
     });
 
   } catch (error) {
     console.error('Remove payment method error:', error);
+    
+    // Handle specific Stripe errors
+    if (error.type === 'StripeCardError') {
+      return errorResponse(res, 'Card error occurred while removing payment method', 400);
+    } else if (error.type === 'StripeInvalidRequestError') {
+      return errorResponse(res, 'Invalid request to remove payment method', 400);
+    } else if (error.type === 'StripeAPIError') {
+      return errorResponse(res, 'Stripe API error occurred', 500);
+    }
+    
     return errorResponse(res, 'Failed to remove payment method', 500);
   }
 };
@@ -705,9 +1075,7 @@ const handleCustomerChange = async (customer) => {
             ...(email ? { email } : {})
           }
         });
-        console.log(
-          `✅ (customer.updated) Saved stripeCustomerId="${stripeCusId}" & email="${email}" for user.id="${metadataUserId}"`
-        );
+      
       } catch (err) {
         console.warn(
           `⚠️ (customer.updated) Could not update user by metadata.userId="${metadataUserId}":`,
@@ -723,9 +1091,7 @@ const handleCustomerChange = async (customer) => {
             where: { id: user.id },
             data: { stripeCustomerId: stripeCusId }
           });
-          console.log(
-            `✅ (customer.updated) Saved stripeCustomerId="${stripeCusId}" for user.id="${user.id}" by email="${email}"`
-          );
+        
         } catch (err) {
           console.warn(
             `⚠️ (customer.updated) Could not update user by id="${user.id}":`,
@@ -747,6 +1113,7 @@ module.exports = {
   reactivateSubscription,
   createCustomerPortalSession,
   getPaymentMethods,
+  getBillingDashboard,
   addPaymentMethod,
   updatePaymentMethod,
   removePaymentMethod,

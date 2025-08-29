@@ -8,6 +8,7 @@ const {
   reactivateSubscription, 
   createCustomerPortalSession,
   getPaymentMethods,
+  getBillingDashboard,
   addPaymentMethod,
   updatePaymentMethod,
   removePaymentMethod,
@@ -28,6 +29,7 @@ router.post('/subscription/:subscriptionId/reactivate', authenticateToken, react
 
 // Payment method management routes
 router.get('/payment-methods', authenticateToken, getPaymentMethods);
+router.get('/billing-dashboard', authenticateToken, getBillingDashboard);
 router.post('/payment-methods', authenticateToken, addPaymentMethod);
 router.put('/payment-methods/:paymentMethodId', authenticateToken, updatePaymentMethod);
 router.delete('/payment-methods/:paymentMethodId', authenticateToken, removePaymentMethod);
