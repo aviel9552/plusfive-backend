@@ -155,6 +155,149 @@ const getAllCustomers = async (req, res) => {
   }
 };
 
+// Get ten customers without pagination
+const getTenCustomers = async (req, res) => {
+  try {
+    const { businessId } = req.query;
+    
+    // Get user ID from authenticated token
+    const authenticatedUserId = req.user.userId;
+    console.log('authenticatedUserId', authenticatedUserId);
+
+    // Build where clause - Always filter by authenticated user's ID
+    const where = {
+      userId: authenticatedUserId // Filter by authenticated user only
+    };
+
+    if (businessId) {
+      where.businessId = parseInt(businessId);
+    }
+
+    // Get total count first to check how many customers exist
+    const totalCustomersCount = await prisma.customers.count({ where });
+    
+    // Get customers (either 10 or all if less than 10 exist)
+    const takeLimit = Math.min(10, totalCustomersCount);
+    const customers = await prisma.customers.findMany({
+      where,
+      take: takeLimit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            businessType: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Calculate totalAppointmentCount, get CustomerUser status and reviews for each customer
+    const customersWithTotalCount = await Promise.all(
+      customers.map(async (customer) => {
+        // Get total appointments count
+        const totalAppointments = await prisma.appointment.count({
+          where: {
+            customerId: customer.id
+          }
+        });
+
+        // Get CustomerUser status (latest active status)
+        const customerUserStatus = await prisma.customerUser.findFirst({
+          where: {
+            customerId: customer.id,
+            isDeleted: false // Only get active relationships
+          },
+          orderBy: {
+            createdAt: 'desc'
+          },
+          select: {
+            status: true
+          }
+        });
+
+        // Get all reviews for this customer that match with the business owner (userId)
+        const customerReviews = await prisma.review.findMany({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                businessName: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        // Calculate review statistics for this customer with specific userId
+        const reviewStats = await prisma.review.aggregate({
+          where: { 
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          _avg: { rating: true },
+          _count: { rating: true },
+          _min: { rating: true },
+          _max: { rating: true }
+        });
+
+        // Get latest review rating (most recent one) for "Last" star display
+        const latestReview = customerReviews.length > 0 ? customerReviews[0] : null;
+        const lastRating = latestReview ? latestReview.rating : 0;
+
+        // Get latest appointment updatedAt only
+        const lastVisit = await prisma.appointment.findFirst({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId // Match with business owner
+          },
+          orderBy: { updatedAt: 'desc' }, // Latest updated appointment
+          select: {
+            updatedAt: true // Only updatedAt field
+          }
+        });
+
+        return {
+          ...customer,
+          totalAppointmentCount: totalAppointments,
+          customerStatus: customerUserStatus?.status || 'active', // Default to active if no status found
+          reviews: customerReviews,
+          lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
+          lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          reviewStatistics: {
+            totalReviews: reviewStats._count.rating || 0,
+            averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
+            minRating: reviewStats._min.rating || 0,
+            maxRating: reviewStats._max.rating || 0,
+            lastRating: lastRating // Also include in statistics for easy access
+          }
+        };
+      })
+    );
+
+    return successResponse(res, {
+      customers: customersWithTotalCount,
+      total: customersWithTotalCount.length,
+      totalAvailable: totalCustomersCount,
+      remaining: Math.max(0, totalCustomersCount - customersWithTotalCount.length),
+      message: totalCustomersCount >= 10 
+        ? 'Latest 10 customers retrieved successfully' 
+        : `Only ${totalCustomersCount} customers found (less than 10)`
+    }, totalCustomersCount >= 10 ? 'Latest 10 customers retrieved successfully' : `Only ${totalCustomersCount} customers found`);
+
+  } catch (error) {
+    console.error('Get ten customers error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 // Get customer status counts for dashboard
 const getCustomersStatusCount = async (req, res) => {
   try {
@@ -420,6 +563,7 @@ const getCustomerById = async (req, res) => {
 
 module.exports = {
   getAllCustomers,
+  getTenCustomers,
   getCustomersStatusCount,
   getCustomerById
 };

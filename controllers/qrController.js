@@ -953,6 +953,20 @@ const scanQRCode = async (req, res) => {
       }
     });
     
+    // Create scan record in QRCodeScan table
+    await prisma.qRCodeScan.create({
+      data: {
+        qrCodeId: qrCode.id,
+        userId: qrCode.userId,
+        referrer: req.headers.referer || null,
+        userAgent: req.headers['user-agent'] || null,
+        ipAddress: req.ip || req.connection.remoteAddress || null,
+        scanData: `Scan via shortCode: ${shortCode}`,
+        sharedata: null, // Not a share action
+        scanTime: new Date()
+      }
+    });
+    
     // Redirect to the actual WhatsApp URL
     res.redirect(qrCode.url);
     
@@ -983,6 +997,20 @@ const shareQRCode = async (req, res) => {
         shareCount: {
           increment: 1
         }
+      }
+    });
+    
+    // Create share record in QRCodeScan table
+    await prisma.qRCodeScan.create({
+      data: {
+        qrCodeId: qrCode.id,
+        userId: qrCode.userId,
+        referrer: req.headers.referer || null,
+        userAgent: req.headers['user-agent'] || null,
+        ipAddress: req.ip || req.connection.remoteAddress || null,
+        scanData: null, // Not a scan action
+        sharedata: `Share via shortCode: ${shortCode}`,
+        scanTime: new Date()
       }
     });
     

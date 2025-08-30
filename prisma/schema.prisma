@@ -207,6 +207,7 @@ model QRCodeScan {
   userAgent   String?  // Browser/device information
   ipAddress   String?  // IP address of the scanner
   scanData    String?  // Additional data from the scan
+  sharedata   String?  // Data related to sharing
   scanTime    DateTime @default(now())
   
   // Relations

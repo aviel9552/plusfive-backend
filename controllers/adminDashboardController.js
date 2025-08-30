@@ -474,11 +474,12 @@ class AdminDashboardController {
   // Get dashboard overview (all metrics in one call)
   getDashboardOverview = async (req, res) => {
     try {
-      const [monthlyPerformance, revenueImpact, customerStatus, adminSummary] = await Promise.all([
+      const [monthlyPerformance, revenueImpact, customerStatus, adminSummary, qrAnalytics] = await Promise.all([
         this.getMonthlyPerformanceData(req),
         this.getRevenueImpactData(req),
         this.getCustomerStatusData(req),
-        this.getAdminSummaryData(req)
+        this.getAdminSummaryData(req),
+        this.getQRCodeAnalyticsData(req)
       ]);
 
       res.json({
@@ -487,7 +488,8 @@ class AdminDashboardController {
           monthlyPerformance,
           revenueImpact,
           customerStatus,
-          adminSummary
+          adminSummary,
+          qrAnalytics
         }
       });
     } catch (error) {
@@ -750,6 +752,530 @@ class AdminDashboardController {
         }
       ]
     };
+  }
+
+  // Get QR Code Analytics with ScanCount and ShareCount
+  getQRCodeAnalytics = async (req, res) => {
+    try {
+      const authenticatedUser = req.user;
+
+      
+      let where = {};
+      
+      // If user role is 'user', only show their data
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+      // If admin, show all data (where remains empty)
+      
+      // Use common helper function for date calculations
+      const { startDate, endDate } = this.calculateDateRange('monthly');
+      
+      // Add date filter to where clause
+      where.createdAt = {
+        gte: startDate,
+        lte: endDate
+      };
+      
+      // Get QR code data with actual fields
+      const qrCodeData = await prisma.qRCode.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          url: true,
+          qrData: true,
+          qrCodeImage: true,
+          messageForCustomer: true,
+          directMessage: true,
+          directUrl: true,
+          messageUrl: true,
+          isActive: true,
+          scans: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: {
+              id: true,
+              businessName: true,
+              businessType: true
+            }
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      });
+
+      // Get scan and share data from QRCodeScan table for the date range
+      const scanData = await prisma.qRCodeScan.findMany({
+        where: {
+          scanTime: {
+            gte: startDate,
+            lte: endDate
+          },
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          qrCodeId: true,
+          scanData: true,
+          sharedata: true,
+          scanTime: true
+        }
+      });
+
+      // Calculate actual scan and share counts for each QR code
+      const qrCodeStats = {};
+      scanData.forEach(record => {
+        if (!qrCodeStats[record.qrCodeId]) {
+          qrCodeStats[record.qrCodeId] = { scans: 0, shares: 0 };
+        }
+        
+        if (record.scanData && !record.sharedata) {
+          qrCodeStats[record.qrCodeId].scans++;
+        } else if (record.sharedata && !record.scanData) {
+          qrCodeStats[record.qrCodeId].shares++;
+        }
+      });
+
+      // Add stats to QR code data
+      const qrCodeDataWithStats = qrCodeData.map(qr => ({
+        ...qr,
+        actualScans: qrCodeStats[qr.id]?.scans || 0,
+        actualShares: qrCodeStats[qr.id]?.shares || 0
+      }));
+      
+      // Calculate totals using actual data from QRCodeScan table
+      const totalScans = Object.values(qrCodeStats).reduce((sum, stats) => sum + stats.scans, 0);
+      const totalShares = Object.values(qrCodeStats).reduce((sum, stats) => sum + stats.shares, 0);
+      const totalQRCodes = qrCodeData.length;
+      
+      // Calculate averages
+      const avgScans = totalQRCodes > 0 ? (totalScans / totalQRCodes).toFixed(2) : 0;
+      const avgShares = totalQRCodes > 0 ? (totalShares / totalQRCodes).toFixed(2) : 0;
+      
+      // Get top performing QR codes based on actual scan data
+      const topScannedQR = qrCodeDataWithStats
+        .sort((a, b) => (b.actualScans || 0) - (a.actualScans || 0))
+        .slice(0, 5);
+
+      // Get top shared QR codes
+      const topSharedQR = qrCodeDataWithStats
+        .sort((a, b) => (b.actualShares || 0) - (a.actualShares || 0))
+        .slice(0, 5);
+      
+      // Get previous period data for comparison using common helper
+      const previousData = await this.getPreviousPeriodData('monthly', startDate, where);
+      
+      // previousData already contains the data from helper function
+      
+      // Calculate percentage changes
+      const calculatePercentageChange = (current, previous) => {
+        if (previous === 0) return current > 0 ? 100 : 0;
+        return ((current - previous) / previous * 100).toFixed(2);
+      };
+      
+      // Get data for different periods
+      const monthlyData = await this.getPeriodData('monthly', authenticatedUser);
+      const quarterlyData = await this.getPeriodData('quarterly', authenticatedUser);
+      const yearlyData = await this.getPeriodData('yearly', authenticatedUser);
+      const weeklyData = await this.getPeriodData('thisWeek', authenticatedUser);
+
+      const response = {
+        success: true,
+        data: {
+          // period: 'monthly',
+          // dateRange: {
+          //   start: startDate.toISOString(),
+          //   end: endDate.toISOString()
+          // },
+          // summary: {
+          //   totalQRCodes,
+          //   totalScans,
+          //   totalShares,
+          //   avgScans: parseFloat(avgScans),
+          //   avgShares: parseFloat(avgShares)
+          // },
+          // topPerformers: {
+          //   mostScanned: topScannedQR,
+          //   mostShared: topSharedQR
+          // },
+          // qrCodes: qrCodeDataWithStats,
+          // comparison: previousData ? {
+          //   previousPeriod: {
+          //     scans: previousData.scans,
+          //     shares: previousData.shares,
+          //     qrCodes: previousData.qrCodes
+          //   },
+          //   changes: {
+          //     scansChange: calculatePercentageChange(totalScans, previousData.scans),
+          //     sharesChange: calculatePercentageChange(totalShares, previousData.shares),
+          //     qrCodesChange: calculatePercentageChange(totalQRCodes, previousData.qrCodes)
+          //   }
+          // } : null,
+          // Frontend ke jaisa data structure
+          monthlyQrCodeData: monthlyData,
+          quarterlyQrCodeData: quarterlyData,
+          yearlyQrCodeData: yearlyData,
+          weeklyQrCodeData: weeklyData
+        }
+      };
+      
+      res.json(response);
+    } catch (error) {
+      console.error('Error getting QR code analytics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch QR code analytics',
+        error: error.message
+      });
+    }
+  }
+
+  // Helper method for QR Analytics data
+  async getQRCodeAnalyticsData(req) {
+    try {
+      const authenticatedUser = req.user;
+      const { period = 'monthly' } = req.query;
+      
+      // Use common helper function
+      const { startDate, endDate } = this.calculateDateRange(period);
+      
+      let where = {};
+      
+      // If user role is 'user', only show their data
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+      
+      where.createdAt = {
+        gte: startDate,
+        lte: endDate
+      };
+      
+      const qrCodeData = await prisma.qRCode.findMany({
+        where,
+        select: {
+          scans: true
+        }
+      });
+      
+      const totalScans = qrCodeData.reduce((sum, qr) => sum + (qr.scans || 0), 0);
+      const totalQRCodes = qrCodeData.length;
+      
+      return {
+        period,
+        summary: {
+          totalQRCodes,
+          totalScans
+        }
+      };
+      
+    } catch (error) {
+      console.error('Error getting QR analytics data:', error);
+      return {
+        period: 'monthly',
+        summary: {
+          totalQRCodes: 0,
+          totalScans: 0
+        }
+      };
+    }
+  }
+
+  // Common helper function for date calculations
+  calculateDateRange(period) {
+    const currentDate = new Date();
+    let startDate, endDate;
+    
+    switch (period) {
+      case 'thisWeek':
+        startDate = new Date(currentDate);
+        startDate.setDate(currentDate.getDate() - currentDate.getDay());
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(currentDate);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+        
+      case 'monthly':
+        startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+        
+      case 'quarterly':
+        const currentQuarter = Math.floor(currentDate.getMonth() / 3);
+        startDate = new Date(currentDate.getFullYear(), currentQuarter * 3, 1);
+        endDate = new Date(currentDate.getFullYear(), (currentQuarter + 1) * 3, 0, 23, 59, 59, 999);
+        break;
+        
+      case 'yearly':
+        startDate = new Date(currentDate.getFullYear(), 0, 1);
+        endDate = new Date(currentDate.getFullYear(), 11, 31, 23, 59, 59, 999);
+        break;
+        
+      default:
+        startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+    
+    return { where: {}, startDate, endDate };
+  }
+
+  // Helper function to get period data for frontend charts
+  async getPeriodData(period, authenticatedUser) {
+    try {
+      let where = {};
+      
+      // If user role is 'user', only show their data
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      
+      let data = [];
+      
+      switch (period) {
+        case 'monthly':
+          // Get last 6 months data
+          for (let i = 5; i >= 0; i--) {
+            const targetDate = new Date(currentYear, currentDate.getMonth() - i, 1);
+            const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+            const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+            
+            // Get scan and share data from QRCodeScan table
+            const scanData = await prisma.qRCodeScan.findMany({
+              where: {
+                ...where,
+                scanTime: { gte: startDate, lte: endDate }
+              },
+              select: {
+                scanData: true,
+                sharedata: true
+              }
+            });
+            
+            // Calculate scan and share counts
+            let scanCount = 0;
+            let shareCount = 0;
+            
+            scanData.forEach(record => {
+              if (record.scanData && !record.sharedata) {
+                scanCount++;
+              } else if (record.sharedata && !record.scanData) {
+                shareCount++;
+              }
+            });
+            
+            data.push({
+              label: targetDate.toLocaleString('default', { month: 'short' }),
+              scanCount: scanCount,
+              shareCount: shareCount
+            });
+          }
+          break;
+          
+        case 'quarterly':
+          // Get quarterly data for current year
+          for (let quarter = 1; quarter <= 4; quarter++) {
+            const quarterStartMonth = (quarter - 1) * 3;
+            const startDate = new Date(currentYear, quarterStartMonth, 1);
+            const endDate = new Date(currentYear, quarterStartMonth + 3, 0, 23, 59, 59);
+            
+            // Get scan and share data from QRCodeScan table
+            const scanData = await prisma.qRCodeScan.findMany({
+              where: {
+                ...where,
+                scanTime: { gte: startDate, lte: endDate }
+              },
+              select: {
+                scanData: true,
+                sharedata: true
+              }
+            });
+            
+            // Calculate scan and share counts
+            let scanCount = 0;
+            let shareCount = 0;
+            
+            scanData.forEach(record => {
+              if (record.scanData && !record.sharedata) {
+                scanCount++;
+              } else if (record.sharedata && !record.scanData) {
+                shareCount++;
+              }
+            });
+            
+            data.push({
+              label: `Q${quarter}`,
+              scanCount: scanCount,
+              shareCount: shareCount
+            });
+          }
+          break;
+          
+        case 'yearly':
+          // Get last 3 years data
+          for (let year = currentYear - 2; year <= currentYear; year++) {
+            const startDate = new Date(year, 0, 1);
+            const endDate = new Date(year, 11, 31, 23, 59, 59);
+            
+            // Get scan and share data from QRCodeScan table
+            const scanData = await prisma.qRCodeScan.findMany({
+              where: {
+                ...where,
+                scanTime: { gte: startDate, lte: endDate }
+              },
+              select: {
+                scanData: true,
+                sharedata: true
+              }
+            });
+            
+            // Calculate scan and share counts
+            let scanCount = 0;
+            let shareCount = 0;
+            
+            scanData.forEach(record => {
+              if (record.scanData && !record.sharedata) {
+                scanCount++;
+              } else if (record.sharedata && !record.scanData) {
+                shareCount++;
+              }
+            });
+            
+            data.push({
+              label: year.toString(),
+              scanCount: scanCount,
+              shareCount: shareCount
+            });
+          }
+          break;
+          
+        case 'thisWeek':
+          // Get current week data
+          const weekStart = new Date(currentDate);
+          weekStart.setDate(currentDate.getDate() - currentDate.getDay());
+          weekStart.setHours(0, 0, 0, 0);
+          
+          const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          
+          for (let i = 0; i < 7; i++) {
+            const dayStart = new Date(weekStart);
+            dayStart.setDate(weekStart.getDate() + i);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setHours(23, 59, 59, 999);
+            
+            // Get scan and share data from QRCodeScan table
+            const scanData = await prisma.qRCodeScan.findMany({
+              where: {
+                ...where,
+                scanTime: { gte: dayStart, lte: dayEnd }
+              },
+              select: {
+                scanData: true,
+                sharedata: true
+              }
+            });
+            
+            // Calculate scan and share counts
+            let scanCount = 0;
+            let shareCount = 0;
+            
+            scanData.forEach(record => {
+              if (record.scanData && !record.sharedata) {
+                scanCount++;
+              } else if (record.sharedata && !record.scanData) {
+                shareCount++;
+              }
+            });
+            
+            data.push({
+              label: weekDays[i],
+              scanCount: scanCount,
+              shareCount: shareCount
+            });
+          }
+          break;
+      }
+      
+      return data;
+      
+    } catch (error) {
+      console.error('Error getting period data:', error);
+      return [];
+    }
+  }
+
+  // Helper function for previous period data
+  async getPreviousPeriodData(period, startDate, where) {
+    try {
+      let previousStartDate, previousEndDate;
+      
+      // Calculate previous period dates based on current period
+      switch (period) {
+        case 'thisWeek':
+          previousStartDate = new Date(startDate);
+          previousStartDate.setDate(previousStartDate.getDate() - 7);
+          previousEndDate = new Date(startDate);
+          previousEndDate.setDate(previousEndDate.getDate() - 1);
+          previousEndDate.setHours(23, 59, 59, 999);
+          break;
+          
+        case 'monthly':
+          previousStartDate = new Date(startDate);
+          previousStartDate.setMonth(previousStartDate.getMonth() - 1);
+          previousEndDate = new Date(startDate);
+          previousEndDate.setDate(previousEndDate.getDate() - 1);
+          previousEndDate.setHours(23, 59, 59, 999);
+          break;
+          
+        case 'quarterly':
+          previousStartDate = new Date(startDate);
+          previousStartDate.setMonth(previousStartDate.getMonth() - 3);
+          previousEndDate = new Date(startDate);
+          previousEndDate.setDate(previousEndDate.getDate() - 1);
+          previousEndDate.setHours(23, 59, 59, 999);
+          break;
+          
+        case 'yearly':
+          previousStartDate = new Date(startDate);
+          previousStartDate.setFullYear(previousStartDate.getFullYear() - 1);
+          previousEndDate = new Date(startDate);
+          previousEndDate.setDate(previousEndDate.getDate() - 1);
+          previousEndDate.setHours(23, 59, 59, 999);
+          break;
+          
+        default:
+          return null;
+      }
+      
+      // Get previous period data
+      const previousWhere = { ...where };
+      previousWhere.createdAt = {
+        gte: previousStartDate,
+        lte: previousEndDate
+      };
+      
+      const previousQRData = await prisma.qRCode.findMany({
+        where: previousWhere,
+        select: {
+          scans: true
+        }
+      });
+      
+      const previousScans = previousQRData.reduce((sum, qr) => sum + (qr.scans || 0), 0);
+      
+      return {
+        scans: previousScans,
+        qrCodes: previousQRData.length
+      };
+      
+    } catch (error) {
+      console.error('Error getting previous period data:', error);
+      return null;
+    }
   }
 }
 
