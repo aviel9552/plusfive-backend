@@ -52,15 +52,32 @@ const handleAppointmentWebhook = async (req, res) => {
     // Check if customer exists in Customers table
     let existingCustomer = null;
     if (webhookData.EmployeeId) {
+      // First check by EmployeeId
       existingCustomer = await prisma.customers.findFirst({
         where: {
           employeeId: webhookData.EmployeeId
         },
         select: {
           id: true,
-          employeeId: true
+          employeeId: true,
+          customerFullName: true,
+          customerPhone: true
         }
       });
+      
+      // If found by EmployeeId, check if CustomerFullName or CustomerPhone has changed
+      if (existingCustomer) {
+        const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
+        const webhookFullName = webhookData.CustomerFullName || '';
+        
+        // Check if either name or phone has changed
+        if (existingCustomer.customerFullName !== webhookFullName || 
+            existingCustomer.customerPhone !== formattedPhone) {
+          existingCustomer = null; // Force creation of new customer
+        } else {
+          console.log('Customer data unchanged - using existing customer');
+        }
+      }
     }
       
       let userId;
@@ -71,7 +88,6 @@ const handleAppointmentWebhook = async (req, res) => {
       return errorResponse(res, `Business '${webhookData.BusinessName}' does not exist. Please create user first.`, 400);
     } else {
       userId = existingUser.id;
-      console.log('Existing business user found:', existingUser.id);
     }
     
 
@@ -91,23 +107,17 @@ const handleAppointmentWebhook = async (req, res) => {
             
             // Check if date is valid
             if (isNaN(parsedDate.getTime())) {
-              console.log('Invalid date format:', dateString);
               return null;
             }
             
             return parsedDate;
           } catch (error) {
-            console.log('Date parsing error:', error, 'for date:', dateString);
             return null;
           }
         };
     // If customer doesn't exist, create new customer
     if (!existingCustomer) {
       const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
-      console.log('📞 Phone number formatting:', {
-        original: webhookData.CustomerPhone,
-        formatted: formattedPhone
-      });
       const newCustomer = await prisma.customers.create({
         data: {
           firstName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ')[0] : null,
@@ -126,10 +136,8 @@ const handleAppointmentWebhook = async (req, res) => {
         }
       });
       customerId = newCustomer.id;
-      console.log('New customer created:', newCustomer.id);
     } else {
       customerId = existingCustomer.id;
-      console.log('Existing customer found:', existingCustomer.id);
     }
      
      
@@ -205,12 +213,10 @@ const handleAppointmentWebhook = async (req, res) => {
                 businessOwner.phoneNumber
               );
               
-              console.log('Recovered customer notification sent to business owner');
             } catch (whatsappError) {
               console.error('Failed to send recovered customer notification:', whatsappError.message);
             }
           } else {
-            console.log('Business owner phone number not found, notification skipped');
           }
         } else if (previousStatus === 'new') {
           // Update to active only if status was 'new'
@@ -223,11 +229,9 @@ const handleAppointmentWebhook = async (req, res) => {
             }
           });
           customerUserId = updatedCustomerUser.id;
-          console.log('Customer status updated from new to active:', updatedCustomerUser.id);
         } else {
           // Keep existing status (active, recovered, etc.)
           customerUserId = existingCustomerUser.id;
-          console.log('Customer status unchanged:', existingCustomerUser.status);
         }
       } else {
         // Check if customerId exists but with different userId
@@ -382,9 +386,6 @@ const handleAppointmentWebhook = async (req, res) => {
           customerId = existingCustomer.id;
           userId = existingCustomer.userId; // userId field is present in Customers table
           
-          console.log('✅ Customer found with both BusinessId and EmployeeId:', existingCustomer.id);
-          console.log('✅ userId from Customers table:', userId);
-          console.log('✅ customerId set to:', customerId);
         } else {
           console.log('❌ No customer found with both BusinessId and EmployeeId:', {
             businessId: actualData.BusinessId,
@@ -399,7 +400,6 @@ const handleAppointmentWebhook = async (req, res) => {
               employeeId: true
             }
           });
-          console.log('🔍 All customers in table:', allCustomers);
         }
       } else {
         console.log('❌ Missing BusinessId or EmployeeId:', {
