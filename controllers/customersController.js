@@ -1,5 +1,9 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const CustomerStatusService = require('../services/CustomerStatusService');
+
+// Initialize CustomerStatusService
+const customerStatusService = new CustomerStatusService();
 
 // Get all customers with pagination and search
 const getAllCustomers = async (req, res) => {
@@ -57,11 +61,12 @@ const getAllCustomers = async (req, res) => {
           }
         });
 
-        // Get CustomerUser status (latest active status)
+        // Get customer status from CustomerUser table (same logic as getCustomersStatusCount)
         const customerUserStatus = await prisma.customerUser.findFirst({
           where: {
             customerId: customer.id,
-            isDeleted: false // Only get active relationships
+            userId: customer.userId,
+            isDeleted: false // Only active relationships
           },
           orderBy: {
             createdAt: 'desc'
@@ -70,6 +75,8 @@ const getAllCustomers = async (req, res) => {
             status: true
           }
         });
+
+        const realTimeStatus = customerUserStatus?.status || 'active';
 
         // Get all reviews for this customer that match with the business owner (userId)
         const customerReviews = await prisma.review.findMany({
@@ -121,7 +128,7 @@ const getAllCustomers = async (req, res) => {
         return {
           ...customer,
           totalAppointmentCount: totalAppointments,
-          customerStatus: customerUserStatus?.status || 'active', // Default to active if no status found
+          customerStatus: realTimeStatus || 'active', // Use real-time calculated status
           reviews: customerReviews,
           lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
           lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field

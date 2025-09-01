@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { createWhatsappMessageRecord } = require('../../controllers/whatsappMessageController');
 
 // Global conversation states (shared across all instances)
 const globalConversationStates = new Map();
@@ -14,7 +15,7 @@ class RiskService {
         'Content-Type': 'application/json'
       }
     });
-    
+
     // Use database for persistent storage + memory for speed
     this.conversationStates = globalConversationStates;
     const { PrismaClient } = require('@prisma/client');
@@ -45,9 +46,10 @@ class RiskService {
 
   // Step 1: Send initial Hebrew at-risk greeting (ONLY API CALL)
   async sendInitialGreeting(customerName, phoneNumber) {
+    console.log('Sending initial greeting...', customerName, phoneNumber);
     try {
       const message = `היי ${customerName} מה קורה?`;
-      
+
       // Set conversation state in both memory and database
       const stateData = {
         step: 'initial_sent',
@@ -56,15 +58,18 @@ class RiskService {
         lastMessage: message,
         status: 'at_risk'
       };
-      
+
       // Save to memory for speed
       this.conversationStates.set(phoneNumber, stateData);
-      
+
       // Save to database for persistence
       await this.saveConversationToDatabase(phoneNumber, stateData);
-      
+
+      // Create whatsappMessage record
+      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'at_risk');
+
       const result = await this.sendMessage(phoneNumber, message);
-      
+
       return {
         step: 1,
         type: 'initial_greeting',
@@ -81,29 +86,36 @@ class RiskService {
     }
   }
 
+
+
   // Step 2: Send follow-up message (after customer responds to greeting)
   async sendFollowUpMessage(phoneNumber) {
     try {
       const message = `לא ראינו אותך מלא זמן ואני רואה שלא קבעת תור עדיין, מוכן לרענון?`;
-      
+
       // Find the exact phone number format used in state
       const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
       const actualPhoneNumber = statePhoneNumber || phoneNumber;
-      
+
       // Update conversation state in memory and database
       const currentState = this.conversationStates.get(actualPhoneNumber);
-      
+
       if (currentState) {
         currentState.step = 'followup_sent';
         currentState.lastMessage = message;
         currentState.followupTime = new Date();
-        
-                // Save to database
+
+        // Save to database
         await this.saveConversationToDatabase(actualPhoneNumber, currentState);
       }
-      
+
+      // Create whatsappMessage record for usage tracking
+      if (currentState?.customerName) {
+        await this.createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'at_risk_followup');
+      }
+
       const result = await this.sendMessage(phoneNumber, message);
-      
+
       return {
         step: 2,
         type: 'followup_message',
@@ -122,11 +134,11 @@ class RiskService {
   async sendYesResponse(phoneNumber) {
     try {
       const message = `אוקי אני אדאג שיחזרו אלייך במיידי`;
-      
+
       // Find the exact phone number format used in state
       const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
       const actualPhoneNumber = statePhoneNumber || phoneNumber;
-      
+
       // Update conversation state in memory
       const state = this.conversationStates.get(actualPhoneNumber);
       if (state) {
@@ -136,13 +148,18 @@ class RiskService {
         state.responseTime = new Date();
         // DON'T end conversation here - wait for customer acknowledgment
         state.conversationEnded = false;
-        
+
         // Save to database
         await this.saveConversationToDatabase(actualPhoneNumber, state);
       }
-      
+
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_yes_response');
+      }
+
       const result = await this.sendMessage(phoneNumber, message);
-      
+
       return {
         step: '3a',
         type: 'yes_response',
@@ -162,11 +179,11 @@ class RiskService {
   async sendNoResponse(phoneNumber) {
     try {
       const message = `מה הסיבה?`;
-      
+
       // Find the exact phone number format used in state
       const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
       const actualPhoneNumber = statePhoneNumber || phoneNumber;
-      
+
       // Update conversation state in memory
       const state = this.conversationStates.get(actualPhoneNumber);
       if (state) {
@@ -174,13 +191,18 @@ class RiskService {
         state.customerResponse = 'no';
         state.lastMessage = message;
         state.responseTime = new Date();
-        
+
         // Save to database
         await this.saveConversationToDatabase(actualPhoneNumber, state);
       }
-      
+
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_no_response');
+      }
+
       const result = await this.sendMessage(phoneNumber, message);
-      
+
       return {
         step: '3b',
         type: 'no_response',
@@ -200,11 +222,11 @@ class RiskService {
   async sendClosureMessage(phoneNumber) {
     try {
       const message = `אוקיי.. אם צריך עוד משהו אני כאן 😉`;
-      
+
       // Find the exact phone number format used in state
       const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
       const actualPhoneNumber = statePhoneNumber || phoneNumber;
-      
+
       // Update conversation state in memory
       const state = this.conversationStates.get(actualPhoneNumber);
       if (state) {
@@ -212,13 +234,18 @@ class RiskService {
         state.lastMessage = message;
         state.closureTime = new Date();
         state.conversationEnded = true;
-        
+
         // Save to database
         await this.saveConversationToDatabase(actualPhoneNumber, state);
       }
-      
+
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_closure');
+      }
+
       const result = await this.sendMessage(phoneNumber, message);
-      
+
       return {
         step: 4,
         type: 'closure_message',
@@ -236,7 +263,7 @@ class RiskService {
   // Helper function to detect Hebrew/English Yes/No responses
   checkHebrewResponse(messageContent) {
     const lowerMessage = messageContent.toLowerCase().trim();
-    
+
     // Hebrew Yes variations + English variations + all possible formats
     const yesWords = [
       // Hebrew Yes
@@ -251,7 +278,7 @@ class RiskService {
       'good', 'great', 'perfect', 'fine', 'agreed', 'accept', 'approved',
       'GOOD', 'GREAT', 'PERFECT', 'FINE', 'AGREED', 'ACCEPT', 'APPROVED'
     ];
-    
+
     // Hebrew No variations + English variations + all possible formats  
     const noWords = [
       // Hebrew No
@@ -269,17 +296,17 @@ class RiskService {
       'not interested', 'NOT INTERESTED', 'Not Interested',
       'no thanks', 'NO THANKS', 'No Thanks', 'no thank you', 'NO THANK YOU'
     ];
-    
+
     // Check for YES responses
     if (yesWords.some(word => lowerMessage.includes(word.toLowerCase()))) {
       return 'yes';
     }
-    
+
     // Check for NO responses
     if (noWords.some(word => lowerMessage.includes(word.toLowerCase()))) {
       return 'no';
     }
-    
+
     return 'unknown';
   }
 
@@ -287,65 +314,65 @@ class RiskService {
   async handleIncomingMessage(phoneNumber, messageContent, customerName = null) {
     try {
       const state = await this.getConversationState(phoneNumber);
-      
+
       // If no conversation state exists, this might be a general response
       if (!state) {
-        return { 
+        return {
           action: 'no_active_conversation',
           suggestion: 'Start new at-risk conversation or handle as general message'
         };
       }
-      
+
       const responseType = this.checkHebrewResponse(messageContent);
-      
+
       // Handle based on current conversation step
       switch (state.step) {
         case 'initial_sent':
           // Customer responded to initial greeting - send follow-up
           const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
           return await this.sendFollowUpMessage(statePhoneNumber || phoneNumber);
-          
+
         case 'followup_sent':
           // Customer responded to follow-up - check if yes/no
-          
+
           if (responseType === 'yes') {
             // Use the same phone format as stored in state
             const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
             return await this.sendYesResponse(statePhoneNumber || phoneNumber);
-            
+
           } else if (responseType === 'no') {
             const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
             return await this.sendNoResponse(statePhoneNumber || phoneNumber);
-            
+
           } else {
             const statePhoneNumber = this.findStatePhoneNumber(phoneNumber);
             return await this.sendNoResponse(statePhoneNumber || phoneNumber);
           }
-          
+
         case 'no_response_sent':
           // Customer provided reason - send closure
           const statePhoneNumberNo = this.findStatePhoneNumber(phoneNumber);
           return await this.sendClosureMessage(statePhoneNumberNo || phoneNumber);
-          
+
         case 'yes_response_sent':
           // Customer acknowledged YES response - send closure
           const statePhoneNumberYes = this.findStatePhoneNumber(phoneNumber);
           return await this.sendClosureMessage(statePhoneNumberYes || phoneNumber);
-          
+
         case 'closure_sent':
           // Conversation already ended
           return {
             action: 'conversation_already_completed',
             message: 'This at-risk conversation has already been completed'
           };
-          
+
         default:
           return {
             action: 'unknown_step',
             message: 'Unknown conversation step'
           };
       }
-      
+
     } catch (error) {
       console.error('Error handling incoming message:', error);
       throw error;
@@ -357,7 +384,7 @@ class RiskService {
     try {
       // Only send initial greeting - webhook will handle the rest
       const initialResult = await this.sendInitialGreeting(customerName, phoneNumber);
-      
+
       return {
         flowType: 'at_risk_conversation_started',
         customerName,
@@ -374,7 +401,7 @@ class RiskService {
         apiSent: initialResult,
         nextActions: 'Webhook will handle all customer responses automatically'
       };
-      
+
     } catch (error) {
       console.error('Error starting at-risk conversation:', error);
       throw error;
@@ -385,15 +412,15 @@ class RiskService {
   findStatePhoneNumber(phoneNumber) {
     // Try exact match first
     if (this.conversationStates.has(phoneNumber)) return phoneNumber;
-    
+
     // Try with + prefix
     const phoneWithPlus = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
     if (this.conversationStates.has(phoneWithPlus)) return phoneWithPlus;
-    
+
     // Try without + prefix
     const phoneWithoutPlus = phoneNumber.startsWith('+') ? phoneNumber.substring(1) : phoneNumber;
     if (this.conversationStates.has(phoneWithoutPlus)) return phoneWithoutPlus;
-    
+
     return null;
   }
 
@@ -433,7 +460,7 @@ class RiskService {
   }
 
   // Load conversation from database
-    async loadConversationFromDatabase(phoneNumber) {
+  async loadConversationFromDatabase(phoneNumber) {
     try {
       const conversation = await this.prisma.conversationState.findUnique({
         where: { phoneNumber }
@@ -468,7 +495,7 @@ class RiskService {
   }
 
   // Get conversation state for debugging (try both with and without +)
-    async getConversationState(phoneNumber) {
+  async getConversationState(phoneNumber) {
     // Try exact match first in memory
     let state = this.conversationStates.get(phoneNumber);
     if (state) {
@@ -497,9 +524,9 @@ class RiskService {
       }
       return state;
     }
-    
+
     // If not in memory, try loading from database
-    
+
     // Try all phone number formats in database
     const phoneFormats = [phoneNumber, phoneWithPlus, phoneWithoutPlus];
     for (const phone of phoneFormats) {
@@ -508,7 +535,7 @@ class RiskService {
         return dbState;
       }
     }
-    
+
     return null;
   }
 

@@ -12,7 +12,8 @@ const {
   addPaymentMethod,
   updatePaymentMethod,
   removePaymentMethod,
-  handleWebhook 
+  handleWebhook,
+  triggerMonthlyUsageReporting
 } = require('../controllers/stripeController');
 const { authenticateToken } = require('../middleware/auth');
 
@@ -33,5 +34,8 @@ router.get('/billing-dashboard', authenticateToken, getBillingDashboard);
 router.post('/payment-methods', authenticateToken, addPaymentMethod);
 router.put('/payment-methods/:paymentMethodId', authenticateToken, updatePaymentMethod);
 router.delete('/payment-methods/:paymentMethodId', authenticateToken, removePaymentMethod);
+
+// Monthly usage reporting
+router.post('/monthly-usage-reporting', authenticateToken, triggerMonthlyUsageReporting);
 
 module.exports = router;

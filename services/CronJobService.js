@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const CustomerStatusService = require('./CustomerStatusService');
 const WhatsAppService = require('./WhatsAppService');
+const { reportUsageForMonth } = require('../lib/stripe');
 
 class CronJobService {
   constructor() {
@@ -15,13 +16,15 @@ class CronJobService {
         job1: '0 */6 * * *',  // Every 6 hours
         job2: '0 9 * * *',    // Daily 9:00 AM
         job3: '0 10 * * *',   // Daily 10:00 AM
-        job4: '0 11 * * *'    // Daily 11:00 AM
+        job4: '0 11 * * *',   // Daily 11:00 AM
+        monthlyUsage: '0 0 1 * *'  // Monthly on 1st at midnight (00:00)
       },
       test: {
         job1: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
         job2: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
         job3: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
-        job4: '*/70 * * * * *'  // Every 70 seconds (1 minute 10 seconds)
+        job4: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
+        monthlyUsage: '*/120 * * * * *'  // Every 2 minutes for testing
       }
     };
   }
@@ -129,6 +132,17 @@ class CronJobService {
     this.scheduleJob('cron-job-4', currentSchedules.job4, async () => {
       // Cron Job 4 executed
     });
+
+    // Monthly usage reporting job
+    this.scheduleJob('monthly-usage', currentSchedules.monthlyUsage, async () => {
+      try {
+        console.log('🔄 Starting monthly usage reporting...');
+        await reportUsageForMonth();
+        console.log('✅ Monthly usage reporting completed');
+      } catch (error) {
+        console.error('❌ Monthly usage reporting error:', error.message);
+      }
+    });
   }
 
   // Schedule individual job
@@ -193,6 +207,11 @@ class CronJobService {
       'send-recovered': async () => {
         const customers = await this.customerStatusService.getCustomersByStatus('recovered');
         return { customersFound: customers.length, notificationsSent: 0 };
+      },
+      'report-usage': async () => {
+        console.log('🔄 Manually triggering monthly usage reporting...');
+        await reportUsageForMonth();
+        return { message: 'Monthly usage reporting completed manually' };
       }
     };
 

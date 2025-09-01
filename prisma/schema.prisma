@@ -68,8 +68,9 @@ model User {
   appointments      Appointment[]    // Appointments relation
   customerUsers     CustomerUser[]   // Customer-User relations
   paymentWebhooks   PaymentWebhook[] // Payment webhook relations
-  reviews           Review[]         // Reviews received by business owner
-  conversationStates ConversationState[] // WhatsApp conversation states
+     reviews           Review[]         // Reviews received by business owner
+   conversationStates ConversationState[] // WhatsApp conversation states
+   whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
 
   @@map("users")
 }
@@ -308,8 +309,9 @@ model Customers {
   appointments    Appointment[] // Appointments relation
   customerUsers   CustomerUser[] // Customer-User relations
   paymentWebhooks PaymentWebhook[] // Payment webhook relations
-  reviews         Review[] // Reviews given by customer
-  conversationStates ConversationState[] // WhatsApp conversation states
+     reviews         Review[] // Reviews given by customer
+   conversationStates ConversationState[] // WhatsApp conversation states
+   whatsappMessages whatsappMessage[] // WhatsApp messages for this customer
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -478,4 +480,27 @@ model Review {
   updatedAt   DateTime @updatedAt
 
   @@map("reviews")
+} 
+
+// WhatsApp Message table - Store customer message Type And bill date
+model whatsappMessage {
+  id          String   @id @default(cuid())
+  
+  // Message details
+  messageType      String?      // at_risk, lost, recovered
+  messageDate      DateTime     @default(now())
+  billStatus       Boolean      @default(false)
+  billDate         DateTime?
+  
+  // Relations
+  customerId       String       // Reference to Customers table
+  customer         Customers    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId           String       // Reference to User table (business owner)
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+    
+  // Timestamps
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("whatsappMessage")
 } 

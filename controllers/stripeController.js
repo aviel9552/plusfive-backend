@@ -1,4 +1,4 @@
-const { stripe, getStripePrices, getOrCreateStripeCustomer } = require('../lib/stripe');
+const { stripe, getStripePrices, getOrCreateStripeCustomer, reportUsageForMonth } = require('../lib/stripe');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 
@@ -9,6 +9,10 @@ const createCheckoutSession = async (req, res) => {
   try {
     const { priceId } = req.body;
     const userId = req.user.userId;
+
+    console.log('req.body', req.body);
+    console.log('priceId', priceId);
+    console.log('userId', userId);
     
     if (!priceId) {
       return errorResponse(res, 'Missing priceId', 400);
@@ -45,16 +49,39 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
+    // Retrieve price to auto-detect metered vs non-metered and currency
+    const price = await stripe.prices.retrieve(priceId);
+
+    const isMetered = price?.recurring?.usage_type === 'metered';
+
+    // Guard: prevent mixed-currency subscriptions for the same customer
+    const existingSubs = await stripe.subscriptions.list({
+      customer: stripeCustomerId,
+      status: 'active',
+      limit: 1
+    });
+
+    if (existingSubs.data.length > 0) {
+      const existingCurrency = existingSubs.data[0]?.items?.data?.[0]?.price?.currency;
+      if (existingCurrency && existingCurrency !== price.currency) {
+        return errorResponse(
+          res,
+          `Currency mismatch: existing subscription is in ${existingCurrency.toUpperCase()} but selected price is ${price.currency.toUpperCase()}. Use a price with ${existingCurrency.toUpperCase()} or cancel the existing subscription.`,
+          400
+        );
+      }
+    }
+
+    // Build line item: quantity only for non-metered prices
+    const lineItem = isMetered
+      ? { price: priceId }
+      : { price: priceId, quantity: 1 };
+
     // Create checkout session
     const checkoutSession = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'subscription',
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1
-        }
-      ],
+      line_items: [lineItem],
       success_url: req.body.successUrl || `${process.env.FRONTEND_URL}/dashboard?success=true`,
       cancel_url: req.body.cancelUrl || `${process.env.FRONTEND_URL}/pricing?canceled=true`,
       customer: stripeCustomerId,
@@ -1105,6 +1132,26 @@ const handleCustomerChange = async (customer) => {
   }
 };
 
+/**
+ * Manually trigger monthly usage reporting
+ */
+const triggerMonthlyUsageReporting = async (req, res) => {
+  try {
+    console.log('🔄 Manual monthly usage reporting triggered by user:', req.user.userId);
+    
+    await reportUsageForMonth();
+    
+    return successResponse(res, {
+      message: 'Monthly usage reporting completed successfully',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Manual monthly usage reporting error:', error);
+    return errorResponse(res, 'Failed to trigger monthly usage reporting', 500);
+  }
+};
+
 module.exports = {
   createCheckoutSession,
   getPrices,
@@ -1117,5 +1164,6 @@ module.exports = {
   addPaymentMethod,
   updatePaymentMethod,
   removePaymentMethod,
-  handleWebhook
+  handleWebhook,
+  triggerMonthlyUsageReporting
 };

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { createWhatsappMessageRecord } = require('../../controllers/whatsappMessageController');
 
 // Global conversation states (shared across all instances)
 const globalReviewConversationStates = new Map();
@@ -160,6 +161,9 @@ class ReviewService {
       // Save to database for persistence
       await this.saveConversationToDatabase(phoneNumber, stateData);
       
+      // Create whatsappMessage record for usage tracking
+      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'review_new_customer');
+      
       const result = await this.sendRatingButtons(phoneNumber, message);
       
       return {
@@ -204,6 +208,9 @@ class ReviewService {
       
       // Save to database for persistence
       await this.saveConversationToDatabase(phoneNumber, stateData);
+      
+      // Create whatsappMessage record for usage tracking
+      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'review_regular_customer_v1');
       
       const result = await this.sendRatingButtons(phoneNumber, message);
       
@@ -250,6 +257,9 @@ class ReviewService {
       // Save to database for persistence
       await this.saveConversationToDatabase(phoneNumber, stateData);
       
+      // Create whatsappMessage record for usage tracking
+      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'review_regular_customer_v2');
+      
       const result = await this.sendRatingButtons(phoneNumber, message);
       
       return {
@@ -286,6 +296,11 @@ class ReviewService {
         await this.saveConversationToDatabase(phoneNumber, state);
       }
       
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, phoneNumber, 'review_high_rating_thankyou');
+      }
+      
       const result = await this.sendMessage(phoneNumber, message);
       
       return {
@@ -319,6 +334,11 @@ class ReviewService {
         await this.saveConversationToDatabase(phoneNumber, state);
       }
       
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, phoneNumber, 'review_low_rating_thankyou');
+      }
+      
       const result = await this.sendMessage(phoneNumber, message);
       
       return {
@@ -339,6 +359,9 @@ class ReviewService {
   async sendBusinessOwnerAlert(businessOwnerPhone, businessName, customerName, customerPhone, serviceDetails, lastPayment, rating) {
     try {
       const message = `היי ${businessName} זו עדי מ-Plusfive\nקיבלנו התראה על לקוח שנתן דירוג נמוך מהממוצע ואני ממליצה לך ליצור איתו קשר ולהציע לו חוויה מתקנת 🤍\n\nשם לקוח: ${customerName}\nמספר נייד: ${customerPhone}\nשירות: ${serviceDetails}\nתשלום: ${lastPayment}\nדירוג: ${rating}`;
+      
+      // Create whatsappMessage record for usage tracking
+      await this.createWhatsappMessageRecord(businessName, businessOwnerPhone, 'review_business_alert');
       
       const result = await this.sendMessage(businessOwnerPhone, message);
       

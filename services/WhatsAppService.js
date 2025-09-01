@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { createWhatsappMessageRecord } = require('../controllers/whatsappMessageController');
 
 class WhatsAppService {
   constructor() {
@@ -350,6 +351,9 @@ class WhatsAppService {
   async sendRecoveredCustomerTemplate(businessName, customerName, customerPhone, futureAppointment, customerService, businessOwnerPhone) {
     try {
       const message = `היי ${businessName} זו עדי מ-Plusfive\nעשינו את זה שוב, החזרנו לקוח שהיה בסיכון 🤍\n\nשם לקוח: ${customerName}\nמספר נייד: ${customerPhone}\nתור עתידי: ${futureAppointment}\nשירות: ${customerService}`;
+      
+      // Create whatsappMessage record for usage tracking
+      await createWhatsappMessageRecord(businessName, businessOwnerPhone, 'recovered_customer_notification');
       
       const payload = {
         messaging_product: 'whatsapp',

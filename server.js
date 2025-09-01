@@ -24,6 +24,7 @@ const webhookRoutes = require('./routes/webhooks');
 const reviewRoutes = require('./routes/reviews');
 const customerStatusRoutes = require('./routes/customerStatus');
 const whatsappRoutes = require('./routes/whatsapp');
+const whatsappMessageRoutes = require('./routes/whatsappMessage');
 const adminDashboardRoutes = require('./routes/adminDashboard');
 const stripeRoutes = require('./routes/stripe');
 
@@ -89,6 +90,7 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/customer-status', customerStatusRoutes);
 
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/whatsapp-messages', whatsappMessageRoutes);
 app.use('/api/admin-dashboard', adminDashboardRoutes);
 app.use('/api/stripe', stripeRoutes);
 

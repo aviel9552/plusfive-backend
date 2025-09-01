@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { createWhatsappMessageRecord } = require('../../controllers/whatsappMessageController');
 
 // Global conversation states (shared across all instances)
 const globalLostConversationStates = new Map();
@@ -63,6 +64,9 @@ class LostService {
       // Save to database for persistence
       await this.saveConversationToDatabase(phoneNumber, stateData);
       
+      // Create whatsappMessage record
+      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'lost');
+      
       const result = await this.sendMessage(phoneNumber, message);
       
       return {
@@ -81,6 +85,8 @@ class LostService {
     }
   }
 
+
+
   // Step 2: Send follow-up message (after customer responds to greeting)
   async sendFollowUpMessage(phoneNumber) {
     try {
@@ -98,8 +104,13 @@ class LostService {
         currentState.lastMessage = message;
         currentState.followupTime = new Date();
         
-        // Save to database
-        await this.saveConversationToDatabase(actualPhoneNumber, currentState);
+              // Save to database
+      await this.saveConversationToDatabase(actualPhoneNumber, currentState);
+      }
+      
+      // Create whatsappMessage record for usage tracking
+      if (currentState?.customerName) {
+        await this.createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'lost_followup');
       }
       
       const result = await this.sendMessage(phoneNumber, message);
@@ -141,6 +152,11 @@ class LostService {
         await this.saveConversationToDatabase(actualPhoneNumber, state);
       }
       
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_yes_response');
+      }
+      
       const result = await this.sendMessage(phoneNumber, message);
       
       return {
@@ -179,6 +195,11 @@ class LostService {
         await this.saveConversationToDatabase(actualPhoneNumber, state);
       }
       
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_no_response');
+      }
+      
       const result = await this.sendMessage(phoneNumber, message);
       
       return {
@@ -210,11 +231,17 @@ class LostService {
       if (state) {
         state.step = 'closure_sent';
         state.lastMessage = message;
+        state.lastMessage = message;
         state.closureTime = new Date();
         state.conversationEnded = true;
         
         // Save to database
         await this.saveConversationToDatabase(actualPhoneNumber, state);
+      }
+      
+      // Create whatsappMessage record for usage tracking
+      if (state?.customerName) {
+        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_closure');
       }
       
       const result = await this.sendMessage(phoneNumber, message);
