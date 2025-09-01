@@ -9,10 +9,6 @@ const createCheckoutSession = async (req, res) => {
   try {
     const { priceId } = req.body;
     const userId = req.user.userId;
-
-    console.log('req.body', req.body);
-    console.log('priceId', priceId);
-    console.log('userId', userId);
     
     if (!priceId) {
       return errorResponse(res, 'Missing priceId', 400);
@@ -474,9 +470,6 @@ const handleSubscriptionChange = async (customerId, subscription) => {
       }
     });
 
-    console.log(
-      `✅ Updated user "${user.id}" (stripeCustomerId="${customerId}"): status=${status}, plan=${planName}, periodStart=${periodStart}, periodEnd=${periodEnd}`
-    );
   } catch (error) {
     console.error('❌ Error in handleSubscriptionChange:', error.message);
   }
@@ -863,9 +856,6 @@ const addPaymentMethod = async (req, res) => {
       livemode: updatedPaymentMethod.livemode
     };
 
-    // Log successful addition for audit
-    console.log(`✅ Payment method added: userId=${userId}, paymentMethodId=${paymentMethodId}, brand=${updatedPaymentMethod.card.brand}, last4=${updatedPaymentMethod.card.last4}`);
-
     return successResponse(res, {
       message: 'Payment method added successfully',
       data: responseData,
@@ -1137,8 +1127,6 @@ const handleCustomerChange = async (customer) => {
  */
 const triggerMonthlyUsageReporting = async (req, res) => {
   try {
-    console.log('🔄 Manual monthly usage reporting triggered by user:', req.user.userId);
-    
     await reportUsageForMonth();
     
     return successResponse(res, {

@@ -13,7 +13,6 @@ const getAllCustomers = async (req, res) => {
     
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
-    console.log('authenticatedUserId', authenticatedUserId);
 
     // Build where clause - Always filter by authenticated user's ID
     const where = {
@@ -169,7 +168,6 @@ const getTenCustomers = async (req, res) => {
     
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
-    console.log('authenticatedUserId', authenticatedUserId);
 
     // Build where clause - Always filter by authenticated user's ID
     const where = {
@@ -310,7 +308,6 @@ const getCustomersStatusCount = async (req, res) => {
   try {
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
-    // console.log("authenticatedUserId", authenticatedUserId);
 
     // Build where clause - Always filter by authenticated user's ID
     const where = {

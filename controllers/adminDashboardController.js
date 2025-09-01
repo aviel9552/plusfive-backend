@@ -288,7 +288,6 @@ class AdminDashboardController {
         success: true,
         data: revenueData
       });
-      // console.log("revenueData ", revenueData);
     } catch (error) {
       console.error('Error getting revenue impact:', error);
       res.status(500).json({

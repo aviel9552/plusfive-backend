@@ -46,7 +46,6 @@ class RiskService {
 
   // Step 1: Send initial Hebrew at-risk greeting (ONLY API CALL)
   async sendInitialGreeting(customerName, phoneNumber) {
-    console.log('Sending initial greeting...', customerName, phoneNumber);
     try {
       const message = `היי ${customerName} מה קורה?`;
 

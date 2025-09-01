@@ -17,7 +17,6 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
         });
 
         if (!customer) {
-            console.log(`Customer not found: ${customerName} - ${phoneNumber}`);
             return null;
         }
 
@@ -25,7 +24,6 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
         const businessUserId = userId || customer.userId;
 
         if (!businessUserId) {
-            console.log(`No business user ID found for customer: ${customerName}`);
             return null;
         }
 
@@ -41,12 +39,7 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
             }
         });
 
-        console.log(`Customer status updated in CustomerUser table:`, {
-            customerId: customer.id,
-            userId: businessUserId,
-            newStatus: messageType,
-            recordsUpdated: customerStatusUpdate.count
-        });
+
 
         // Create whatsappMessage record
         const whatsappMessage = await prisma.whatsappMessage.create({
@@ -60,12 +53,7 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
             }
         });
 
-        console.log(`WhatsApp message record created:`, {
-            id: whatsappMessage.id,
-            messageType,
-            customerId: customer.id,
-            userId: businessUserId
-        });
+
 
         return whatsappMessage;
     } catch (error) {

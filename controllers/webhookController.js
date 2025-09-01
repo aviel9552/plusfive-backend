@@ -74,8 +74,6 @@ const handleAppointmentWebhook = async (req, res) => {
         if (existingCustomer.customerFullName !== webhookFullName || 
             existingCustomer.customerPhone !== formattedPhone) {
           existingCustomer = null; // Force creation of new customer
-        } else {
-          console.log('Customer data unchanged - using existing customer');
         }
       }
     }
@@ -191,7 +189,6 @@ const handleAppointmentWebhook = async (req, res) => {
             }
           });
           customerUserId = updatedCustomerUser.id;
-          console.log(`Customer status updated from ${previousStatus} to recovered:`, updatedCustomerUser.id);
           
           // Send recovered customer notification to business owner
           const businessOwner = await prisma.user.findUnique({
@@ -251,7 +248,6 @@ const handleAppointmentWebhook = async (req, res) => {
             }
           });
           customerUserId = newCustomerUser.id;
-          console.log('New CustomerUser record created (different user):', newCustomerUser.id);
         } else {
           // First time customer-user relation, create with status 'new'
           const newCustomerUser = await prisma.customerUser.create({
@@ -262,13 +258,11 @@ const handleAppointmentWebhook = async (req, res) => {
             }
           });
           customerUserId = newCustomerUser.id;
-          console.log('New CustomerUser record created (first time):', newCustomerUser.id);
         }
       }
 
       // Check if customer was previously lost or at_risk, update to recovered and send notification
       if (existingCustomerUser && (existingCustomerUser.status === 'lost' || existingCustomerUser.status === 'at_risk')) {
-        console.log(`Customer status changed from ${existingCustomerUser.status} to recovered`);
         
         // Get business owner's phone number
         const businessOwner = await prisma.user.findUnique({
@@ -291,28 +285,13 @@ const handleAppointmentWebhook = async (req, res) => {
               businessOwner.phoneNumber
             );
             
-            console.log('Recovered customer notification sent to business owner');
-          } catch (whatsappError) {
+            } catch (whatsappError) {
             console.error('Failed to send recovered customer notification:', whatsappError.message);
           }
-        } else {
-          console.log('Business owner phone number not found, notification skipped');
         }
       }
     
-         console.log('New customer created:', customerId);
-     console.log('New appointment created:', newAppointment.id);
-     console.log('New customer-user relation created:', customerUserId);
-     
-     // Log the webhook data
-     console.log('Appointment webhook received:', {
-       id: webhookLog.id,
-       data: webhookData,
-       userId: userId,
-       customerId: customerId,
-       appointmentId: newAppointment.id,
-       customerUserId: customerUserId
-     });
+
     
          return successResponse(res, {
        webhookId: webhookLog.id,
@@ -334,11 +313,9 @@ const handleAppointmentWebhook = async (req, res) => {
   const handlePaymentCheckoutWebhook = async (req, res) => {
     try {
       const webhookData = req.body;
-      console.log("webhookData ", webhookData);
       
       // Extract actual data from webhookData.data.data
       const actualData = webhookData.data?.data;
-      console.log("Actual data from webhookData.data.data: ", actualData);
       
       if (!actualData) {
         return errorResponse(res, 'Invalid webhook data structure', 400);
@@ -357,13 +334,7 @@ const handleAppointmentWebhook = async (req, res) => {
       let userId = null;
       let customerId = null;
       
-      console.log('🔍 Searching for customer with:', {
-        BusinessId: actualData.BusinessId,
-        EmployeeId: actualData.EmployeeId,
-        Total: actualData.Total,
-        TotalWithoutVAT: actualData.TotalWithoutVAT,
-        TotalVAT: actualData.TotalVAT
-      });
+
       
       if (actualData.BusinessId && actualData.EmployeeId) {
         const existingCustomer = await prisma.customers.findFirst({
@@ -386,44 +357,10 @@ const handleAppointmentWebhook = async (req, res) => {
           customerId = existingCustomer.id;
           userId = existingCustomer.userId; // userId field is present in Customers table
           
-        } else {
-          console.log('❌ No customer found with both BusinessId and EmployeeId:', {
-            businessId: actualData.BusinessId,
-            employeeId: actualData.EmployeeId
-          });
-          
-          // Debug: Check what's in Customers table
-          const allCustomers = await prisma.customers.findMany({
-            select: {
-              id: true,
-              businessId: true,
-              employeeId: true
-            }
-          });
         }
-      } else {
-        console.log('❌ Missing BusinessId or EmployeeId:', {
-          businessId: actualData.BusinessId,
-          employeeId: actualData.EmployeeId
-        });
       }
       
       // 4. Store structured data in PaymentWebhook table with userId and customerId
-      console.log('💰 Payment values to store:', {
-        total: actualData.Total,
-        totalWithoutVAT: actualData.TotalWithoutVAT,
-        totalVAT: actualData.TotalVAT,
-        parsedTotal: parseFloat(actualData.Total),
-        parsedTotalWithoutVAT: parseFloat(actualData.TotalWithoutVAT),
-        parsedTotalVAT: parseFloat(actualData.TotalVAT)
-      });
-      
-      console.log('🔗 IDs for PaymentWebhook:', {
-        userId: userId,
-        customerId: customerId,
-        businessId: actualData.BusinessId,
-        employeeId: actualData.EmployeeId
-      });
       
       const paymentWebhook = await prisma.paymentWebhook.create({
         data: {
@@ -439,19 +376,11 @@ const handleAppointmentWebhook = async (req, res) => {
         }
       });
       
-      // Log the webhook data
-      console.log('Payment checkout webhook received:', {
-        logId: paymentLog.id,
-        paymentId: paymentWebhook.id,
-        userId: userId,
-        customerId: customerId,
-        data: actualData
-      });
+
 
       // If customerId is found, send WhatsApp review request
       if (customerId) {
         try {
-          console.log('📱 Sending WhatsApp review request for customerId:', customerId);
           
           // Import review service
           const reviewService = require('../services/Whatsapp/ReviewService');
@@ -515,8 +444,7 @@ const handleAppointmentWebhook = async (req, res) => {
               }
             });
             
-            console.log(`📊 Review request tracked in database after payment:`, reviewRecord.id);
-            console.log(`✅ WhatsApp review request sent successfully for customer:`, customer.customerFullName);
+
           }
         } catch (whatsappError) {
           console.error('❌ Error sending WhatsApp review request after payment:', whatsappError);
@@ -640,8 +568,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
     const reviewService = new ReviewService();
     const prisma = new PrismaClient();
     
-    // Log the complete webhook payload for debugging
-    console.log('📩 WhatsApp Incoming Webhook:', JSON.stringify(webhookData, null, 2));
+
     
     // Check if it's a message webhook
     if (webhookData.entry && webhookData.entry.length > 0) {
@@ -684,13 +611,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                 messageContent = `Unsupported message type: ${messageType}`;
             }
             
-            console.log('🔥 Processed WhatsApp Message:', {
-              from: from,
-              messageId: messageId,
-              type: messageType,
-              content: messageContent,
-              timestamp: new Date(parseInt(timestamp) * 1000).toISOString()
-            });
+
             
             // Try to find customer by phone number (try both with and without +)
             let existingCustomer = await prisma.customers.findFirst({
@@ -727,20 +648,15 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                   }
                 }
               });
-              console.log('🔍 Trying with +:', phoneWithPlus);
+
             }
             
             if (existingCustomer) {
-              console.log('✅ Customer found:', {
-                customerId: existingCustomer.id,
-                customerName: existingCustomer.customerFullName,
-                businessOwner: existingCustomer.user?.businessName
-              });
+
               
               // Check if message content is a rating (1-5)
               const rating = parseInt(messageContent);
               if (rating >= 1 && rating <= 5) {
-                console.log('⭐ Rating detected:', rating);
                 
                 // Store rating in Review table
                 const newReview = await prisma.review.create({
@@ -754,7 +670,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                   }
                 });
                 
-                console.log('💾 Rating saved to database:', newReview.id);
+
               }
               
               // ===== HEBREW CONVERSATION FLOWS (AT-RISK, LOST & REVIEW CUSTOMERS) =====
@@ -767,8 +683,6 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
               
               // Check conversation status to determine priority (but only if conversation is NOT ended)
               if (reviewConversationState && reviewConversationState.status === 'at_review' && !reviewConversationState.conversationEnded) {
-                console.log('🎯 Found active review conversation for', from);
-                console.log('📊 Review conversation state:', reviewConversationState);
                 
                 try {
                   // Get business owner info for potential alert
@@ -784,15 +698,11 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                     businessOwnerPhone
                   );
                   
-                  console.log('🤖 Review service response:', reviewResult);
-                  
                   if (reviewResult.action !== 'no_active_conversation') {
-                    console.log('✅ Review conversation step completed:', reviewResult.type || reviewResult.action);
                     
                     // Extract and save rating to database if provided
                     const rating = reviewService.extractRating(messageContent);
                     if (rating !== null) {
-                      console.log(`⭐ Review rating received: ${rating}/5`);
                       
                       // Update existing review record or create new one
                       const recentReview = await prisma.review.findFirst({
@@ -813,8 +723,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                             messageStatus: 'responded'
                           }
                         });
-                        console.log('💾 Review rating updated in database:', recentReview.id);
-                      } else {
+                        } else {
                         // Create new review record
                         const newReview = await prisma.review.create({
                           data: {
@@ -826,7 +735,6 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                             messageStatus: 'responded'
                           }
                         });
-                        console.log('💾 New review rating saved to database:', newReview.id);
                       }
                     }
                   }
@@ -834,8 +742,6 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                   console.error('❌ Error handling review conversation:', reviewError);
                 }
               } else if (riskConversationState && riskConversationState.status === 'at_risk' && !riskConversationState.conversationEnded) {
-                console.log('🎯 Found active at-risk conversation for', from);
-                console.log('📊 Risk conversation state:', riskConversationState);
                 
                 try {
                   const riskResult = await riskService.handleIncomingMessage(
@@ -844,17 +750,12 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                     existingCustomer.customerFullName
                   );
                   
-                  console.log('🤖 Risk service response:', riskResult);
-                  
                   if (riskResult.action !== 'no_active_conversation') {
-                    console.log('✅ At-risk conversation step completed:', riskResult.type || riskResult.action);
                   }
                 } catch (riskError) {
                   console.error('❌ Error handling at-risk conversation:', riskError);
                 }
               } else if (lostConversationState && lostConversationState.status === 'at_lost' && !lostConversationState.conversationEnded) {
-                console.log('🎯 Found active lost customer conversation for', from);
-                console.log('📊 Lost conversation state:', lostConversationState);
                 
                 try {
                   const lostResult = await lostService.handleIncomingMessage(
@@ -863,10 +764,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                     existingCustomer.customerFullName
                   );
                   
-                  console.log('🤖 Lost service response:', lostResult);
-                  
                   if (lostResult.action !== 'no_active_conversation') {
-                    console.log('✅ Lost customer conversation step completed:', lostResult.type || lostResult.action);
                   }
                 } catch (lostError) {
                   console.error('❌ Error handling lost customer conversation:', lostError);
@@ -879,48 +777,17 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
                 const hasEndedLost = lostConversationState && lostConversationState.conversationEnded;
                 
                 if (hasEndedReview || hasEndedRisk || hasEndedLost) {
-                  console.log('🏁 Message ignored - conversation already ended for', from, {
-                    endedReview: hasEndedReview,
-                    endedRisk: hasEndedRisk,
-                    endedLost: hasEndedLost,
-                    customerMessage: messageContent
-                  });
                 } else {
-                  console.log('ℹ️ No active conversation (risk, lost or review) for', from);
                 }
               }
               
-              // Store the message in a general log (you can create a new table for this)
-              console.log('💬 Message from customer:', {
-                customer: existingCustomer.customerFullName,
-                business: existingCustomer.user?.businessName,
-                message: messageContent,
-                type: messageType,
-                hasAtRiskConversation: !!riskConversationState,
-                hasLostConversation: !!lostConversationState,
-                hasReviewConversation: !!reviewConversationState,
-                activeConversationType: riskConversationState ? 'at-risk' : 
-                                       lostConversationState ? 'lost' : 
-                                       reviewConversationState ? 'review' : 'none'
-              });
+
               
-            } else {
-              console.log('❌ Customer not found for phone:', from);
             }
           }
         }
         
-        // Check for message status updates (delivered, read, etc.)
-        if (value.statuses && value.statuses.length > 0) {
-          for (const status of value.statuses) {
-            console.log('📋 Message Status Update:', {
-              messageId: status.id,
-              status: status.status,
-              timestamp: new Date(parseInt(status.timestamp) * 1000).toISOString(),
-              recipientId: status.recipient_id
-            });
-          }
-        }
+
       }
     }
     
@@ -944,10 +811,8 @@ const verifyWhatsAppWebhook = async (req, res) => {
     const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
     
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('✅ WhatsApp Webhook verified successfully');
       return res.status(200).send(challenge);
     } else {
-      console.log('❌ WhatsApp Webhook verification failed');
       return res.status(403).json({ error: 'Verification failed' });
     }
   } catch (error) {

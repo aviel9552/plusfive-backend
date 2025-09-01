@@ -156,8 +156,6 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
       }
     });
 
-    // Log the action for audit
-    console.log(`Customer added: User ${userId} added customer ${customerId}`);
 
     return successResponse(res, {
       ...newCustomer,
@@ -268,9 +266,6 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
         }
       }
     });
-
-    // Log the action for audit
-    console.log(`New customer created and added: User ${userId} created customer ${newCustomerUser.id}`);
 
     return successResponse(res, {
       ...newCustomerMaster,
@@ -574,9 +569,6 @@ const removeCustomer = async (req, res) => {
         where: { id: existingCustomer.customerId }
       });
     });
-
-    // Log the action for audit
-    console.log(`Customer completely removed: User ${userId} removed customer ${existingCustomer.customerId} (${customerInfo.firstName} ${customerInfo.lastName}) from both tables`);
 
     return successResponse(res, {
       message: `Customer ${customerInfo.firstName} ${customerInfo.lastName} completely removed from the system`,
