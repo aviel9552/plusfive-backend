@@ -9,22 +9,28 @@ const register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
 
-    // Check if user already exists with this email
-    const existingUserByEmail = await prisma.user.findUnique({
-      where: { email }
+    // Check if user already exists with this email (excluding soft deleted users)
+    const existingUserByEmail = await prisma.user.findFirst({
+      where: { 
+        email,
+        isDeleted: false  // Only check non-deleted users
+      }
     });
 
     if (existingUserByEmail) {
       return errorResponse(res, 'User with this email already exists', 400);
     }
 
-    // Check if user already exists with this phone number
+    // Check if user already exists with this phone number (excluding soft deleted users)
     if (phoneNumber) {
       // Format phone number before checking
       const formattedPhoneNumber = formatPhoneNumber(phoneNumber);
       
-      const existingUserByPhone = await prisma.user.findUnique({
-        where: { phoneNumber: formattedPhoneNumber }
+      const existingUserByPhone = await prisma.user.findFirst({
+        where: { 
+          phoneNumber: formattedPhoneNumber,
+          isDeleted: false  // Only check non-deleted users
+        }
       });
 
       if (existingUserByPhone) {
@@ -398,6 +404,59 @@ const changePassword = async (req, res) => {
   }
 };
 
+// Account soft delete - toggle isDeleted field
+const accountSoftDelete = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    
+    // Prevent admin from soft deleting their account
+    if (userRole === 'admin') {
+      return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
+    }
+    
+    // Get current user data
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { isDeleted: true, role: true }
+    });
+
+    if (!currentUser) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Double check admin role from database
+    if (currentUser.role === 'admin') {
+      return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
+    }
+
+    // Toggle isDeleted field
+    const newIsDeletedValue = !currentUser.isDeleted;
+
+    // Update user's isDeleted status
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { isDeleted: newIsDeletedValue },
+      select: {
+        id: true,
+        email: true,
+        businessName: true,
+        isDeleted: true,
+        isActive: true
+      }
+    });
+
+    return successResponse(res, {
+      user: updatedUser,
+      message: newIsDeletedValue ? 'Account soft deleted successfully' : 'Account restored successfully'
+    }, newIsDeletedValue ? 'Account soft deleted' : 'Account restored');
+
+  } catch (error) {
+    console.error('Account soft delete error:', error);
+    return errorResponse(res, 'Failed to update account status', 500);
+  }
+};
+
 // Helper function to format phone number
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return phoneNumber;
@@ -421,5 +480,6 @@ module.exports = {
   resendVerification,
   forgotPassword,
   resetPassword,
-  changePassword
+  changePassword,
+  accountSoftDelete
 }; 

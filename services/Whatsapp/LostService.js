@@ -65,7 +65,7 @@ class LostService {
       await this.saveConversationToDatabase(phoneNumber, stateData);
       
       // Create whatsappMessage record
-      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'lost');
+      await createWhatsappMessageRecord(customerName, phoneNumber, 'lost');
       
       const result = await this.sendMessage(phoneNumber, message);
       
@@ -110,7 +110,7 @@ class LostService {
       
       // Create whatsappMessage record for usage tracking
       if (currentState?.customerName) {
-        await this.createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'lost_followup');
+        await createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'lost_followup');
       }
       
       const result = await this.sendMessage(phoneNumber, message);
@@ -154,7 +154,7 @@ class LostService {
       
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_yes_response');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_yes_response');
       }
       
       const result = await this.sendMessage(phoneNumber, message);
@@ -197,7 +197,7 @@ class LostService {
       
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_no_response');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_no_response');
       }
       
       const result = await this.sendMessage(phoneNumber, message);
@@ -241,7 +241,7 @@ class LostService {
       
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_closure');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'lost_closure');
       }
       
       const result = await this.sendMessage(phoneNumber, message);

@@ -283,7 +283,6 @@ class AdminDashboardController {
           year: targetDate.getFullYear()
         });
       }
-
       res.json({
         success: true,
         data: revenueData
@@ -298,30 +297,334 @@ class AdminDashboardController {
     }
   }
 
+  // Get Revenue Counts - Lost and Recovered customers count and revenue
+  getRevenueCounts = async (req, res) => {
+    try {
+      const authenticatedUser = req.user;
+
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      // Get total revenue data
+      const totalRevenueData = await prisma.paymentWebhook.aggregate({
+        where: {
+          ...where,
+          status: 'success'
+        },
+        _sum: {
+          total: true
+        },
+        _count: {
+          id: true
+        }
+      });
+
+      // Get lost customers revenue and count
+      const lostRevenueData = await prisma.paymentWebhook.aggregate({
+        where: {
+          ...where,
+          status: 'success',
+          revenuePaymentStatus: 'lost'
+        },
+        _sum: {
+          total: true,
+          totalWithoutVAT: true,
+          totalVAT: true
+        },
+        _count: {
+          id: true
+        }
+      });
+
+      // Get recovered customers revenue and count
+      const recoveredRevenueData = await prisma.paymentWebhook.aggregate({
+        where: {
+          ...where,
+          status: 'success',
+          revenuePaymentStatus: 'recovered'
+        },
+        _sum: {
+          total: true,
+          totalWithoutVAT: true,
+          totalVAT: true
+        },
+        _count: {
+          id: true
+        }
+      });
+      
+      return res.json({
+        success: true,
+        data: {
+          // Total data
+          totalRevenue: totalRevenueData._sum.total || 0,
+          totalCount: totalRevenueData._count.id || 0,
+          
+          // Recovered customers detailed breakdown
+          totalRecoveredRevenue: recoveredRevenueData._sum.total || 0,
+          totalWithoutVATRecoveredRevenue: recoveredRevenueData._sum.totalWithoutVAT || 0,
+          totalVATRecoveredRevenue: recoveredRevenueData._sum.totalVAT || 0,
+          recoveredCount: recoveredRevenueData._count.id || 0,
+          
+          // Lost customers detailed breakdown
+          totalLostRevenue: lostRevenueData._sum.total || 0,
+          totalWithoutVATLostRevenue: lostRevenueData._sum.totalWithoutVAT || 0,
+          totalVATLostRevenue: lostRevenueData._sum.totalVAT || 0,
+          lostCount: lostRevenueData._count.id || 0
+        }
+      });
+    } catch (error) {
+      console.error('Error getting revenue counts:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch revenue counts',
+        error: error.message
+      });
+    }
+  }
+
+  // Get Revenue Impact with filters (similar to getQRCodeAnalytics)
+  getRevenueImpacts = async (req, res) => {
+    try {
+      const authenticatedUser = req.user;
+
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      // Get data for different periods (same as getQRCodeAnalytics)
+      const monthlyData = await this.getRevenuePeriodData('monthly', authenticatedUser);
+      const weeklyData = await this.getRevenuePeriodData('weekly', authenticatedUser);
+      const lastMonthData = await this.getRevenuePeriodData('last-month', authenticatedUser);
+      const yearlyData = await this.getRevenuePeriodData('yearly', authenticatedUser);
+
+      return res.json({
+        success: true,
+        data: {
+          monthly: monthlyData,
+          weekly: weeklyData,
+          lastMonth: lastMonthData,
+          yearly: yearlyData
+        }
+      });
+
+    } catch (error) {
+      console.error('Error getting revenue impacts:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch revenue impact data',
+        error: error.message
+      });
+    }
+  }
+
+  // Helper function to get revenue period data (similar to getPeriodData)
+  async getRevenuePeriodData(period, authenticatedUser) {
+    try {
+      let where = {};
+      
+      // If user role is 'user', only show their data
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      
+      let data = [];
+      
+      switch (period) {
+        case 'monthly':
+          // Get last 6 months data
+          for (let i = 5; i >= 0; i--) {
+            const targetDate = new Date(currentYear, currentDate.getMonth() - i, 1);
+            const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+            const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+            
+            // Get revenue data from PaymentWebhook table
+            const revenueData = await prisma.paymentWebhook.aggregate({
+              where: {
+                ...where,
+                paymentDate: { gte: startDate, lte: endDate },
+                status: 'success'
+              },
+              _sum: {
+                total: true,
+                totalWithoutVAT: true,
+                totalVAT: true
+              },
+              _count: {
+                id: true
+              }
+            });
+            
+            data.push({
+              label: targetDate.toLocaleString('default', { month: 'short' }),
+              revenue: revenueData._sum.total || 0,
+              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
+              vat: revenueData._sum.totalVAT || 0,
+              transactionCount: revenueData._count.id || 0,
+              month: targetDate.getMonth() + 1,
+              year: targetDate.getFullYear()
+            });
+          }
+          break;
+          
+        case 'weekly':
+          // Get last 4 weeks data
+          for (let i = 3; i >= 0; i--) {
+            const targetDate = new Date(currentDate.getTime() - (i * 7 * 24 * 60 * 60 * 1000));
+            const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate() - targetDate.getDay());
+            const endDate = new Date(startDate.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000) + (59 * 60 * 1000) + (59 * 1000));
+            
+            const revenueData = await prisma.paymentWebhook.aggregate({
+              where: {
+                ...where,
+                paymentDate: { gte: startDate, lte: endDate },
+                status: 'success'
+              },
+              _sum: {
+                total: true,
+                totalWithoutVAT: true,
+                totalVAT: true
+              },
+              _count: {
+                id: true
+              }
+            });
+            
+            data.push({
+              label: `Week ${4 - i}`,
+              revenue: revenueData._sum.total || 0,
+              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
+              vat: revenueData._sum.totalVAT || 0,
+              transactionCount: revenueData._count.id || 0,
+              week: 4 - i
+            });
+          }
+          break;
+          
+        case 'last-month':
+          // Last month's weekly data
+          const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
+          const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
+          
+          // Get all weeks in last month
+          const weeksInLastMonth = [];
+          const tempDate = new Date(lastMonthStart);
+          
+          while (tempDate <= lastMonthEnd) {
+            const weekStart = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate() - tempDate.getDay());
+            const weekEnd = new Date(weekStart.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000) + (59 * 60 * 1000) + (59 * 1000));
+            
+            // Check if this week is within last month
+            if (weekStart >= lastMonthStart && weekEnd <= lastMonthEnd) {
+              const weekNumber = Math.ceil((tempDate.getDate() - tempDate.getDay() + 1) / 7);
+              
+              const revenueData = await prisma.paymentWebhook.aggregate({
+                where: {
+                  ...where,
+                  paymentDate: { gte: weekStart, lte: weekEnd },
+                  status: 'success'
+                },
+                _sum: {
+                  total: true,
+                  totalWithoutVAT: true,
+                  totalVAT: true
+                },
+                _count: {
+                  id: true
+                }
+              });
+              
+              weeksInLastMonth.push({
+                label: `Week ${weekNumber}`,
+                revenue: revenueData._sum.total || 0,
+                revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
+                vat: revenueData._sum.totalVAT || 0,
+                transactionCount: revenueData._count.id || 0,
+                week: weekNumber
+              });
+            }
+            
+            tempDate.setDate(tempDate.getDate() + 7);
+          }
+          
+          data = weeksInLastMonth;
+          break;
+          
+        case 'yearly':
+          // Get yearly data for last 3 years (like QR analytics)
+          for (let year = currentYear - 2; year <= currentYear; year++) {
+            const startDate = new Date(year, 0, 1);
+            const endDate = new Date(year, 11, 31, 23, 59, 59);
+            
+            const revenueData = await prisma.paymentWebhook.aggregate({
+              where: {
+                ...where,
+                paymentDate: { gte: startDate, lte: endDate },
+                status: 'success'
+              },
+              _sum: {
+                total: true,
+                totalWithoutVAT: true,
+                totalVAT: true
+              },
+              _count: {
+                id: true
+              }
+            });
+            
+            data.push({
+              label: year.toString(),
+              revenue: revenueData._sum.total || 0,
+              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
+              vat: revenueData._sum.totalVAT || 0,
+              transactionCount: revenueData._count.id || 0
+            });
+          }
+          break;
+          
+        default:
+          throw new Error('Invalid period specified');
+      }
+      
+      return data;
+      
+    } catch (error) {
+      console.error('Error getting revenue period data:', error);
+      throw error;
+    }
+  }
+
   // Get customer status breakdown
   getCustomerStatusBreakdown = async (req, res) => {
     try {
-      const totalCustomers = await prisma.customers.count();
+      const authenticatedUser = req.user;
+
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      const totalCustomers = await prisma.customers.count({
+        where: where
+      });
+      console.log('totalCustomers :', totalCustomers);
 
       // Active customers (have made payments in last 3 months through their business owners)
       const threeMonthsAgo = new Date();
       threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
-      // const activeCustomers = await prisma.customers.count({
-      //   where: {
-      //     user: {
-      //       payments: {
-      //         some: {
-      //           createdAt: {
-      //             gte: threeMonthsAgo
-      //           }
-      //         }
-      //       }
-      //     }
-      //   }
-      // });
       const activeCustomers = await prisma.customerUser.count({
         where: {
+          ...where,
           status: 'active',
         }
       });
@@ -329,13 +632,15 @@ class AdminDashboardController {
       // At risk customers
       const atRiskCustomers = await prisma.customerUser.count({
         where: {
-          status: 'at_risk' || 'risk' || 'at risk' || 'risk'
+          ...where,
+          status: 'at_risk'
         }
       });
 
       // Lost customers
       const lostCustomers = await prisma.customerUser.count({
         where: {
+          ...where,
           status: 'lost'
         }
       });
@@ -343,6 +648,7 @@ class AdminDashboardController {
       // Recovered customers
       const recoveredCustomers = await prisma.customerUser.count({
         where: {
+          ...where,
           status: 'recovered'
         }
       });
@@ -350,6 +656,7 @@ class AdminDashboardController {
       // New customers
       const newCustomers = await prisma.customerUser.count({
         where: {
+          ...where,
           status: 'new'
         }
       });

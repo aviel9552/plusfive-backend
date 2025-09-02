@@ -31,4 +31,12 @@ router.get('/overview', adminDashboardController.getDashboardOverview);
 // GET /api/admin-dashboard/qr-analytics?period=monthly
 router.get('/qr-analytics', adminDashboardController.getQRCodeAnalytics);
 
+// Get revenue impact over months
+// GET /api/admin-dashboard/revenue-impacts
+router.get('/revenue-impacts', adminDashboardController.getRevenueImpacts);
+
+// Get revenue counts
+// GET /api/admin-dashboard/revenue-counts
+router.get('/revenue-counts', adminDashboardController.getRevenueCounts);
+
 module.exports = router;

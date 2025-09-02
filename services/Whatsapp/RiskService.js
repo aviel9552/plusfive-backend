@@ -65,7 +65,7 @@ class RiskService {
       await this.saveConversationToDatabase(phoneNumber, stateData);
 
       // Create whatsappMessage record
-      await this.createWhatsappMessageRecord(customerName, phoneNumber, 'at_risk');
+      await createWhatsappMessageRecord(customerName, phoneNumber, 'at_risk');
 
       const result = await this.sendMessage(phoneNumber, message);
 
@@ -110,7 +110,7 @@ class RiskService {
 
       // Create whatsappMessage record for usage tracking
       if (currentState?.customerName) {
-        await this.createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'at_risk_followup');
+        await createWhatsappMessageRecord(currentState.customerName, actualPhoneNumber, 'at_risk_followup');
       }
 
       const result = await this.sendMessage(phoneNumber, message);
@@ -154,7 +154,7 @@ class RiskService {
 
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_yes_response');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_yes_response');
       }
 
       const result = await this.sendMessage(phoneNumber, message);
@@ -197,7 +197,7 @@ class RiskService {
 
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_no_response');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_no_response');
       }
 
       const result = await this.sendMessage(phoneNumber, message);
@@ -240,7 +240,7 @@ class RiskService {
 
       // Create whatsappMessage record for usage tracking
       if (state?.customerName) {
-        await this.createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_closure');
+        await createWhatsappMessageRecord(state.customerName, actualPhoneNumber, 'at_risk_closure');
       }
 
       const result = await this.sendMessage(phoneNumber, message);

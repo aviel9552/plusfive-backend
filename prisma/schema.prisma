@@ -420,6 +420,7 @@ model PaymentWebhook {
   // Additional fields
   paymentDate       DateTime @default(now())
   status            String   @default("success") // success, failed, pending
+  revenuePaymentStatus String? // recovered, lost
   
   // Webhook data
   employeeId        Int?

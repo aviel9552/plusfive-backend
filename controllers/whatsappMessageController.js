@@ -27,17 +27,20 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
             return null;
         }
 
-        // First, update customer status in CustomerUser table
-        const customerStatusUpdate = await prisma.customerUser.updateMany({
-            where: {
-                customerId: customer.id,
-                userId: businessUserId
-            },
-            data: {
-                status: messageType, // at_risk, lost, recovered, review_*
-                updatedAt: new Date()
-            }
-        });
+        // First, update customer status in CustomerUser table (only for at_risk, lost, recovered)
+        let customerStatusUpdate = null;
+        if (messageType === 'at_risk' || messageType === 'lost' || messageType === 'recovered') {
+            customerStatusUpdate = await prisma.customerUser.updateMany({
+                where: {
+                    customerId: customer.id,
+                    userId: businessUserId
+                },
+                data: {
+                    status: messageType, // at_risk, lost, recovered
+                    updatedAt: new Date()
+                }
+            });
+        }
 
 
 
