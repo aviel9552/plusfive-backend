@@ -39,4 +39,8 @@ router.get('/revenue-impacts', adminDashboardController.getRevenueImpacts);
 // GET /api/admin-dashboard/revenue-counts
 router.get('/revenue-counts', adminDashboardController.getRevenueCounts);
 
+// Get revenue counts
+// GET /api/admin-dashboard/average-rating-counts
+router.get('/average-rating-counts', adminDashboardController.getAverageRatingCounts);
+
 module.exports = router;

@@ -164,8 +164,13 @@ const login = async (req, res) => {
     // Generate JWT token
     const token = generateToken(user.id, user.email, user.role);
 
-    // Remove password from response
+    // Remove password from response and format phone number
     const { password: _, ...userWithoutPassword } = user;
+    
+    // Format phone number - remove +972 prefix
+    if (userWithoutPassword.phoneNumber && userWithoutPassword.phoneNumber.startsWith('+972')) {
+      userWithoutPassword.phoneNumber = '0' + userWithoutPassword.phoneNumber.substring(4);
+    }
 
     return successResponse(res, {
       user: userWithoutPassword,

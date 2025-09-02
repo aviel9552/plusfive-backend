@@ -297,6 +297,91 @@ class AdminDashboardController {
     }
   }
 
+  // Get Average Rating Counts - Month wise average rating data
+  getAverageRatingCounts = async (req, res) => {
+    try {
+      const authenticatedUser = req.user;
+
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      
+      // Get monthly average rating data for current year
+      const monthlyData = [];
+      
+      for (let month = 0; month < 12; month++) {
+        const startDate = new Date(currentYear, month, 1);
+        const endDate = new Date(currentYear, month + 1, 0, 23, 59, 59);
+        
+        // Get reviews for this month (only rated reviews, not rating requests)
+        const monthReviews = await prisma.review.findMany({
+          where: {
+            ...where,
+            createdAt: { gte: startDate, lte: endDate },
+            rating: { gt: 0 } // Only actual ratings, not rating requests (rating = 0)
+          },
+          select: {
+            rating: true
+          }
+        });
+        
+        // Calculate average rating for this month
+        let averageRating = 0;
+        if (monthReviews.length > 0) {
+          const totalRating = monthReviews.reduce((sum, review) => sum + review.rating, 0);
+          averageRating = totalRating / monthReviews.length;
+        }
+        
+        monthlyData.push({
+          month: startDate.toLocaleString('default', { month: 'short' }),
+          averageRating: Math.round(averageRating * 10) / 10, // Round to 1 decimal place
+          totalReviews: monthReviews.length,
+          monthNumber: month + 1
+        });
+      }
+
+      // Calculate overall statistics
+      const allReviews = await prisma.review.findMany({
+        where: {
+          ...where,
+          rating: { gt: 0 }
+        },
+        select: {
+          rating: true
+        }
+      });
+
+      const overallAverage = allReviews.length > 0 
+        ? Math.round((allReviews.reduce((sum, review) => sum + review.rating, 0) / allReviews.length) * 10) / 10
+        : 0;
+
+      return res.json({
+        success: true,
+        data: {
+          monthlyData: monthlyData,
+          overallStats: {
+            totalReviews: allReviews.length,
+            averageRating: overallAverage,
+            year: currentYear
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error getting average rating counts:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch average rating data',
+        error: error.message
+      });
+    }
+  }
+
   // Get Revenue Counts - Lost and Recovered customers count and revenue
   getRevenueCounts = async (req, res) => {
     try {
