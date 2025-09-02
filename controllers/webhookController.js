@@ -143,8 +143,29 @@ const handleAppointmentWebhook = async (req, res) => {
     }
     // Check if customer exists in Customers table
     let existingCustomer = null;
-    if (webhookData.EmployeeId) {
-      // First check by EmployeeId
+    
+    // First check by CustomerFullName and CustomerPhone combination
+    if (webhookData.CustomerFullName && webhookData.CustomerPhone) {
+      const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
+      
+      existingCustomer = await prisma.customers.findFirst({
+        where: {
+          AND: [
+            { customerFullName: webhookData.CustomerFullName },
+            { customerPhone: formattedPhone }
+          ]
+        },
+        select: {
+          id: true,
+          employeeId: true,
+          customerFullName: true,
+          customerPhone: true
+        }
+      });
+    }
+    
+    // If not found by name+phone, check by EmployeeId as fallback
+    if (!existingCustomer && webhookData.EmployeeId) {
       existingCustomer = await prisma.customers.findFirst({
         where: {
           employeeId: webhookData.EmployeeId
@@ -156,18 +177,6 @@ const handleAppointmentWebhook = async (req, res) => {
           customerPhone: true
         }
       });
-      
-      // If found by EmployeeId, check if CustomerFullName or CustomerPhone has changed
-      if (existingCustomer) {
-        const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
-        const webhookFullName = webhookData.CustomerFullName || '';
-        
-        // Check if either name or phone has changed
-        if (existingCustomer.customerFullName !== webhookFullName || 
-            existingCustomer.customerPhone !== formattedPhone) {
-          existingCustomer = null; // Force creation of new customer
-        }
-      }
     }
       
       let userId;
