@@ -406,7 +406,7 @@ const handleAppointmentWebhook = async (req, res) => {
     try {
       const webhookData = req.body;
       
-        // 1. Store in WebhookPaymentLog table (raw log data)
+      // 1. Store in WebhookPaymentLog table (raw log data)
       const paymentLog = await prisma.webhookPaymentLog.create({
         data: {
           data: webhookData,
@@ -415,12 +415,12 @@ const handleAppointmentWebhook = async (req, res) => {
         }
       });
 
-      // Extract actual data from webhookData.data.data
-      const actualData = webhookData.data?.data;
+      // Extract actual data - webhookData is the actual data itself
+      const actualData = webhookData;
       
-      // if (!actualData) {
-      //   return errorResponse(res, 'Invalid webhook data structure', 400);
-      // }
+      if (!actualData) {
+        return errorResponse(res, 'Invalid webhook data structure', 400);
+      }
      
       
       // 2. Find customer by CustomerFullName first, then by BusinessId AND EmployeeId
