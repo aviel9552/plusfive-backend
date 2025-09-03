@@ -51,6 +51,15 @@ const register = async (req, res) => {
       directChatMessage: otherFields.directChatMessage
     };
 
+    // Generate random 6-character alphanumeric referral code for the new user
+    const currentYear = new Date().getFullYear();
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let randomCode = '';
+    for (let i = 0; i < 6; i++) {
+      randomCode += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    const userReferralCode = `PLUSFIVE${currentYear}${randomCode}`;
+
     // Create user with only valid fields
     const user = await prisma.user.create({
       data: {
@@ -58,6 +67,7 @@ const register = async (req, res) => {
         password: hashedPassword,
         firstName,
         lastName,
+        referralCode: userReferralCode,
         ...validUserFields
       },
       select: {
@@ -67,6 +77,7 @@ const register = async (req, res) => {
         lastName: true,
         role: true,
         emailVerified: true,
+        referralCode: true,
         createdAt: true
       }
     });
@@ -123,9 +134,17 @@ const register = async (req, res) => {
   } catch (error) {
     console.error('Registration error:', error);
     
-    // Handle compound unique constraint error for email + isDeleted
-    if (error.code === 'P2002' && error.meta?.target?.includes('email')) {
-      return errorResponse(res, 'User with this email already exists', 400);
+    // Handle compound unique constraint errors
+    if (error.code === 'P2002') {
+      if (error.meta?.target?.includes('email')) {
+        return errorResponse(res, 'User with this email already exists', 400);
+      }
+      if (error.meta?.target?.includes('businessName')) {
+        return errorResponse(res, 'Business name already exists', 400);
+      }
+      if (error.meta?.target?.includes('phoneNumber')) {
+        return errorResponse(res, 'Phone number already exists', 400);
+      }
     }
     
     return errorResponse(res, 'Internal server error', 500);

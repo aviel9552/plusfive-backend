@@ -72,8 +72,9 @@ model User {
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
 
-  // 👇 compound unique constraint
+  // 👇 compound unique constraints
   @@unique([email, isDeleted])
+  @@unique([businessName, isDeleted])
   @@map("users")
 }
 

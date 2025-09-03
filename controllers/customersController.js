@@ -7,7 +7,6 @@ const customerStatusService = new CustomerStatusService();
 
 // Get all customers with search (no pagination - frontend will handle)
 const getAllCustomers = async (req, res) => {
-  console.log('getAllCustomers');
   try {
     const { search, businessId } = req.query;
     
