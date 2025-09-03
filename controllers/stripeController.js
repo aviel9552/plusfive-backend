@@ -119,7 +119,7 @@ const getPrices = async (req, res) => {
 const getSubscription = async (req, res) => {
   try {
     const userId = req.user.userId;
-    console.log('getSubscription', userId);
+    // console.log('getSubscription', userId);
     // Get user from database
     let user = await prisma.user.findUnique({
       where: { id: userId }

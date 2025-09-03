@@ -41,8 +41,7 @@ async function sendWhatsAppReviewRequest(customerId) {
       result = await reviewService.sendNewCustomerRatingRequest(
         customer.customerFullName,
         customer.user.businessName,
-        // customer.customerPhone'
-        "+919723506358"
+        customer.customerPhone
       );
     } else {
       // Send regular customer rating request (randomly choose v1 or v2)
@@ -51,15 +50,13 @@ async function sendWhatsAppReviewRequest(customerId) {
         result = await reviewService.sendRegularCustomerRatingRequest1(
           customer.customerFullName,
           customer.user.businessName,
-          // customer.customerPhone
-          "+919723506358"
+          customer.customerPhone
         );
       } else {
         result = await reviewService.sendRegularCustomerRatingRequest2(
           customer.customerFullName,
           customer.user.businessName,
-          // customer.customerPhone
-          "+919723506358"
+          customer.customerPhone
         );
       }
     }
@@ -428,7 +425,6 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
 
     // Extract actual data - webhookData is the actual data itself
     const actualData = webhookData;
-    console.log('actualData', actualData);
 
     if (!actualData) {
       return errorResponse(res, 'Invalid webhook data structure', 400);
