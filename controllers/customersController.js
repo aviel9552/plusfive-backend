@@ -5,11 +5,11 @@ const CustomerStatusService = require('../services/CustomerStatusService');
 // Initialize CustomerStatusService
 const customerStatusService = new CustomerStatusService();
 
-// Get all customers with pagination and search
+// Get all customers with search (no pagination - frontend will handle)
 const getAllCustomers = async (req, res) => {
+  console.log('getAllCustomers');
   try {
-    const { page = 1, limit = 10, search, businessId } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const { search, businessId } = req.query;
     
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
@@ -33,11 +33,9 @@ const getAllCustomers = async (req, res) => {
       where.businessId = parseInt(businessId);
     }
 
-    // Get customers with pagination and include user data
+    // Get all customers (no pagination) and include user data
     const customers = await prisma.customers.findMany({
       where,
-      skip,
-      take: parseInt(limit),
       include: {
         user: {
           select: {
@@ -124,6 +122,25 @@ const getAllCustomers = async (req, res) => {
           }
         });
 
+        // Get payment data from PaymentWebhook table
+        const paymentData = await prisma.paymentWebhook.findMany({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId, // Match with business owner
+            status: 'success' // Only successful payments
+          },
+          orderBy: { paymentDate: 'desc' }, // Order by payment date
+          select: {
+            total: true,
+            paymentDate: true,
+            status: true
+          }
+        });
+
+        // Calculate total paid amount and last payment
+        const totalPaidAmount = paymentData.reduce((sum, payment) => sum + payment.total, 0);
+        const lastPayment = paymentData.length > 0 ? paymentData[0] : null;
+
         return {
           ...customer,
           totalAppointmentCount: totalAppointments,
@@ -131,6 +148,11 @@ const getAllCustomers = async (req, res) => {
           reviews: customerReviews,
           lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
           lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          // Payment data
+          totalPaidAmount: totalPaidAmount, // Total amount paid by customer
+          lastPaymentAmount: lastPayment?.total || 0, // Last payment amount
+          lastPaymentDate: lastPayment?.paymentDate || null, // Last payment date
+          paymentCount: paymentData.length, // Total number of payments
           reviewStatistics: {
             totalReviews: reviewStats._count.rating || 0,
             averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
@@ -142,17 +164,12 @@ const getAllCustomers = async (req, res) => {
       })
     );
 
-    // Get total count for pagination
+    // Get total count for reference
     const total = await prisma.customers.count({ where });
 
     return successResponse(res, {
-      customers: customersWithTotalCount,  // ✅ customers with totalAppointmentCount
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
-      }
+      customers: customersWithTotalCount,  // ✅ customers with totalAppointmentCount and payment data
+      total: total // Total count for frontend reference
     }, 'Customers retrieved successfully');
 
   } catch (error) {
@@ -269,6 +286,25 @@ const getTenCustomers = async (req, res) => {
           }
         });
 
+        // Get payment data from PaymentWebhook table
+        const paymentData = await prisma.paymentWebhook.findMany({
+          where: {
+            customerId: customer.id,
+            userId: customer.userId, // Match with business owner
+            status: 'success' // Only successful payments
+          },
+          orderBy: { paymentDate: 'desc' }, // Order by payment date
+          select: {
+            total: true,
+            paymentDate: true,
+            status: true
+          }
+        });
+
+        // Calculate total paid amount and last payment
+        const totalPaidAmount = paymentData.reduce((sum, payment) => sum + payment.total, 0);
+        const lastPayment = paymentData.length > 0 ? paymentData[0] : null;
+
         return {
           ...customer,
           totalAppointmentCount: totalAppointments,
@@ -276,6 +312,11 @@ const getTenCustomers = async (req, res) => {
           reviews: customerReviews,
           lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
           lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          // Payment data
+          totalPaidAmount: totalPaidAmount, // Total amount paid by customer
+          lastPaymentAmount: lastPayment?.total || 0, // Last payment amount
+          lastPaymentDate: lastPayment?.paymentDate || null, // Last payment date
+          paymentCount: paymentData.length, // Total number of payments
           reviewStatistics: {
             totalReviews: reviewStats._count.rating || 0,
             averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,

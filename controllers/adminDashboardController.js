@@ -701,7 +701,6 @@ class AdminDashboardController {
       const totalCustomers = await prisma.customers.count({
         where: where
       });
-      console.log('totalCustomers :', totalCustomers);
 
       // Active customers (have made payments in last 3 months through their business owners)
       const threeMonthsAgo = new Date();

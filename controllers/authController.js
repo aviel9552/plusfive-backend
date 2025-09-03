@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
-
     // Check if user already exists with this email (excluding soft deleted users)
     const existingUserByEmail = await prisma.user.findFirst({
       where: { 
@@ -17,9 +16,10 @@ const register = async (req, res) => {
       }
     });
 
-    if (existingUserByEmail) {
-      return errorResponse(res, 'User with this email already exists', 400);
-    }
+    // Allow registration even if user exists - the compound unique constraint will handle it
+    // if (existingUserByEmail) {
+    //   return errorResponse(res, 'User with this email already exists', 400);
+    // }
 
     // Check if user already exists with this phone number (excluding soft deleted users)
     if (phoneNumber) {
@@ -122,6 +122,12 @@ const register = async (req, res) => {
     }
   } catch (error) {
     console.error('Registration error:', error);
+    
+    // Handle compound unique constraint error for email + isDeleted
+    if (error.code === 'P2002' && error.meta?.target?.includes('email')) {
+      return errorResponse(res, 'User with this email already exists', 400);
+    }
+    
     return errorResponse(res, 'Internal server error', 500);
   }
 };
@@ -131,18 +137,16 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { email }
+    // Find user (use findFirst since we have compound unique constraint)
+    const user = await prisma.user.findFirst({
+      where: { 
+        email,
+        isDeleted: false  // Only find active users
+      }
     });
 
     if (!user) {
       return errorResponse(res, 'Invalid email or password', 401);
-    }
-
-    // Check if user is deleted
-    if (user.isDeleted) {
-      return errorResponse(res, 'Account has been deleted. Please contact support for assistance.', 401);
     }
 
     // Check if user is active
@@ -447,7 +451,7 @@ const accountSoftDelete = async (req, res) => {
         email: true,
         businessName: true,
         isDeleted: true,
-        isActive: true
+        isActive: false
       }
     });
 

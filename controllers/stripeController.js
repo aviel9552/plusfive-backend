@@ -119,6 +119,7 @@ const getPrices = async (req, res) => {
 const getSubscription = async (req, res) => {
   try {
     const userId = req.user.userId;
+    console.log('getSubscription', userId);
     // Get user from database
     let user = await prisma.user.findUnique({
       where: { id: userId }
@@ -147,18 +148,42 @@ const getSubscription = async (req, res) => {
     }
 
     // Get subscriptions and invoices
-    const [subscriptions, invoices] = await Promise.all([
-      stripe.subscriptions.list({
-        customer: stripeCustomerId,
-        limit: 20,
-        expand: ['data.items.data.price', 'data.plan', 'data.latest_invoice']
-      }),
-      stripe.invoices.list({
-        customer: stripeCustomerId,
-        limit: 20,
-        expand: ['data.subscription', 'data.charge']
-      })
-    ]);
+    let subscriptions, invoices;
+    try {
+      [subscriptions, invoices] = await Promise.all([
+        stripe.subscriptions.list({
+          customer: stripeCustomerId,
+          limit: 20,
+          expand: ['data.items.data.price', 'data.plan', 'data.latest_invoice']
+        }),
+        stripe.invoices.list({
+          customer: stripeCustomerId,
+          limit: 20,
+          expand: ['data.subscription', 'data.charge']
+        })
+      ]);
+    } catch (stripeError) {
+      // If customer doesn't exist in Stripe, clear the customer ID and return empty data
+      if (stripeError.code === 'resource_missing' && stripeError.param === 'customer') {
+        console.log(`Customer ${stripeCustomerId} not found in Stripe, clearing from database`);
+        
+        // Clear the invalid customer ID from database
+        await prisma.user.update({
+          where: { id: userId },
+          data: { stripeCustomerId: null }
+        });
+        
+        // Return empty subscription data
+        return successResponse(res, {
+          user: { ...user, stripeCustomerId: null },
+          stripe: {
+            subscriptions: [],
+            invoices: [],
+          }
+        });
+      }
+      throw stripeError; // Re-throw if it's a different error
+    }
 
     // Format subscriptions
     const formattedSubscriptions = subscriptions.data.map(sub => {

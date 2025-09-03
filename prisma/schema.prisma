@@ -12,7 +12,7 @@ datasource db {
 
 model User {
   id                String    @id @default(cuid())
-  email             String    @unique
+  email             String
   password          String?
   firstName         String?
   lastName          String?
@@ -72,6 +72,8 @@ model User {
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
 
+  // 👇 compound unique constraint
+  @@unique([email, isDeleted])
   @@map("users")
 }
 

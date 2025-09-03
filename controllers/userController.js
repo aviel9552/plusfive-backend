@@ -349,7 +349,7 @@ const changePassword = async (req, res) => {
 
 // Soft delete user account and update customer statuses
 const softDeleteUser = async (req, res) => {
-  try {
+  try { 
     // Get user ID from authenticated token
     const currentUserId = req.user.userId;
 
@@ -378,16 +378,20 @@ const softDeleteUser = async (req, res) => {
 
     // Use transaction to ensure data consistency
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Mark user as deleted
+      // 1. Mark user as deleted and inactive
       const updatedUser = await tx.user.update({
         where: { id: currentUserId },
-        data: { isDeleted: true },
+        data: { 
+          isDeleted: true,
+          isActive: false 
+        },
         select: {
           id: true,
           email: true,
           firstName: true,
           lastName: true,
           isDeleted: true,
+          isActive: true,
           updatedAt: true
         }
       });
@@ -411,7 +415,7 @@ const softDeleteUser = async (req, res) => {
       if (customerUsers.length > 0) {
         await tx.customerUser.updateMany({
           where: { userId: currentUserId },
-          data: { isDeleted: true }
+          data: { isDeleted: true, isActive: false }
         });
       }
 
