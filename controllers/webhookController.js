@@ -150,31 +150,13 @@ const handleAppointmentWebhook = async (req, res) => {
     // Check if customer exists in Customers table
     let existingCustomer = null;
 
-    // First check by CustomerFullName and CustomerPhone combination
-    if (webhookData.CustomerFullName && webhookData.CustomerPhone) {
+    // Check only by CustomerPhone
+    if (webhookData.CustomerPhone) {
       const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
 
       existingCustomer = await prisma.customers.findFirst({
         where: {
-          AND: [
-            { customerFullName: webhookData.CustomerFullName },
-            { customerPhone: formattedPhone }
-          ]
-        },
-        select: {
-          id: true,
-          employeeId: true,
-          customerFullName: true,
-          customerPhone: true
-        }
-      });
-    }
-
-    // If not found by name+phone, check by EmployeeId as fallback
-    if (!existingCustomer && webhookData.EmployeeId) {
-      existingCustomer = await prisma.customers.findFirst({
-        where: {
-          employeeId: webhookData.EmployeeId
+          customerPhone: formattedPhone
         },
         select: {
           id: true,
