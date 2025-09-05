@@ -27,6 +27,7 @@ const whatsappRoutes = require('./routes/whatsapp');
 const whatsappMessageRoutes = require('./routes/whatsappMessage');
 const adminDashboardRoutes = require('./routes/adminDashboard');
 const stripeRoutes = require('./routes/stripe');
+const cronTestRoutes = require('./routes/cronTest');
 
 const app = express();
 
@@ -93,6 +94,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/whatsapp-messages', whatsappMessageRoutes);
 app.use('/api/admin-dashboard', adminDashboardRoutes);
 app.use('/api/stripe', stripeRoutes);
+app.use('/api/cron-test', cronTestRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
