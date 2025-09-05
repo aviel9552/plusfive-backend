@@ -6,24 +6,24 @@ class CustomerStatusService {
         this.isTestMode = process.env.CRON_TEST_MODE === 'true';
 
         this.statusThresholds = this.isTestMode ? {
-            // Testing thresholds (1 day for at_risk, 2 days for lost)
+            // Testing thresholds - from environment variables
             atRisk: {
-                defaultDays: 2,
+                defaultDays: parseInt(process.env.AT_RISK_TEST_DAYS) || 2,
                 bufferDays: 0
             },
             lost: {
-                defaultDays: 3,
+                defaultDays: parseInt(process.env.LOST_TEST_DAYS) || 3,
                 bufferDays: 0
             }
         } : {
-            // Production thresholds
+            // Production thresholds - from environment variables
             atRisk: {
-                defaultDays: 30,
-                bufferDays: 5
+                defaultDays: parseInt(process.env.AT_RISK_DEFAULT_DAYS) || 30,
+                bufferDays: parseInt(process.env.AT_RISK_BUFFER_DAYS) || 5
             },
             lost: {
-                defaultDays: 60,
-                bufferDays: 15
+                defaultDays: parseInt(process.env.LOST_DEFAULT_DAYS) || 60,
+                bufferDays: parseInt(process.env.LOST_BUFFER_DAYS) || 15
             }
         };
 
@@ -157,14 +157,20 @@ class CustomerStatusService {
 
 
 
-            // Determine status
+            // Determine status based on days since last visit
             if (daysSinceLastVisit >= lostThreshold) {
-
                 return 'lost';
             } else if (daysSinceLastVisit >= atRiskThreshold) {
                 return 'at_risk';
             } else {
-                return 'active';
+                // Customer is active (visited recently)
+                // If they were previously lost/at_risk and now visited, they become recovered
+                // But if they are already recovered and visiting regularly, they stay active
+                if (currentStatus === 'lost' || currentStatus === 'at_risk') {
+                    return 'recovered';
+                } else {
+                    return 'active';
+                }
             }
 
         } catch (error) {
