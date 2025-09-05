@@ -679,12 +679,13 @@ class AdminDashboardController {
             const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
             const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
             
-            // Get revenue data from PaymentWebhook table
+            // Get revenue data from PaymentWebhook table (only recovered customers)
             const revenueData = await prisma.paymentWebhook.aggregate({
               where: {
                 ...where,
                 paymentDate: { gte: startDate, lte: endDate },
-                status: 'success'
+                status: 'success',
+                revenuePaymentStatus: 'recovered'  // Only recovered customers
               },
               _sum: {
                 total: true,
@@ -709,61 +710,113 @@ class AdminDashboardController {
           break;
           
         case 'weekly':
-          // Get last 4 weeks data
-          for (let i = 3; i >= 0; i--) {
-            const targetDate = new Date(currentDate.getTime() - (i * 7 * 24 * 60 * 60 * 1000));
-            const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate() - targetDate.getDay());
-            const endDate = new Date(startDate.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000) + (59 * 60 * 1000) + (59 * 1000));
-            
-            const revenueData = await prisma.paymentWebhook.aggregate({
-              where: {
-                ...where,
-                paymentDate: { gte: startDate, lte: endDate },
-                status: 'success'
-              },
-              _sum: {
-                total: true,
-                totalWithoutVAT: true,
-                totalVAT: true
-              },
-              _count: {
-                id: true
-              }
-            });
-            
-            data.push({
-              label: `Week ${4 - i}`,
-              revenue: revenueData._sum.total || 0,
-              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
-              vat: revenueData._sum.totalVAT || 0,
-              transactionCount: revenueData._count.id || 0,
-              week: 4 - i
-            });
+          // Get current month's weekly data - Calendar weeks (Sunday to Saturday)
+          const currentMonthStart = new Date(currentYear, currentDate.getMonth(), 1);
+          const currentMonthEnd = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
+          
+          const weeksInCurrentMonth = [];
+          let currentWeekNumber = 1;
+          
+          // Find the first Sunday of the month or before the month starts
+          let currentWeekStartDate = new Date(currentMonthStart);
+          const currentFirstDayOfWeek = currentMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+          
+          // If month doesn't start on Sunday, go back to previous Sunday
+          if (currentFirstDayOfWeek !== 0) {
+            currentWeekStartDate.setDate(currentMonthStart.getDate() - currentFirstDayOfWeek);
           }
-          break;
           
-        case 'last-month':
-          // Last month's weekly data
-          const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
-          const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
-          
-          // Get all weeks in last month
-          const weeksInLastMonth = [];
-          const tempDate = new Date(lastMonthStart);
-          
-          while (tempDate <= lastMonthEnd) {
-            const weekStart = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate() - tempDate.getDay());
-            const weekEnd = new Date(weekStart.getTime() + (6 * 24 * 60 * 60 * 1000) + (23 * 60 * 60 * 1000) + (59 * 60 * 1000) + (59 * 1000));
+          while (currentWeekStartDate <= currentMonthEnd) {
+            // Week runs from Sunday to Saturday
+            let currentWeekEndDate = new Date(currentWeekStartDate);
+            currentWeekEndDate.setDate(currentWeekStartDate.getDate() + 6);
+            currentWeekEndDate.setHours(23, 59, 59, 999);
             
-            // Check if this week is within last month
-            if (weekStart >= lastMonthStart && weekEnd <= lastMonthEnd) {
-              const weekNumber = Math.ceil((tempDate.getDate() - tempDate.getDay() + 1) / 7);
+            // Only count weeks that have at least one day in the target month
+            const weekHasDaysInMonth = (currentWeekStartDate <= currentMonthEnd) && 
+                                     (currentWeekEndDate >= currentMonthStart);
+            
+            if (weekHasDaysInMonth) {
+              // Limit dates to within the month for data query
+              const queryStartDate = currentWeekStartDate < currentMonthStart ? currentMonthStart : currentWeekStartDate;
+              const queryEndDate = currentWeekEndDate > currentMonthEnd ? currentMonthEnd : currentWeekEndDate;
               
               const revenueData = await prisma.paymentWebhook.aggregate({
                 where: {
                   ...where,
-                  paymentDate: { gte: weekStart, lte: weekEnd },
-                  status: 'success'
+                  paymentDate: { gte: queryStartDate, lte: queryEndDate },
+                  status: 'success',
+                  revenuePaymentStatus: 'recovered'  // Only recovered customers
+                },
+                _sum: {
+                  total: true,
+                  totalWithoutVAT: true,
+                  totalVAT: true
+                },
+                _count: {
+                  id: true
+                }
+              });
+              
+              weeksInCurrentMonth.push({
+                label: `Week ${currentWeekNumber}`,
+                revenue: revenueData._sum.total || 0,
+                revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
+                vat: revenueData._sum.totalVAT || 0,
+                transactionCount: revenueData._count.id || 0,
+                week: currentWeekNumber
+              });
+              
+              currentWeekNumber++;
+            }
+            
+            // Move to next Sunday
+            currentWeekStartDate = new Date(currentWeekEndDate);
+            currentWeekStartDate.setDate(currentWeekEndDate.getDate() + 1);
+            currentWeekStartDate.setHours(0, 0, 0, 0);
+          }
+          
+          data = weeksInCurrentMonth;
+          break;
+          
+        case 'last-month':
+          // Last month's weekly data - Calendar weeks (Sunday to Saturday)
+          const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
+          const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
+          
+          const weeksInLastMonth = [];
+          let lastMonthWeekNumber = 1;
+          
+          // Find the first Sunday of the month or before the month starts
+          let lastMonthWeekStartDate = new Date(lastMonthStart);
+          const lastMonthFirstDayOfWeek = lastMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+          
+          // If month doesn't start on Sunday, go back to previous Sunday
+          if (lastMonthFirstDayOfWeek !== 0) {
+            lastMonthWeekStartDate.setDate(lastMonthStart.getDate() - lastMonthFirstDayOfWeek);
+          }
+          
+          while (lastMonthWeekStartDate <= lastMonthEnd) {
+            // Week runs from Sunday to Saturday
+            let lastMonthWeekEndDate = new Date(lastMonthWeekStartDate);
+            lastMonthWeekEndDate.setDate(lastMonthWeekStartDate.getDate() + 6);
+            lastMonthWeekEndDate.setHours(23, 59, 59, 999);
+            
+            // Only count weeks that have at least one day in the target month
+            const weekHasDaysInMonth = (lastMonthWeekStartDate <= lastMonthEnd) && 
+                                     (lastMonthWeekEndDate >= lastMonthStart);
+            
+            if (weekHasDaysInMonth) {
+              // Limit dates to within the month for data query
+              const queryStartDate = lastMonthWeekStartDate < lastMonthStart ? lastMonthStart : lastMonthWeekStartDate;
+              const queryEndDate = lastMonthWeekEndDate > lastMonthEnd ? lastMonthEnd : lastMonthWeekEndDate;
+              
+              const revenueData = await prisma.paymentWebhook.aggregate({
+                where: {
+                  ...where,
+                  paymentDate: { gte: queryStartDate, lte: queryEndDate },
+                  status: 'success',
+                  revenuePaymentStatus: 'recovered'  // Only recovered customers
                 },
                 _sum: {
                   total: true,
@@ -776,16 +829,21 @@ class AdminDashboardController {
               });
               
               weeksInLastMonth.push({
-                label: `Week ${weekNumber}`,
+                label: `Week ${lastMonthWeekNumber}`,
                 revenue: revenueData._sum.total || 0,
                 revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
                 vat: revenueData._sum.totalVAT || 0,
                 transactionCount: revenueData._count.id || 0,
-                week: weekNumber
+                week: lastMonthWeekNumber
               });
+              
+              lastMonthWeekNumber++;
             }
             
-            tempDate.setDate(tempDate.getDate() + 7);
+            // Move to next Sunday
+            lastMonthWeekStartDate = new Date(lastMonthWeekEndDate);
+            lastMonthWeekStartDate.setDate(lastMonthWeekEndDate.getDate() + 1);
+            lastMonthWeekStartDate.setHours(0, 0, 0, 0);
           }
           
           data = weeksInLastMonth;
@@ -801,7 +859,8 @@ class AdminDashboardController {
               where: {
                 ...where,
                 paymentDate: { gte: startDate, lte: endDate },
-                status: 'success'
+                status: 'success',
+                revenuePaymentStatus: 'recovered'  // Only recovered customers
               },
               _sum: {
                 total: true,
