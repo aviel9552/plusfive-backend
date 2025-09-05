@@ -393,63 +393,97 @@ class AdminDashboardController {
         where.userId = authenticatedUser.userId;
       }
 
-      // Get recovered customers revenue and count
-      const recoveredRevenueData = await prisma.paymentWebhook.aggregate({
+      // Get customers who transitioned from Lost/Risk to Recovered status
+      const recoveredCustomers = await prisma.customerStatusLog.findMany({
         where: {
-          ...where,
-          status: 'success',
-          revenuePaymentStatus: 'recovered'
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
+          newStatus: 'Recovered',
+          oldStatus: {
+            in: ['Lost', 'Risk']
+          }
         },
-        _sum: {
-          total: true,
-          totalWithoutVAT: true,
-          totalVAT: true
+        select: {
+          customerId: true,
+          changedAt: true
         },
-        _count: {
-          id: true
-        }
+        distinct: ['customerId'] // Get unique customers who recovered
       });
 
-      // Get actual count of customers with recovered status
-      const recoveredCustomersCount = await prisma.customerUser.count({
-        where: {
-          status: 'recovered',
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-        }
-      });
+      // Get revenue from payments made by recovered customers after their recovery date
+      let totalRecoveredRevenue = 0;
+      for (const recoveredCustomer of recoveredCustomers) {
+        const paymentsAfterRecovery = await prisma.paymentWebhook.aggregate({
+          where: {
+            customerId: recoveredCustomer.customerId,
+            status: 'success',
+            paymentDate: {
+              gte: recoveredCustomer.changedAt // Payments after recovery date
+            },
+            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          },
+          _sum: {
+            total: true
+          }
+        });
+        
+        totalRecoveredRevenue += paymentsAfterRecovery._sum.total || 0;
+      }
 
-      // Calculate Lost Revenue (same logic as getLostRevenue function)
-      const lostCustomers = await prisma.customerUser.findMany({
+      const recoveredCustomersCount = recoveredCustomers.length;
+
+      // Get customers who are currently in Lost status
+      const lostCustomers = await prisma.customerStatusLog.findMany({
         where: {
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
+          newStatus: 'Lost'
         },
         include: {
           customer: {
             select: {
               id: true,
               customerFullName: true,
-              userId: true,
-              createdAt: true  // Get customer creation date from customers table
+              createdAt: true
             }
           }
+        },
+        orderBy: {
+          changedAt: 'desc'
+        },
+        distinct: ['customerId'] // Get the latest status for each customer
+      });
+
+      // Calculate average LTV for all customers (not just lost ones)
+      const allCustomers = await prisma.customers.findMany({
+        where: {
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          id: true,
+          createdAt: true
         }
       });
 
+      // Calculate average LTV across all customers
+      let totalMonthsAllCustomers = 0;
+      const currentDate = new Date();
+      
+      for (const customer of allCustomers) {
+        const customerCreatedDate = new Date(customer.createdAt);
+        const monthsActive = Math.max(1, Math.ceil((currentDate - customerCreatedDate) / (1000 * 60 * 60 * 24 * 30)));
+        totalMonthsAllCustomers += monthsActive;
+      }
+      
+      const averageLTV = allCustomers.length > 0 ? totalMonthsAllCustomers / allCustomers.length : 0;
+
+      // Calculate lost revenue using proper formula: Average Transaction × LTV (in months)
       let totalLostRevenue = 0;
-      let averageLTV = 0;
-      let totalLTVCount = 0;
+      let totalAverageTransaction = 0;
       const lostCustomerDetails = [];
 
-      for (const customerUser of lostCustomers) {
-        const customerId = customerUser.customer.id;
-        // Use customer creation date from customers table instead of customerUser table
-        const customerCreatedDate = new Date(customerUser.customer.createdAt || customerUser.createdAt);
-        const currentDate = new Date();
+      for (const lostCustomer of lostCustomers) {
+        const customerId = lostCustomer.customer.id;
 
-        // Calculate months active (LTV in months)
-        const monthsActive = Math.max(1, Math.ceil((currentDate - customerCreatedDate) / (1000 * 60 * 60 * 24 * 30)));
-
-        // Get all payments for this customer
+        // Get all successful payments for this customer
         const customerPayments = await prisma.paymentWebhook.findMany({
           where: {
             customerId: customerId,
@@ -461,53 +495,45 @@ class AdminDashboardController {
         });
 
         if (customerPayments.length > 0) {
-          // Calculate average payment amount
+          // Calculate average transaction value for this customer
           const totalSpent = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
-          const averagePayment = totalSpent / customerPayments.length;
-
-          // Calculate LTV Count: monthsActive / totalPayments
-          const customerLTVCount = monthsActive / customerPayments.length;
-          totalLTVCount += customerLTVCount;
-
-          // Calculate lost revenue for this customer
-          const customerLostRevenue = averagePayment * monthsActive;
+          const averageTransaction = totalSpent / customerPayments.length;
+          
+          // Calculate lost revenue for this customer: Average Transaction × LTV
+          const customerLostRevenue = averageTransaction * averageLTV;
           totalLostRevenue += customerLostRevenue;
+          totalAverageTransaction += averageTransaction;
 
           lostCustomerDetails.push({
             customerId: customerId,
-            customerName: customerUser.customer.customerFullName,
-            createdDate: customerCreatedDate,
-            monthsActive: monthsActive,
+            customerName: lostCustomer.customer.customerFullName,
             totalPayments: customerPayments.length,
             totalSpent: totalSpent,
-            averagePayment: Math.round(averagePayment * 100) / 100,
+            averageTransaction: Math.round(averageTransaction * 100) / 100,
             lostRevenue: Math.round(customerLostRevenue * 100) / 100,
-            ltvCount: Math.round(customerLTVCount * 100) / 100  // Individual LTV Count
+            ltv: Math.round(averageLTV * 100) / 100
           });
         }
       }
-
-      // Calculate average LTV across all customers
-      if (lostCustomerDetails.length > 0) {
-        averageLTV = lostCustomerDetails.reduce((sum, customer) => sum + customer.monthsActive, 0) / lostCustomerDetails.length;
-      }
-
-      // Calculate average LTV Count across all customers
-      const averageLTVCount = lostCustomerDetails.length > 0 ? totalLTVCount / lostCustomerDetails.length : 0;
       
       return res.json({
         success: true,
         data: {
           // Recovered customer data
-          totalRecoveredRevenue: recoveredRevenueData._sum.total || 0,
+          totalRecoveredRevenue: Math.round(totalRecoveredRevenue * 100) / 100,
           recoveredCustomersCount: recoveredCustomersCount,
           
           // Lost revenue data
           totalLostRevenue: Math.round(totalLostRevenue * 100) / 100,
           averageLTV: Math.round(averageLTV * 100) / 100,
-          averageLTVCount: Math.round(averageLTVCount * 100) / 100,  // Average LTV Count
           lostCustomersCount: lostCustomers.length,
-          lostCustomerDetails: lostCustomerDetails
+          lostCustomerDetails: lostCustomerDetails,
+          
+          // Additional metrics
+          totalCustomers: allCustomers.length,
+          averageTransactionValue: lostCustomerDetails.length > 0 
+            ? Math.round((totalAverageTransaction / lostCustomerDetails.length) * 100) / 100 
+            : 0
         }
       });
     } catch (error) {
