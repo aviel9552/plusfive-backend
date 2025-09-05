@@ -272,6 +272,17 @@ const handleAppointmentWebhook = async (req, res) => {
         });
         customerUserId = updatedCustomerUser.id;
 
+        // Create CustomerStatusLog for Lost/Risk to Recovered transition
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: previousStatus === 'lost' ? 'Lost' : 'Risk',
+            newStatus: 'Recovered',
+            reason: 'New appointment after being lost/at risk'
+          }
+        });
+
         // Send recovered customer notification to business owner
         const businessOwner = await prisma.user.findUnique({
           where: { id: userId },
@@ -308,6 +319,17 @@ const handleAppointmentWebhook = async (req, res) => {
           }
         });
         customerUserId = updatedCustomerUser.id;
+
+        // Create CustomerStatusLog for New to Active transition
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: 'New',
+            newStatus: 'Active',
+            reason: 'Repeat appointment booked'
+          }
+        });
       } else {
         // Keep existing status (active, recovered, etc.)
         customerUserId = existingCustomerUser.id;
@@ -330,6 +352,17 @@ const handleAppointmentWebhook = async (req, res) => {
           }
         });
         customerUserId = newCustomerUser.id;
+
+        // Create CustomerStatusLog for new customer status
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: null, // First status entry
+            newStatus: 'New',
+            reason: 'New appointment booked'
+          }
+        });
       } else {
         // First time customer-user relation, create with status 'new'
         const newCustomerUser = await prisma.customerUser.create({
@@ -340,38 +373,21 @@ const handleAppointmentWebhook = async (req, res) => {
           }
         });
         customerUserId = newCustomerUser.id;
+
+        // Create CustomerStatusLog for new customer status
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: null, // First status entry
+            newStatus: 'New',
+            reason: 'New appointment booked'
+          }
+        });
       }
     }
 
-    // Check if customer was previously lost or at_risk, update to recovered and send notification
-    if (existingCustomerUser && (existingCustomerUser.status === 'lost' || existingCustomerUser.status === 'at_risk')) {
-
-      // Get business owner's phone number
-      const businessOwner = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { phoneNumber: true, businessName: true }
-      });
-
-      if (businessOwner && businessOwner.phoneNumber) {
-        try {
-          // Send recovered customer notification to business owner
-          const WhatsAppService = require('../services/WhatsAppService');
-          const whatsappService = new WhatsAppService();
-
-          await whatsappService.sendRecoveredCustomerTemplate(
-            businessOwner.businessName || webhookData.BusinessName,
-            webhookData.CustomerFullName,
-            formattedPhoneForAppointment,
-            webhookData.StartDate,
-            webhookData.SelectedServices,
-            businessOwner.phoneNumber
-          );
-
-        } catch (whatsappError) {
-          console.error('Failed to send recovered customer notification:', whatsappError.message);
-        }
-      }
-    }
+    // Duplicate recovery notification code removed - already handled above
 
 
 

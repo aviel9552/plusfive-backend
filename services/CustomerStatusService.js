@@ -36,6 +36,81 @@ class CustomerStatusService {
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
 
+    // Create CustomerStatusLog entry for status changes
+    async createStatusLogEntry(customerId, userId, oldStatus, newStatus, reason) {
+        try {
+            const statusLog = await prisma.customerStatusLog.create({
+                data: {
+                    customerId: customerId,
+                    userId: userId,
+                    oldStatus: oldStatus,
+                    newStatus: this.capitalizeStatus(newStatus),
+                    reason: reason,
+                    changedAt: new Date()
+                }
+            });
+
+            console.log(`✅ Status log created: Customer ${customerId} changed from ${oldStatus || 'null'} to ${newStatus} - ${reason}`);
+            return statusLog;
+        } catch (error) {
+            console.error('❌ Error creating status log entry:', error);
+            return null;
+        }
+    }
+
+    // Helper method to capitalize status for consistency
+    capitalizeStatus(status) {
+        if (!status) return null;
+        
+        const statusMap = {
+            'new': 'New',
+            'active': 'Active',
+            'at_risk': 'Risk',
+            'risk': 'Risk',
+            'lost': 'Lost',
+            'recovered': 'Recovered'
+        };
+        
+        return statusMap[status.toLowerCase()] || status;
+    }
+
+    // Generate appropriate reason message for status changes
+    generateStatusChangeReason(oldStatus, newStatus, daysSinceLastVisit, threshold) {
+        const oldStatusCap = this.capitalizeStatus(oldStatus);
+        const newStatusCap = this.capitalizeStatus(newStatus);
+
+        if (!oldStatus && newStatus === 'new') {
+            return 'Initial customer status assignment';
+        }
+
+        switch (newStatus) {
+            case 'active':
+                if (oldStatus === 'new') {
+                    return 'Customer became active after first appointment';
+                } else if (oldStatus === 'recovered') {
+                    return 'Customer maintaining active status';
+                }
+                return 'Customer is actively booking appointments';
+
+            case 'at_risk':
+                return `No activity for ${daysSinceLastVisit} days (threshold: ${threshold} days)`;
+
+            case 'lost':
+                return `No activity for ${daysSinceLastVisit} days (threshold: ${threshold} days)`;
+
+            case 'recovered':
+                if (oldStatus === 'lost') {
+                    return 'Customer returned after being lost';
+                } else if (oldStatus === 'at_risk') {
+                    return 'Customer returned after being at risk';
+                }
+                return 'Customer recovered and became active again';
+
+            default:
+                return `Status changed from ${oldStatusCap || 'Unknown'} to ${newStatusCap}`;
+        }
+    }
+
     // Calculate average days between customer visits
     async calculateAverageDaysBetweenVisits(customerId) {
         try {
@@ -180,7 +255,7 @@ class CustomerStatusService {
     }
 
     // Update customer status in existing CustomerUser table (only if status actually changed)
-    async updateCustomerStatus(customerId, newStatus, userId = null) {
+    async updateCustomerStatus(customerId, newStatus, userId = null, additionalContext = {}) {
         try {
             const customer = await prisma.customers.findUnique({
                 where: { id: customerId },
@@ -207,31 +282,49 @@ class CustomerStatusService {
 
             const currentStatus = currentCustomerUser?.status || 'new';
 
-                // Only update if status is actually changing
-    if (currentStatus === newStatus) {
-      return { ...customer, currentStatus: newStatus, statusChanged: false };
-    }
+            // Only update if status is actually changing
+            if (currentStatus === newStatus) {
+                return { ...customer, currentStatus: newStatus, statusChanged: false };
+            }
 
-    // Update status in CustomerUser table only if different
-    const updatedCustomerUser = await prisma.customerUser.updateMany({
-      where: {
-        customerId: customerId,
-        userId: userId || customer.userId
-      },
-      data: {
-        status: newStatus,
-        updatedAt: new Date() // Manually update timestamp
-      }
-    });
+            // Generate appropriate reason for status change
+            const { daysSinceLastVisit = 0, threshold = 0 } = additionalContext;
+            const reason = this.generateStatusChangeReason(
+                currentStatus, 
+                newStatus, 
+                daysSinceLastVisit, 
+                threshold
+            );
 
-    if (updatedCustomerUser.count > 0) {
-      return { 
-        ...customer, 
-        currentStatus: newStatus, 
-        statusChanged: true,
-        previousStatus: currentStatus // Track previous status for recovered notifications
-      };
-    }
+            // Update status in CustomerUser table only if different
+            const updatedCustomerUser = await prisma.customerUser.updateMany({
+                where: {
+                    customerId: customerId,
+                    userId: userId || customer.userId
+                },
+                data: {
+                    status: newStatus,
+                    updatedAt: new Date() // Manually update timestamp
+                }
+            });
+
+            if (updatedCustomerUser.count > 0) {
+                // Create CustomerStatusLog entry for the status change
+                await this.createStatusLogEntry(
+                    customerId,
+                    userId || customer.userId,
+                    this.capitalizeStatus(currentStatus),
+                    newStatus,
+                    reason
+                );
+
+                return { 
+                    ...customer, 
+                    currentStatus: newStatus, 
+                    statusChanged: true,
+                    previousStatus: currentStatus // Track previous status for recovered notifications
+                };
+            }
 
             return null;
         } catch (error) {
@@ -273,18 +366,44 @@ class CustomerStatusService {
                     results.processed++;
 
                     if (newStatus) {
-                        const updateResult = await this.updateCustomerStatus(customer.id, newStatus);
+                        // Get additional context for better logging
+                        const lastVisitDate = await this.getLastVisitDate(customer.id);
+                        const daysSinceLastVisit = lastVisitDate ? 
+                            this.calculateDaysBetween(lastVisitDate, new Date()) : 0;
+                        
+                        // Calculate threshold used for this customer
+                        const averageDays = await this.calculateAverageDaysBetweenVisits(customer.id);
+                        let threshold = 0;
+                        
+                        if (newStatus === 'at_risk') {
+                            threshold = averageDays === null ? 
+                                this.statusThresholds.atRisk.defaultDays : 
+                                averageDays + this.statusThresholds.atRisk.bufferDays;
+                        } else if (newStatus === 'lost') {
+                            threshold = averageDays === null ? 
+                                this.statusThresholds.lost.defaultDays : 
+                                averageDays + this.statusThresholds.lost.bufferDays;
+                        }
+
+                        const updateResult = await this.updateCustomerStatus(
+                            customer.id, 
+                            newStatus, 
+                            customer.userId,
+                            { daysSinceLastVisit, threshold }
+                        );
                         
                         // Only count as updated if status actually changed
                         if (updateResult?.statusChanged) {
                             results.updated++;
                             // Only count status changes for newly updated customers
                             results[newStatus]++;
+                            
+                            console.log(`📊 Customer ${customer.customerFullName} (${customer.id}) status changed to ${newStatus}`);
                         }
                     }
 
                 } catch (error) {
-                    console.error(`Error processing customer ${customer.id}:`, error);
+                    console.error(`❌ Error processing customer ${customer.id}:`, error);
                     results.errors++;
                 }
             }
@@ -409,6 +528,99 @@ class CustomerStatusService {
 
     } catch (error) {
       console.error('Error getting recently updated customers:', error);
+      return [];
+    }
+  }
+
+  // Get recent status changes from CustomerStatusLog
+  async getRecentStatusChanges(userId = null, limitHours = 24) {
+    try {
+      const hoursAgo = new Date(Date.now() - limitHours * 60 * 60 * 1000);
+      const whereClause = userId ? { userId } : {};
+
+      const recentChanges = await prisma.customerStatusLog.findMany({
+        where: {
+          ...whereClause,
+          changedAt: {
+            gte: hoursAgo
+          }
+        },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              customerFullName: true,
+              customerPhone: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              businessName: true
+            }
+          }
+        },
+        orderBy: { changedAt: 'desc' }
+      });
+
+      return recentChanges.map(change => ({
+        id: change.id,
+        customerId: change.customerId,
+        customerName: change.customer.customerFullName,
+        customerPhone: change.customer.customerPhone,
+        userId: change.userId,
+        businessName: change.user.businessName,
+        oldStatus: change.oldStatus,
+        newStatus: change.newStatus,
+        reason: change.reason,
+        changedAt: change.changedAt
+      }));
+
+    } catch (error) {
+      console.error('Error getting recent status changes:', error);
+      return [];
+    }
+  }
+
+  // Get status change history for a specific customer
+  async getCustomerStatusHistory(customerId, userId = null) {
+    try {
+      const whereClause = { customerId };
+      if (userId) {
+        whereClause.userId = userId;
+      }
+
+      const statusHistory = await prisma.customerStatusLog.findMany({
+        where: whereClause,
+        include: {
+          customer: {
+            select: {
+              customerFullName: true,
+              customerPhone: true
+            }
+          },
+          user: {
+            select: {
+              businessName: true
+            }
+          }
+        },
+        orderBy: { changedAt: 'desc' }
+      });
+
+      return statusHistory.map(entry => ({
+        id: entry.id,
+        customerName: entry.customer.customerFullName,
+        customerPhone: entry.customer.customerPhone,
+        businessName: entry.user.businessName,
+        oldStatus: entry.oldStatus,
+        newStatus: entry.newStatus,
+        reason: entry.reason,
+        changedAt: entry.changedAt
+      }));
+
+    } catch (error) {
+      console.error('Error getting customer status history:', error);
       return [];
     }
   }
