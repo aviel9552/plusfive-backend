@@ -30,7 +30,7 @@ class CustomerStatusCronService {
                     userId: userId
                 },
                 orderBy: { updatedAt: 'desc' },
-                select: { updatedAt: true, startDate: true }
+                select: { updatedAt: true }
             });
 
             // Get last successful payment for this customer-user combination
@@ -43,6 +43,7 @@ class CustomerStatusCronService {
                 orderBy: { paymentDate: 'desc' },
                 select: { paymentDate: true }
             });
+            console.log(lastAppointment,"%%%%%%%%")
 
             let lastActivityDate = null;
             let activityType = null;
