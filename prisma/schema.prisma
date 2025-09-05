@@ -71,6 +71,7 @@ model User {
      reviews           Review[]         // Reviews received by business owner
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
+   customerStatusLogs CustomerStatusLog[] // Customer status change logs
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -315,6 +316,7 @@ model Customers {
      reviews         Review[] // Reviews given by customer
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages whatsappMessage[] // WhatsApp messages for this customer
+   customerStatusLogs CustomerStatusLog[] // Customer status change logs
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -373,6 +375,23 @@ model CustomerUser {
   updatedAt   DateTime @updatedAt
 
   @@map("customer_users")
+}
+
+// Customer Status Logs - Track status changes over time
+model CustomerStatusLog {
+  id          String   @id @default(cuid())
+  customerId  String   // Reference to Customers table
+  userId      String   // Reference to User table
+  oldStatus   String?  // Previous status (can be null for first record)
+  newStatus   String   // New status
+  reason      String?  // Reason for status change
+  changedAt   DateTime @default(now()) // When the status changed
+  
+  // Relations
+  customer    Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("customer_status_logs")
 }
 
 // Conversation State table - Store WhatsApp conversation states
