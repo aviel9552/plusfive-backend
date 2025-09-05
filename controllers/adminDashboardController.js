@@ -894,6 +894,116 @@ class AdminDashboardController {
     }
   }
 
+  // Get monthly LTV Count data (Total Days in Month / Payment Count per Customer)
+  getMonthlyLTVCount = async (req, res) => {
+    try {
+      const authenticatedUser = req.user;
+
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      
+      // Get data for all 12 months of the year (Jan to Dec)
+      const monthlyLTVData = [];
+      
+      for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+        const targetDate = new Date(currentYear, monthIndex, 1);
+        const monthStart = new Date(currentYear, monthIndex, 1);
+        const monthEnd = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59);
+        
+        // Get total days in this month
+        const totalDaysInMonth = monthEnd.getDate();
+        
+        // Get all customers for this user/admin
+        const customers = await prisma.customerUser.findMany({
+          where: {
+            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          },
+          include: {
+            customer: {
+              select: {
+                id: true,
+                customerFullName: true
+              }
+            }
+          }
+        });
+
+        let monthlyCustomerLTVCounts = [];
+        let totalLTVCount = 0;
+
+        for (const customerUser of customers) {
+          const customerId = customerUser.customer.id;
+          
+          // Get payment count for this customer in this month
+          const monthlyPayments = await prisma.paymentWebhook.count({
+            where: {
+              customerId: customerId,
+              status: 'success',
+              paymentDate: { gte: monthStart, lte: monthEnd }
+            }
+          });
+
+          if (monthlyPayments > 0) {
+            // Calculate LTV Count: Total Days in Month / Payment Count
+            const customerLTVCount = totalDaysInMonth / monthlyPayments;
+            totalLTVCount += customerLTVCount;
+
+            monthlyCustomerLTVCounts.push({
+              customerId: customerId,
+              customerName: customerUser.customer.customerFullName,
+              totalDaysInMonth: totalDaysInMonth,
+              paymentCount: monthlyPayments,
+              ltvCount: Math.round(customerLTVCount * 100) / 100
+            });
+          }
+        }
+
+        // Calculate average LTV Count for this month
+        const averageLTVCount = monthlyCustomerLTVCounts.length > 0 
+          ? totalLTVCount / monthlyCustomerLTVCounts.length 
+          : 0;
+
+        monthlyLTVData.push({
+          month: targetDate.toLocaleString('default', { month: 'short' }),
+          monthNumber: monthIndex + 1,
+          year: currentYear,
+          totalDaysInMonth: totalDaysInMonth,
+          customersWithPayments: monthlyCustomerLTVCounts.length,
+          averageLTVCount: Math.round(averageLTVCount * 100) / 100,
+          customerDetails: monthlyCustomerLTVCounts
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          year: currentYear,
+          monthlyLTVData: monthlyLTVData,
+          summary: {
+            totalMonths: monthlyLTVData.length,
+            overallAverageLTV: monthlyLTVData.length > 0 
+              ? Math.round((monthlyLTVData.reduce((sum, month) => sum + month.averageLTVCount, 0) / monthlyLTVData.length) * 100) / 100
+              : 0
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error getting monthly LTV count:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch monthly LTV count data',
+        error: error.message
+      });
+    }
+  }
+
   // Get customer status breakdown
   getCustomerStatusBreakdown = async (req, res) => {
     try {

@@ -3,12 +3,14 @@ const { createWhatsappMessageRecord } = require('../controllers/whatsappMessageC
 
 class WhatsAppService {
   constructor() {
-    this.apiKey = process.env.WHATSAPP_API_KEY;
-    this.baseURL = 'https://waba-v2.360dialog.io';
+    // Facebook/Meta WhatsApp Business API only
+    this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    this.baseURL = `https://graph.facebook.com/v19.0/${this.phoneNumberId}`;
     this.client = axios.create({
       baseURL: this.baseURL,
       headers: {
-        'D360-API-KEY': this.apiKey,
+        'Authorization': `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json'
       }
     });

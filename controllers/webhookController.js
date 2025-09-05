@@ -613,7 +613,7 @@ const updateWebhookLogStatus = async (req, res) => {
 
 
 
-// Handle incoming WhatsApp messages from 360dialog
+// Handle incoming WhatsApp messages from Meta/Facebook
 const handleWhatsAppIncomingMessage = async (req, res) => {
   try {
     const webhookData = req.body;
@@ -867,12 +867,14 @@ const verifyWhatsAppWebhook = async (req, res) => {
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    // Verify token (you can set this in your 360dialog webhook settings)
-    const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
+    // Meta/Facebook webhook verification token
+    const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'plusfive_webhook_token_2025';
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log('✅ Webhook verified successfully!');
       return res.status(200).send(challenge);
     } else {
+      console.log('❌ Webhook verification failed - Invalid token');
       return res.status(403).json({ error: 'Verification failed' });
     }
   } catch (error) {

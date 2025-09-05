@@ -35,6 +35,10 @@ router.get('/qr-analytics', adminDashboardController.getQRCodeAnalytics);
 // GET /api/admin-dashboard/revenue-impacts
 router.get('/revenue-impacts', adminDashboardController.getRevenueImpacts);
 
+// Get monthly LTV Count data
+// GET /api/admin-dashboard/monthly-ltv-count
+router.get('/monthly-ltv-count', adminDashboardController.getMonthlyLTVCount);
+
 // Get revenue counts
 // GET /api/admin-dashboard/revenue-counts
 router.get('/revenue-counts', adminDashboardController.getRevenueCounts);
