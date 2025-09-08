@@ -876,7 +876,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
   }
 };
 
-// Webhook verification for 360dialog (required for webhook setup)
+// Webhook verification for Meta/Facebook (required for webhook setup)
 const verifyWhatsAppWebhook = async (req, res) => {
   try {
     const mode = req.query['hub.mode'];
@@ -884,7 +884,7 @@ const verifyWhatsAppWebhook = async (req, res) => {
     const challenge = req.query['hub.challenge'];
 
     // Meta/Facebook webhook verification token
-    const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'plusfive_webhook_token_2025';
+    const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
       console.log('✅ Webhook verified successfully!');

@@ -8,7 +8,9 @@ class CronJobService {
     this.jobs = new Map();
     this.customerStatusService = new CustomerStatusService();
     this.whatsappService = new WhatsAppService();
-    
+    console.log('====================================');
+    console.log("process.env.CRON_TEST_MODE :", process.env.CRON_TEST_MODE);
+    console.log('====================================');
     // Test mode vs Production schedules
     this.isTestMode = process.env.CRON_TEST_MODE === 'true';
     this.schedules = {

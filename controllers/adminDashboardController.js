@@ -393,20 +393,16 @@ class AdminDashboardController {
         where.userId = authenticatedUser.userId;
       }
 
-      // Get customers who transitioned from Lost/Risk to Recovered status
-      const recoveredCustomers = await prisma.customerStatusLog.findMany({
+      // Get customers who are currently in Recovered status from CustomerUser table
+      const recoveredCustomers = await prisma.customerUser.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
-          newStatus: 'Recovered',
-          oldStatus: {
-            in: ['Lost', 'Risk']
-          }
+          status: 'recovered'
         },
         select: {
           customerId: true,
-          changedAt: true
-        },
-        distinct: ['customerId'] // Get unique customers who recovered
+          updatedAt: true
+        }
       });
 
       // Get revenue from payments made by recovered customers after their recovery date
@@ -417,7 +413,7 @@ class AdminDashboardController {
             customerId: recoveredCustomer.customerId,
             status: 'success',
             paymentDate: {
-              gte: recoveredCustomer.changedAt // Payments after recovery date
+              gte: recoveredCustomer.updatedAt // Payments after recovery date
             },
             ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
           },
@@ -482,20 +478,25 @@ class AdminDashboardController {
 
       for (const lostCustomer of lostCustomers) {
         const customerId = lostCustomer.customer.id;
+        const latestChangeDate = lostCustomer.changedAt; // Latest changeAt date when status became Lost
 
-        // Get all successful payments for this customer
+        // Get payments that happened AFTER the latest status change date
         const customerPayments = await prisma.paymentWebhook.findMany({
           where: {
             customerId: customerId,
-            status: 'success'
+            status: 'success',
+            paymentDate: {
+              gte: latestChangeDate // Only payments after latest status change
+            }
           },
           select: {
-            total: true
+            total: true,
+            paymentDate: true
           }
         });
 
         if (customerPayments.length > 0) {
-          // Calculate average transaction value for this customer
+          // Calculate average transaction value for payments after status change
           const totalSpent = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
           const averageTransaction = totalSpent / customerPayments.length;
           
@@ -507,10 +508,23 @@ class AdminDashboardController {
           lostCustomerDetails.push({
             customerId: customerId,
             customerName: lostCustomer.customer.customerFullName,
+            latestStatusChangeDate: latestChangeDate,
             totalPayments: customerPayments.length,
             totalSpent: totalSpent,
             averageTransaction: Math.round(averageTransaction * 100) / 100,
             lostRevenue: Math.round(customerLostRevenue * 100) / 100,
+            ltv: Math.round(averageLTV * 100) / 100
+          });
+        } else {
+          // Customer became Lost but made no payments after the status change
+          lostCustomerDetails.push({
+            customerId: customerId,
+            customerName: lostCustomer.customer.customerFullName,
+            latestStatusChangeDate: latestChangeDate,
+            totalPayments: 0,
+            totalSpent: 0,
+            averageTransaction: 0,
+            lostRevenue: 0,
             ltv: Math.round(averageLTV * 100) / 100
           });
         }
