@@ -22,7 +22,8 @@ const {
 const { authenticateToken } = require('../middleware/auth');
 
 // POST /api/auth/register - User registration
-router.post('/register', validateRequest(userRegistrationSchema), register);
+// router.post('/register', validateRequest(userRegistrationSchema), register);
+router.post('/register', register);
 
 // POST /api/auth/login - User login
 router.post('/login', validateRequest(userLoginSchema), login);

@@ -2,12 +2,16 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse, hashPassword, verifyPassword } = require('../lib/utils');
 const { generateToken } = require('../middleware/auth');
 const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../lib/emailService');
+const { getOrCreateStripeCustomer, createAffiliateCoupon, createAffiliatePromotionCode } = require('../lib/stripe');
 const crypto = require('crypto');
 
 // Register user
 const register = async (req, res) => {
   try {
+    console.log('🔍 RAW BODY:', req.body);
+    console.log('🔍 BODY KEYS:', Object.keys(req.body));
     const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
+    console.log('🔍 EXTRACTED referralCode:', referralCode);
     // Check if user already exists with this email (excluding soft deleted users)
     const existingUserByEmail = await prisma.user.findFirst({
       where: { 
@@ -78,28 +82,77 @@ const register = async (req, res) => {
         role: true,
         emailVerified: true,
         referralCode: true,
-        createdAt: true
+      createdAt: true
       }
     });
 
     // If referral code provided, create referral
+    console.log('🔍 Checking referralCode:', referralCode, 'Type:', typeof referralCode);
     if (referralCode) {
+      console.log('✅ ReferralCode exists, proceeding...');
       try {
         // Find referrer by referral code
         const referrer = await prisma.user.findUnique({
           where: { referralCode: referralCode }
         });
 
+        console.log('🔍 Referral code:', referralCode);
+        console.log('🔍 Referrer found:', referrer ? `Yes (${referrer.email})` : 'No');
+        console.log('🔍 User ID:', user.id);
+        console.log('🔍 Referrer ID:', referrer?.id);
+
         if (referrer && referrer.id !== user.id) {
-          // Create referral
+          console.log('🔍 Referrer found, starting Stripe integration for user:', user.id);
+          // Create Stripe customer for referred user
+          let stripeCustomerId = null;
+          let affiliateData = null;
+          
+          try {
+            const stripeCustomer = await getOrCreateStripeCustomer(user.email, user.id);
+            stripeCustomerId = stripeCustomer.id;
+            
+            // Update user with Stripe customer ID
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { stripeCustomerId }
+            });
+            
+            console.log(`✅ Stripe customer created for referred user: ${user.email} -> ${stripeCustomerId}`);
+            
+            // Create affiliate coupon and promotion code
+            try {
+              const coupon = await createAffiliateCoupon(user.id);
+              const promotionCode = await createAffiliatePromotionCode(coupon.id, user.id);
+              
+              affiliateData = {
+                stripeCouponId: coupon.id,
+                stripePromotionCodeId: promotionCode.id,
+                promotionCode: promotionCode.code
+              };
+              
+              console.log(`✅ Affiliate promotion code created: ${promotionCode.code}`);
+            } catch (affiliateError) {
+              console.error('❌ Affiliate coupon/promotion creation failed:', affiliateError);
+            }
+            
+          } catch (stripeError) {
+            console.error('❌ Stripe customer creation failed:', stripeError);
+            console.error('❌ Stripe error details:', stripeError.message);
+            // Continue without Stripe integration
+          }
+
+          // Create referral with affiliate data
           await prisma.referral.create({
             data: {
               referrerId: referrer.id,
               referredUserId: user.id,
-              status: 'pending',
-              commission: 0
+              status: affiliateData ? 'active' : 'pending',
+              commission: 0,
+              ...(affiliateData || {})
             }
           });
+
+          console.log(`✅ Referral created: ${referrer.email} -> ${user.email}`);
         }
       } catch (referralError) {
         console.error('Referral creation failed:', referralError);

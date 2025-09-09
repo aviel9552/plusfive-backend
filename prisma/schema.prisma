@@ -239,10 +239,20 @@ model SupportTicket {
 }
 
 model Referral {
-  id             String   @id @default(cuid())
-  status         String   @default("pending") // pending, active, cancelled
-  commission     Float    @default(0)
-  date           DateTime @default(now())
+  id                    String   @id @default(cuid())
+  status               String   @default("pending") // pending, active, cancelled
+  commission           Float    @default(0)
+  totalCommissionEarned Float    @default(0) // Total commission earned from this referral
+  date                 DateTime @default(now())
+  
+  // Stripe integration fields
+  stripeCouponId       String?  // Stripe coupon ID
+  stripePromotionCodeId String? // Stripe promotion code ID  
+  promotionCode        String?  // The actual promotion code (e.g., PLUS5-partnerId)
+  
+  // Commission tracking
+  invoicesPaid         Int      @default(0) // Number of invoices paid using this promotion
+  lastCommissionDate   DateTime? // Last time commission was calculated
   
   // Relations
   referrerId     String

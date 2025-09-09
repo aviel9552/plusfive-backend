@@ -1,4 +1,4 @@
-const { stripe, getStripePrices, getOrCreateStripeCustomer, reportUsageForMonth } = require('../lib/stripe');
+const { stripe, getStripePrices, getOrCreateStripeCustomer, reportUsageForMonth, calculateCommissionFromInvoice } = require('../lib/stripe');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 
@@ -403,6 +403,51 @@ const handleWebhook = async (req, res) => {
       case 'invoice.paid': {
         const invoice = event.data.object;
         const subscriptionId = invoice.subscription;
+        
+        // Process affiliate commission if promotion code was used
+        try {
+          const commissionData = await calculateCommissionFromInvoice(invoice.id);
+          
+          if (commissionData) {
+            // Find referral by partner ID (referred user) and promotion code
+            const referral = await prisma.referral.findFirst({
+              where: {
+                referredUserId: commissionData.partnerId,
+                stripePromotionCodeId: commissionData.promotionCodeId
+              },
+              include: {
+                referrer: {
+                  select: { email: true, firstName: true, lastName: true }
+                }
+              }
+            });
+
+            if (referral) {
+              // Update referral with commission
+              await prisma.referral.update({
+                where: { id: referral.id },
+                data: {
+                  commission: {
+                    increment: commissionData.commissionAmount
+                  },
+                  totalCommissionEarned: {
+                    increment: commissionData.commissionAmount
+                  },
+                  invoicesPaid: {
+                    increment: 1
+                  },
+                  lastCommissionDate: new Date()
+                }
+              });
+
+              console.log(`✅ Commission processed: $${commissionData.commissionAmount.toFixed(2)} for partner ${referral.referrer.email} (Invoice: ${invoice.id})`);
+            } else {
+              console.warn(`⚠️ No referral found for partner ${commissionData.partnerId} with promotion code ${commissionData.promotionCodeId}`);
+            }
+          }
+        } catch (commissionError) {
+          console.error('❌ Error processing affiliate commission:', commissionError);
+        }
         
         if (subscriptionId) {
           try {
