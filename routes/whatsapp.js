@@ -20,7 +20,6 @@ router.delete('/debug/clear-all-conversations', async (req, res) => {
     
     const result = await prisma.conversationState.deleteMany({});
     
-    console.log(`🧹 [DEBUG] Cleared ${result.count} conversation states from database`);
     
     return res.json({
       success: true,
@@ -176,7 +175,6 @@ router.post('/review/send-rating', async (req, res) => {
       }
     });
     
-    console.log(`📊 Review request tracked in database:`, reviewRecord.id);
     
     return successResponse(res, {
       ...result,
@@ -505,13 +503,11 @@ router.post('/customer-status/at-risk-hebrew-full-flow', async (req, res) => {
     const results = [];
     
     // Step 1: Initial greeting
-    console.log('📤 Sending initial Hebrew greeting...');
     const initialResult = await whatsappService.sendAtRiskMessageHebrew(customerName, phoneNumber);
     results.push({ step: 1, type: 'initial', result: initialResult });
     
     // Step 2: Follow-up after delay
     setTimeout(async () => {
-      console.log('📤 Sending Hebrew follow-up...');
       const followupResult = await whatsappService.sendAtRiskFollowUpHebrew(phoneNumber);
       results.push({ step: 2, type: 'followup', result: followupResult });
     }, delayBetweenMessages);

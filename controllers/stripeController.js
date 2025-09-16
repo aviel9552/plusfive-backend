@@ -164,7 +164,6 @@ const getSubscription = async (req, res) => {
     } catch (stripeError) {
       // If customer doesn't exist in Stripe, clear the customer ID and return empty data
       if (stripeError.code === 'resource_missing' && stripeError.param === 'customer') {
-        console.log(`Customer ${stripeCustomerId} not found in Stripe, clearing from database`);
         
         // Clear the invalid customer ID from database
         await prisma.user.update({
@@ -440,7 +439,6 @@ const handleWebhook = async (req, res) => {
                 }
               });
 
-              console.log(`✅ Commission processed: $${commissionData.commissionAmount.toFixed(2)} for partner ${referral.referrer.email} (Invoice: ${invoice.id})`);
             } else {
               console.warn(`⚠️ No referral found for partner ${commissionData.partnerId} with promotion code ${commissionData.promotionCodeId}`);
             }
@@ -468,7 +466,6 @@ const handleWebhook = async (req, res) => {
       }
 
       default:
-        console.log(`🔔 Unhandled event type: ${event.type}`);
     }
 
     res.json({ received: true });

@@ -8,10 +8,7 @@ const crypto = require('crypto');
 // Register user
 const register = async (req, res) => {
   try {
-    console.log('🔍 RAW BODY:', req.body);
-    console.log('🔍 BODY KEYS:', Object.keys(req.body));
     const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
-    console.log('🔍 EXTRACTED referralCode:', referralCode);
     // Check if user already exists with this email (excluding soft deleted users)
     const existingUserByEmail = await prisma.user.findFirst({
       where: { 
@@ -87,22 +84,14 @@ const register = async (req, res) => {
     });
 
     // If referral code provided, create referral
-    console.log('🔍 Checking referralCode:', referralCode, 'Type:', typeof referralCode);
     if (referralCode) {
-      console.log('✅ ReferralCode exists, proceeding...');
       try {
         // Find referrer by referral code
         const referrer = await prisma.user.findUnique({
           where: { referralCode: referralCode }
         });
 
-        console.log('🔍 Referral code:', referralCode);
-        console.log('🔍 Referrer found:', referrer ? `Yes (${referrer.email})` : 'No');
-        console.log('🔍 User ID:', user.id);
-        console.log('🔍 Referrer ID:', referrer?.id);
-
         if (referrer && referrer.id !== user.id) {
-          console.log('🔍 Referrer found, starting Stripe integration for user:', user.id);
           // Create Stripe customer for referred user
           let stripeCustomerId = null;
           let affiliateData = null;
@@ -117,7 +106,6 @@ const register = async (req, res) => {
               data: { stripeCustomerId }
             });
             
-            console.log(`✅ Stripe customer created for referred user: ${user.email} -> ${stripeCustomerId}`);
             
             // Create affiliate coupon and promotion code
             try {
@@ -130,7 +118,6 @@ const register = async (req, res) => {
                 promotionCode: promotionCode.code
               };
               
-              console.log(`✅ Affiliate promotion code created: ${promotionCode.code}`);
             } catch (affiliateError) {
               console.error('❌ Affiliate coupon/promotion creation failed:', affiliateError);
             }
@@ -152,10 +139,9 @@ const register = async (req, res) => {
             }
           });
 
-          console.log(`✅ Referral created: ${referrer.email} -> ${user.email}`);
         }
       } catch (referralError) {
-        console.error('Referral creation failed:', referralError);
+        console.error('❌ Referral creation failed:', referralError);
         // Don't fail registration if referral fails
       }
     }
@@ -308,8 +294,11 @@ const resendVerification = async (req, res) => {
     const { email } = req.body;
 
     // Find user
-    const user = await prisma.user.findUnique({
-      where: { email }
+    const user = await prisma.user.findFirst({
+      where: { 
+        email,
+        isDeleted: false
+      }
     });
 
     if (!user) {
@@ -358,8 +347,11 @@ const forgotPassword = async (req, res) => {
     const { email } = req.body;
 
     // Find user
-    const user = await prisma.user.findUnique({
-      where: { email }
+    const user = await prisma.user.findFirst({
+      where: { 
+        email,
+        isDeleted: false
+      }
     });
 
     if (!user) {

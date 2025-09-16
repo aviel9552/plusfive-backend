@@ -327,11 +327,17 @@ const handleAppointmentWebhook = async (req, res) => {
             userId: userId,
             oldStatus: 'New',
             newStatus: 'Active',
-            reason: 'Repeat appointment booked'
+            reason: 'First appointment booked'
           }
         });
+      } else if (previousStatus === 'recovered') {
+        // Recovered customers stay recovered - no status change
+        customerUserId = existingCustomerUser.id;
+      } else if (previousStatus === 'active') {
+        // Active customers stay active - no status change
+        customerUserId = existingCustomerUser.id;
       } else {
-        // Keep existing status (active, recovered, etc.)
+        // Keep existing status for any other status
         customerUserId = existingCustomerUser.id;
       }
     } else {
@@ -521,7 +527,6 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     if (customerId) {
       try {
         const reviewResult = await sendWhatsAppReviewRequest(customerId);
-        console.log('✅ WhatsApp review request sent successfully:', reviewResult.customerDetails);
       } catch (whatsappError) {
         console.error('❌ Error sending WhatsApp review request after payment:', whatsappError);
         // Don't fail the webhook if WhatsApp fails
@@ -887,10 +892,8 @@ const verifyWhatsAppWebhook = async (req, res) => {
     const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('✅ Webhook verified successfully!');
       return res.status(200).send(challenge);
     } else {
-      console.log('❌ Webhook verification failed - Invalid token');
       return res.status(403).json({ error: 'Verification failed' });
     }
   } catch (error) {

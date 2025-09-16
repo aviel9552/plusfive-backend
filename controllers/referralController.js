@@ -154,7 +154,7 @@ const getUserReferrals = async (req, res) => {
       orderBy: { date: 'desc' }
     });
 
-    // Flatten the data structure and combine both arrays
+    // Flatten the data structure - ONLY show referrals given by current user
     const flattenedReferralsGiven = referralsGiven.map(ref => ({
       id: ref.id,
       status: ref.status,
@@ -165,20 +165,8 @@ const getUserReferrals = async (req, res) => {
       email: ref.referredUser.email
     }));
 
-    const flattenedReferralsReceived = referralsReceived.map(ref => ({
-      id: ref.id,
-      status: ref.status,
-      commission: ref.commission,
-      date: ref.date,
-      firstName: ref.referrer.firstName,
-      lastName: ref.referrer.lastName,
-      email: ref.referrer.email
-    }));
-
-    // Return simple array with all referrals
-    const allReferrals = [...flattenedReferralsGiven, ...flattenedReferralsReceived];
-
-    return successResponse(res, allReferrals, 'User referrals retrieved successfully');
+    // Return only referrals given by current user (not received)
+    return successResponse(res, flattenedReferralsGiven, 'User referrals retrieved successfully');
   } catch (error) {
     console.error('Get user referrals error:', error);
     return errorResponse(res, 'Internal server error', 500);

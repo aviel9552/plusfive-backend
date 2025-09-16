@@ -16,8 +16,6 @@ class CustomerStatusCronService {
             statusUpdate: '0 */6 * * *',    // Every 6 hours for production
         };
 
-        console.log(`🔧 CustomerStatusCronService initialized in PRODUCTION mode`);
-        console.log(`📊 Thresholds: Risk=${this.statusThresholds.risk} days, Lost=${this.statusThresholds.lost} days`);
     }
 
     // Get last activity (appointment or payment) for a customer with a specific user
@@ -43,7 +41,6 @@ class CustomerStatusCronService {
                 orderBy: { paymentDate: 'desc' },
                 select: { paymentDate: true }
             });
-            console.log(lastAppointment,"%%%%%%%%")
 
             let lastActivityDate = null;
             let activityType = null;
@@ -99,8 +96,10 @@ class CustomerStatusCronService {
                 return 'recovered'; // Customer returned after being lost/at risk
             } else if (currentStatus === 'new') {
                 return 'active'; // New customer with multiple activities becomes active
+            } else if (currentStatus === 'recovered') {
+                return 'recovered'; // Recovered customers stay recovered
             } else {
-                return 'active'; // Keep active status
+                return 'active'; // Active customers stay active
             }
         }
     }
@@ -120,7 +119,7 @@ class CustomerStatusCronService {
             } else if (oldStatus === 'at_risk') {
                 return `Customer returned with ${activityType || 'activity'} after being at risk`;
             }
-            return `Customer recovered and became active again`;
+            return `Customer recovered and maintaining recovered status`;
         } else if (newStatus === 'active') {
             if (oldStatus === 'new') {
                 return `Customer became active with regular ${activityType || 'activity'}`;
@@ -184,7 +183,6 @@ class CustomerStatusCronService {
             });
 
             if (!customer) {
-                console.log(`⚠️ Customer ${customerId} not found`);
                 return null;
             }
 
@@ -242,7 +240,6 @@ class CustomerStatusCronService {
                     reason
                 );
 
-                console.log(`✅ ${customer.customerFullName}: ${currentStatus} → ${newStatus} (${daysSinceLastActivity} days since ${activityType || 'activity'})`);
 
                 return {
                     customerId,
@@ -267,7 +264,6 @@ class CustomerStatusCronService {
     async processAllCustomerStatuses(userId = null) {
         try {
             const userScope = userId ? `for user ${userId}` : 'for ALL USERS';
-            console.log(`\n🔄 Starting customer status update process ${userScope}...`);
             
             const whereClause = userId ? { userId } : {};
             
@@ -286,7 +282,6 @@ class CustomerStatusCronService {
                 orderBy: { updatedAt: 'asc' }
             });
 
-            console.log(`📊 Found ${customerUsers.length} customer-user relationships to process ${userScope}`);
 
             const results = {
                 processed: 0,
@@ -324,15 +319,6 @@ class CustomerStatusCronService {
                 }
             }
 
-            console.log('\n📈 Status Update Summary:');
-            console.log(`   Processed: ${results.processed}`);
-            console.log(`   Updated: ${results.updated}`);
-            console.log(`   New: ${results.new}`);
-            console.log(`   Active: ${results.active}`);
-            console.log(`   At Risk: ${results.at_risk}`);
-            console.log(`   Lost: ${results.lost}`);
-            console.log(`   Recovered: ${results.recovered}`);
-            console.log(`   Errors: ${results.errors}\n`);
 
             return results;
         } catch (error) {
@@ -351,9 +337,7 @@ class CustomerStatusCronService {
 
         const job = cron.schedule(this.schedules.statusUpdate, async () => {
             try {
-                console.log(`\n🕒 ${new Date().toISOString()} - Starting scheduled customer status update for ALL USERS...`);
                 await this.processAllCustomerStatuses(null); // Process all users
-                console.log(`✅ Scheduled customer status update completed for ALL USERS\n`);
             } catch (error) {
                 console.error('❌ Scheduled status update error:', error);
             }
@@ -364,8 +348,6 @@ class CustomerStatusCronService {
 
         this.jobs.set(jobName, job);
         
-        console.log(`🚀 Customer status cron job started in PRODUCTION mode for ALL USERS`);
-        console.log(`⏰ Schedule: ${this.schedules.statusUpdate} (Every 6 hours)`);
         
         return job;
     }
@@ -374,7 +356,6 @@ class CustomerStatusCronService {
     stopAllJobs() {
         for (const [name, job] of this.jobs) {
             job.destroy();
-            console.log(`🛑 Stopped job: ${name}`);
         }
         this.jobs.clear();
     }
@@ -394,9 +375,7 @@ class CustomerStatusCronService {
     // Manual trigger for immediate execution
     async triggerStatusUpdate() {
         try {
-            console.log('\n🔧 Manual trigger: Starting customer status update for ALL USERS...');
             const result = await this.processAllCustomerStatuses(); // Always process all users
-            console.log('✅ Manual trigger completed for ALL USERS');
             return result;
         } catch (error) {
             console.error('❌ Manual trigger error:', error);

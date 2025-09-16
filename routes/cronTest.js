@@ -9,7 +9,6 @@ const customerStatusService = new CustomerStatusService();
 // Test endpoints for CustomerStatusService (requires authentication)
 router.get('/run-cron', authenticateToken, async (req, res) => {
   try {
-    console.log('🔥 Testing At-Risk Customer Processing...');
     
     // Process all customers and find at-risk ones
     const result = await customerStatusService.processAllCustomerStatuses(req.user.userId);
@@ -32,7 +31,6 @@ router.get('/run-cron', authenticateToken, async (req, res) => {
 
 router.get('/process-lost', authenticateToken, async (req, res) => {
   try {
-    console.log('🔥 Testing Lost Customer Processing...');
     
     // Process all customers and find lost ones
     const result = await customerStatusService.processAllCustomerStatuses(req.user.userId);
@@ -62,7 +60,6 @@ router.get('/process-lost', authenticateToken, async (req, res) => {
 // Get status statistics
 router.get('/status-stats', authenticateToken, async (req, res) => {
   try {
-    console.log('📊 Getting Customer Status Statistics...');
     
     const stats = await customerStatusService.getStatusStatistics(req.user.userId);
     
@@ -85,7 +82,6 @@ router.get('/status-stats', authenticateToken, async (req, res) => {
 router.get('/recent-changes', authenticateToken, async (req, res) => {
   try {
     const limitHours = req.query.hours || 24; // Default last 24 hours
-    console.log(`📈 Getting Recent Status Changes (last ${limitHours} hours)...`);
     
     const recentChanges = await customerStatusService.getRecentStatusChanges(limitHours);
     
@@ -112,7 +108,6 @@ router.get('/recent-changes', authenticateToken, async (req, res) => {
 router.get('/check-customer/:customerId', authenticateToken, async (req, res) => {
   try {
     const { customerId } = req.params;
-    console.log(`🔍 Checking status for customer: ${customerId}`);
     
     const determinedStatus = await customerStatusService.determineCustomerStatus(customerId, req.user.userId);
     const lastVisitDate = await customerStatusService.getLastVisitDate(customerId);
@@ -144,7 +139,6 @@ router.get('/check-customer/:customerId', authenticateToken, async (req, res) =>
 router.get('/customers/:status', authenticateToken, async (req, res) => {
   try {
     const { status } = req.params;
-    console.log(`👥 Getting customers with status: ${status}`);
     
     const customers = await customerStatusService.getCustomersByStatus(status, req.user.userId);
     

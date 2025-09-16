@@ -10,7 +10,6 @@ class CronJobController {
         try {
             const authenticatedUser = req.user;
 
-            console.log(`🔧 Manual trigger initiated by ${authenticatedUser?.email || 'unknown'} for ALL USERS`);
             
             // Process all users - no userId filter
             const result = await this.cronService.triggerStatusUpdate(null);

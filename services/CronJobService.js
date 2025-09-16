@@ -8,9 +8,6 @@ class CronJobService {
     this.jobs = new Map();
     this.customerStatusService = new CustomerStatusService();
     this.whatsappService = new WhatsAppService();
-    console.log('====================================');
-    console.log("process.env.CRON_TEST_MODE :", process.env.CRON_TEST_MODE);
-    console.log('====================================');
     // Test mode vs Production schedules
     this.isTestMode = process.env.CRON_TEST_MODE === 'true';
     this.schedules = {
@@ -138,9 +135,7 @@ class CronJobService {
     // Monthly usage reporting job
     this.scheduleJob('monthly-usage', currentSchedules.monthlyUsage, async () => {
       try {
-        console.log('🔄 Starting monthly usage reporting...');
         await reportUsageForMonth();
-        console.log('✅ Monthly usage reporting completed');
       } catch (error) {
         console.error('❌ Monthly usage reporting error:', error.message);
       }
@@ -211,7 +206,6 @@ class CronJobService {
         return { customersFound: customers.length, notificationsSent: 0 };
       },
       'report-usage': async () => {
-        console.log('🔄 Manually triggering monthly usage reporting...');
         await reportUsageForMonth();
         return { message: 'Monthly usage reporting completed manually' };
       }

@@ -56,10 +56,15 @@ const loginLimiter = rateLimit({
   message: 'Too many login attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  trustProxy: false, // Disable trust proxy validation
+  skip: (req) => {
+    // Skip rate limiting for verify email endpoint
+    return req.path.includes('/verify-email/');
+  }
 });
 
 // Apply login rate limit only to auth routes
-app.use('/api/auth/', loginLimiter);
+// app.use('/api/auth/', loginLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

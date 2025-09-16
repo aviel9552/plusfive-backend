@@ -50,7 +50,6 @@ class CustomerStatusService {
                 }
             });
 
-            console.log(`✅ Status log created: Customer ${customerId} changed from ${oldStatus || 'null'} to ${newStatus} - ${reason}`);
             return statusLog;
         } catch (error) {
             console.error('❌ Error creating status log entry:', error);
@@ -104,7 +103,7 @@ class CustomerStatusService {
                 } else if (oldStatus === 'at_risk') {
                     return 'Customer returned after being at risk';
                 }
-                return 'Customer recovered and became active again';
+                return 'Customer recovered and maintaining recovered status';
 
             default:
                 return `Status changed from ${oldStatusCap || 'Unknown'} to ${newStatusCap}`;
@@ -240,11 +239,14 @@ class CustomerStatusService {
             } else {
                 // Customer is active (visited recently)
                 // If they were previously lost/at_risk and now visited, they become recovered
-                // But if they are already recovered and visiting regularly, they stay active
+                // If they are already recovered, they stay recovered
+                // If they are already active, they stay active
                 if (currentStatus === 'lost' || currentStatus === 'at_risk') {
                     return 'recovered';
+                } else if (currentStatus === 'recovered') {
+                    return 'recovered'; // Recovered customers stay recovered
                 } else {
-                    return 'active';
+                    return 'active'; // Active customers stay active
                 }
             }
 
@@ -398,7 +400,6 @@ class CustomerStatusService {
                             // Only count status changes for newly updated customers
                             results[newStatus]++;
                             
-                            console.log(`📊 Customer ${customer.customerFullName} (${customer.id}) status changed to ${newStatus}`);
                         }
                     }
 
