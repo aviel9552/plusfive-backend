@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const N8nMessageService = require('./N8nMessageService');
 
 class CustomerStatusService {
     constructor() {
@@ -27,7 +28,7 @@ class CustomerStatusService {
             }
         };
 
-        
+        this.n8nService = new N8nMessageService();
     }
 
     // Calculate days between two dates
@@ -319,6 +320,38 @@ class CustomerStatusService {
                     newStatus,
                     reason
                 );
+
+                // Trigger n8n webhook for status changes (at_risk, lost, recovered)
+                if (newStatus === 'at_risk' || newStatus === 'lost' || newStatus === 'recovered') {
+                    try {
+                        const webhookParams = {
+                            customer_name: customer.customerFullName,
+                            customer_phone: customer.customerPhone,
+                            business_name: customer.user?.businessName || 'Business',
+                            business_type: customer.user?.businessType || 'general',
+                            customer_service: customer.selectedServices || '',
+                            business_owner_phone: customer.user?.phoneNumber || customer.user?.whatsappNumber,
+                            last_visit_date: daysSinceLastVisit ? new Date(Date.now() - (daysSinceLastVisit * 24 * 60 * 60 * 1000)).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                            whatsapp_phone: customer.customerPhone
+                        };
+
+                        if (newStatus === 'at_risk') {
+                            await this.n8nService.triggerAtRiskMessage(webhookParams);
+                        } else if (newStatus === 'lost') {
+                            await this.n8nService.triggerLostMessage(webhookParams);
+                        } else if (newStatus === 'recovered') {
+                            // Add additional parameters for recovered notification
+                            webhookParams.previous_status = currentStatus;
+                            webhookParams.future_appointment = 'Recent activity detected';
+                            await this.n8nService.triggerRecoveredCustomerNotification(webhookParams);
+                        }
+
+                        console.log(`✅ N8n webhook triggered for ${newStatus} status change - Customer: ${customer.customerFullName}`);
+                    } catch (webhookError) {
+                        console.error('❌ Error triggering n8n webhook for status change:', webhookError);
+                        // Don't fail the status update if webhook fails
+                    }
+                }
 
                 return { 
                     ...customer, 

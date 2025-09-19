@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const N8nMessageService = require('../services/N8nMessageService');
 
 // Send WhatsApp review request function
 async function sendWhatsAppReviewRequest(customerId) {
@@ -283,30 +284,53 @@ const handleAppointmentWebhook = async (req, res) => {
           }
         });
 
-        // Send recovered customer notification to business owner
+        // Send recovered customer notification to business owner via n8n
         const businessOwner = await prisma.user.findUnique({
           where: { id: userId },
-          select: { phoneNumber: true, businessName: true }
+          select: { phoneNumber: true, businessName: true, businessType: true, whatsappNumber: true }
         });
 
-        if (businessOwner && businessOwner.phoneNumber) {
+        if (businessOwner && (businessOwner.phoneNumber || businessOwner.whatsappNumber)) {
           try {
-            const WhatsAppService = require('../services/WhatsAppService');
-            const whatsappService = new WhatsAppService();
+            const n8nService = new N8nMessageService();
 
-            await whatsappService.sendRecoveredCustomerTemplate(
-              businessOwner.businessName || webhookData.BusinessName,
-              webhookData.CustomerFullName,
-              formattedPhoneForAppointment,
-              webhookData.StartDate,
-              webhookData.SelectedServices,
-              businessOwner.phoneNumber
-            );
+            const webhookParams = {
+              customerName: webhookData.CustomerFullName,
+              customerPhone: formattedPhoneForAppointment,
+              businessName: businessOwner.businessName || webhookData.BusinessName,
+              businessType: businessOwner.businessType || 'general',
+              customerService: webhookData.SelectedServices || '',
+              businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
+              lastVisitDate: new Date().toISOString().split('T')[0],
+              whatsappPhone: formattedPhoneForAppointment,
+              futureAppointment: webhookData.StartDate,
+              previousStatus: previousStatus
+            };
 
-          } catch (whatsappError) {
-            console.error('Failed to send recovered customer notification:', whatsappError.message);
+            await n8nService.triggerRecoveredCustomerNotification(webhookParams);
+            console.log(`✅ N8n recovered customer notification triggered for: ${webhookData.CustomerFullName} (${previousStatus} → recovered)`);
+
+          } catch (webhookError) {
+            console.error('❌ Error triggering n8n recovered customer notification:', webhookError);
+            // Fallback to old WhatsApp service if n8n fails
+            try {
+              const WhatsAppService = require('../services/WhatsAppService');
+              const whatsappService = new WhatsAppService();
+
+              await whatsappService.sendRecoveredCustomerTemplate(
+                businessOwner.businessName || webhookData.BusinessName,
+                webhookData.CustomerFullName,
+                formattedPhoneForAppointment,
+                webhookData.StartDate,
+                webhookData.SelectedServices,
+                businessOwner.phoneNumber || businessOwner.whatsappNumber
+              );
+            } catch (fallbackError) {
+              console.error('Failed to send recovered customer notification (fallback):', fallbackError.message);
+            }
           }
         } else {
+          console.warn('No phone number found for business owner to send recovered customer notification');
         }
       } else if (previousStatus === 'new') {
         // Update to active only if status was 'new'
@@ -523,13 +547,57 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     });
 
 
-    // If customerId is found, send WhatsApp review request
+    // If customerId is found, trigger n8n review request
     if (customerId) {
       try {
-        const reviewResult = await sendWhatsAppReviewRequest(customerId);
-      } catch (whatsappError) {
-        console.error('❌ Error sending WhatsApp review request after payment:', whatsappError);
-        // Don't fail the webhook if WhatsApp fails
+        // Get customer details for n8n webhook
+        const customer = await prisma.customers.findUnique({
+          where: { id: customerId },
+          include: {
+            user: {
+              select: {
+                businessName: true,
+                businessType: true,
+                phoneNumber: true,
+                whatsappNumber: true
+              }
+            }
+          }
+        });
+
+        if (customer) {
+          const n8nService = new N8nMessageService();
+          
+          // Determine if customer is new or active based on previous orders/payments
+          const previousPayments = await prisma.paymentWebhook.count({
+            where: {
+              customerId: customerId,
+              createdAt: {
+                lt: new Date()
+              }
+            }
+          });
+
+          const customerStatus = previousPayments === 0 ? 'new' : 'active';
+
+          const webhookParams = {
+            customer_name: customer.customerFullName,
+            customer_phone: customer.customerPhone,
+            business_name: customer.user?.businessName || 'Business',
+            business_type: customer.user?.businessType || 'general',
+            customer_service: customer.selectedServices || '',
+            business_owner_phone: customer.user?.phoneNumber || customer.user?.whatsappNumber,
+            last_visit_date: new Date().toISOString().split('T')[0],
+            whatsapp_phone: customer.customerPhone,
+            customer_status: customerStatus
+          };
+
+          await n8nService.triggerReviewRequest(webhookParams);
+          console.log(`✅ N8n review request triggered for customer: ${customer.customerFullName}`);
+        }
+      } catch (webhookError) {
+        console.error('❌ Error triggering n8n review request after payment:', webhookError);
+        // Don't fail the webhook if n8n fails
       }
     }
 

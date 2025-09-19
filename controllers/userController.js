@@ -97,6 +97,36 @@ const getProfile = async (req, res) => {
   }
 };
 
+// Helper function to format Israeli phone numbers
+const formatIsraeliPhone = (phoneNumber) => {
+  if (!phoneNumber) return phoneNumber;
+  
+  // Remove all spaces and special characters
+  let cleaned = phoneNumber.replace(/[\s\-\(\)]/g, '');
+  
+  // If starts with +972, replace with 0
+  if (cleaned.startsWith('+972')) {
+    return '0' + cleaned.substring(4);
+  }
+  
+  // If starts with 972, replace with 0
+  if (cleaned.startsWith('972')) {
+    return '0' + cleaned.substring(3);
+  }
+  
+  // If already starts with 0, return as is
+  if (cleaned.startsWith('0')) {
+    return cleaned;
+  }
+  
+  // If starts with Israeli mobile prefix (5), add 0
+  if (cleaned.startsWith('5') && cleaned.length === 9) {
+    return '0' + cleaned;
+  }
+  
+  return phoneNumber; // Return original if no pattern matches
+};
+
 // Get user by ID (admin only)
 const getUserById = async (req, res) => {
   try {
@@ -132,7 +162,14 @@ const getUserById = async (req, res) => {
       return errorResponse(res, 'User not found', 404);
     }
 
-    return successResponse(res, user);
+    // Format phone numbers before sending response
+    const formattedUser = {
+      ...user,
+      phoneNumber: formatIsraeliPhone(user.phoneNumber),
+      whatsappNumber: formatIsraeliPhone(user.whatsappNumber)
+    };
+
+    return successResponse(res, formattedUser);
   } catch (error) {
     console.error('Get user by ID error:', error);
     return errorResponse(res, 'Internal server error', 500);

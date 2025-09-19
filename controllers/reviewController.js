@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const N8nMessageService = require('../services/N8nMessageService');
 const WhatsAppService = require('../services/WhatsAppService');
 
 // Initialize WhatsApp service
@@ -142,30 +143,9 @@ const processRating = async (req, res) => {
     let responseMessage;
 
     if (ratingNumber >= 1 && ratingNumber <= 3) {
-      // Low rating (1-3 stars) - Send simple text message
-      await whatsappService.sendMessage(
-        customer.customerPhone,
-        'תודה על הביקורת, בזכות לקוחות כמוך יש לנו את האפשרות לשפר את השירות והחוייה ולשאוף תמיד לעלות ברמה.',
-        'low_rating_response'
-      );
-
-      // Send alert to business owner
-      if (customer.user?.phoneNumber) {
-        await whatsappService.sendMessage(
-          customer.user.phoneNumber,
-          `🚨 התראת דירוג נמוך מ-${customer.businessName || customer.user?.businessName || 'Business'}
-
-לקוח: ${customer.customerFullName || customer.firstName || 'Customer'}
-טלפון: ${customer.customerPhone}
-דירוג: ${ratingNumber}/5
-שירות: ${customer.selectedServices || 'Service not specified'}
-
-מומלץ ליצור קשר לחוויה מתקנת`,
-          'low_rating_alert'
-        );
-      }
-
-      responseMessage = 'Low rating processed - Customer thanked and business owner alerted';
+      // Low rating (1-3 stars) - Just store in database, n8n will handle the alerts
+      // n8n receives WhatsApp messages first and will trigger bad review alerts directly
+      responseMessage = 'Low rating processed and stored - n8n will handle WhatsApp alerts';
 
     } else if (ratingNumber >= 4 && ratingNumber <= 5) {
       // Good rating (4-5 stars) - Send simple thank you text
@@ -310,26 +290,9 @@ const processRatingFromButton = async (customerId, rating, phoneNumber) => {
     const whatsappService = new (require('../services/WhatsAppService'))();
 
     if (rating >= 1 && rating <= 3) {
-      // Low rating - Send thank you and alert business owner
-      await whatsappService.sendMessage(
-        phoneNumber,
-        'תודה על הביקורת, בזכות לקוחות כמוך יש לנו את האפשרות לשפר את השירות והחוייה ולשאוף תמיד לעלות ברמה.',
-        'low_rating_response'
-      );
-
-      // Alert business owner
-      if (customer.user?.phoneNumber) {
-        await whatsappService.sendMessage(
-          customer.user.phoneNumber,
-          `🚨 התראת דירוג נמוך מ-${customer.businessName}
-לקוח: ${customer.customerFullName}
-טלפון: ${customer.customerPhone}
-דירוג: ${rating}/5
-שירות: ${customer.selectedServices || 'לא צוין'}
-מומלץ ליצור קשר לחוויה מתקנת`,
-          'low_rating_alert'
-        );
-      }
+      // Low rating - Just store in database, n8n will handle the alerts
+      // n8n receives WhatsApp messages first and will trigger bad review alerts directly
+      console.log(`Low rating (${rating}) stored for customer: ${customer.customerFullName} - n8n will handle alerts`);
 
     } else if (rating >= 4 && rating <= 5) {
       // Good rating - Send thank you

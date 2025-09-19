@@ -29,6 +29,7 @@ const adminDashboardRoutes = require('./routes/adminDashboard');
 const stripeRoutes = require('./routes/stripe');
 const cronTestRoutes = require('./routes/cronTest');
 const cronJobRoutes = require('./routes/cronJobs');
+const n8nTestRoutes = require('./routes/n8nTest');
 
 const app = express();
 
@@ -102,6 +103,7 @@ app.use('/api/admin-dashboard', adminDashboardRoutes);
 app.use('/api/stripe', stripeRoutes);
 app.use('/api/cron-test', cronTestRoutes);
 app.use('/api/cron-jobs', cronJobRoutes);
+app.use('/api/n8n-test', n8nTestRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
