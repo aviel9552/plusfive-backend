@@ -146,7 +146,7 @@ const getAllCustomers = async (req, res) => {
           customerStatus: realTimeStatus || 'active', // Use real-time calculated status
           reviews: customerReviews,
           lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
-          lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          lastVisit: lastPayment?.paymentDate || null, // Only updatedAt field
           // Payment data
           totalPaidAmount: totalPaidAmount, // Total amount paid by customer
           lastPaymentAmount: lastPayment?.total || 0, // Last payment amount
@@ -310,7 +310,7 @@ const getTenCustomers = async (req, res) => {
           customerStatus: customerUserStatus?.status || 'active', // Default to active if no status found
           reviews: customerReviews,
           lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
-          lastVisit: lastVisit?.updatedAt || null, // Only updatedAt field
+          lastVisit: lastPayment?.paymentDate || null, // Only updatedAt field
           // Payment data
           totalPaidAmount: totalPaidAmount, // Total amount paid by customer
           lastPaymentAmount: lastPayment?.total || 0, // Last payment amount

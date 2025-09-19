@@ -1111,13 +1111,13 @@ class AdminDashboardController {
               status: 'Active',
               count: activeCustomers,
               percentage: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#675DFF'
+              color: '#FF257C'
             },
             {
               status: 'New',
               count: newCustomers,
               percentage: totalCustomers > 0 ? ((newCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#10B981'
+              color: '#E062CB'
             },
             {
               status: 'At Risk',
@@ -1135,7 +1135,7 @@ class AdminDashboardController {
               status: 'Recovered',
               count: recoveredCustomers,
               percentage: totalCustomers > 0 ? ((recoveredCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#DF64CC'
+              color: '#675DFF'
             }
           ]
         }
