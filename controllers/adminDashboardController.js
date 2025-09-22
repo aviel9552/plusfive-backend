@@ -934,71 +934,65 @@ class AdminDashboardController {
     }
   }
 
-  // Get monthly LTV Count data (Total Days in Month / Payment Count per Customer)
+  // Get monthly LTV Count data (Total Days in Month / Payment Count per Customer) - OPTIMIZED
   getMonthlyLTVCount = async (req, res) => {
     try {
       const authenticatedUser = req.user;
-
-      // Build where clause based on user role
-      let where = {};
-      if (authenticatedUser.role === 'user') {
-        where.userId = authenticatedUser.userId;
-      }
-
       const currentDate = new Date();
       const currentYear = currentDate.getFullYear();
-      
-      // Get data for all 12 months of the year (Jan to Dec)
+      const yearStart = new Date(currentYear, 0, 1);
+      const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
+
+      // Single optimized query to get all payment data for the year
+      const paymentQuery = `
+        SELECT 
+          pw."customerId",
+          c."customerFullName",
+          EXTRACT(MONTH FROM pw."paymentDate") as month,
+          COUNT(*) as "paymentCount"
+        FROM "payment_webhooks" pw
+        JOIN "customers" c ON pw."customerId" = c.id
+        ${authenticatedUser.role === 'user' ? 'WHERE pw."userId" = $1' : 'WHERE 1=1'}
+        AND pw.status = 'success'
+        AND pw."paymentDate" >= ${authenticatedUser.role === 'user' ? '$2' : '$1'}
+        AND pw."paymentDate" <= ${authenticatedUser.role === 'user' ? '$3' : '$2'}
+        GROUP BY pw."customerId", c."customerFullName", EXTRACT(MONTH FROM pw."paymentDate")
+        ORDER BY month, c."customerFullName"
+      `;
+
+      const queryParams = authenticatedUser.role === 'user' 
+        ? [authenticatedUser.userId, yearStart, yearEnd]
+        : [yearStart, yearEnd];
+
+      const paymentData = await prisma.$queryRawUnsafe(paymentQuery, ...queryParams);
+
+      // Process data by month
       const monthlyLTVData = [];
       
       for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
         const targetDate = new Date(currentYear, monthIndex, 1);
-        const monthStart = new Date(currentYear, monthIndex, 1);
-        const monthEnd = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59);
-        
-        // Get total days in this month
+        const monthEnd = new Date(currentYear, monthIndex + 1, 0);
         const totalDaysInMonth = monthEnd.getDate();
-        
-        // Get all customers for this user/admin
-        const customers = await prisma.customerUser.findMany({
-          where: {
-            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-          },
-          include: {
-            customer: {
-              select: {
-                id: true,
-                customerFullName: true
-              }
-            }
-          }
-        });
+        const monthNumber = monthIndex + 1;
 
+        // Filter payments for this month
+        const monthPayments = paymentData.filter(p => Number(p.month) === monthNumber);
+        
         let monthlyCustomerLTVCounts = [];
         let totalLTVCount = 0;
 
-        for (const customerUser of customers) {
-          const customerId = customerUser.customer.id;
-          
-          // Get payment count for this customer in this month
-          const monthlyPayments = await prisma.paymentWebhook.count({
-            where: {
-              customerId: customerId,
-              status: 'success',
-              paymentDate: { gte: monthStart, lte: monthEnd }
-            }
-          });
-
-          if (monthlyPayments > 0) {
+        for (const payment of monthPayments) {
+          const paymentCount = Number(payment.paymentCount);
+          if (paymentCount > 0) {
             // Calculate LTV Count: Total Days in Month / Payment Count
-            const customerLTVCount = totalDaysInMonth / monthlyPayments;
+            const customerLTVCount = totalDaysInMonth / paymentCount;
             totalLTVCount += customerLTVCount;
 
             monthlyCustomerLTVCounts.push({
-              customerId: customerId,
-              customerName: customerUser.customer.customerFullName,
+              customerId: payment.customerId,
+              customerName: payment.customerFullName,
               totalDaysInMonth: totalDaysInMonth,
-              paymentCount: monthlyPayments,
+              paymentCount: paymentCount,
               ltvCount: Math.round(customerLTVCount * 100) / 100
             });
           }
@@ -1011,7 +1005,7 @@ class AdminDashboardController {
 
         monthlyLTVData.push({
           month: targetDate.toLocaleString('default', { month: 'short' }),
-          monthNumber: monthIndex + 1,
+          monthNumber: monthNumber,
           year: currentYear,
           totalDaysInMonth: totalDaysInMonth,
           customersWithPayments: monthlyCustomerLTVCounts.length,
