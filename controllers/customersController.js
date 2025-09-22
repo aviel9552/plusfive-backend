@@ -5,7 +5,7 @@ const CustomerStatusService = require('../services/CustomerStatusService');
 // Initialize CustomerStatusService
 const customerStatusService = new CustomerStatusService();
 
-// Get all customers with search (no pagination - frontend will handle)
+// Get all customers with search (no pagination - frontend will handle) - OPTIMIZED
 const getAllCustomers = async (req, res) => {
   try {
     const { search, businessId } = req.query;
@@ -13,158 +13,147 @@ const getAllCustomers = async (req, res) => {
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
 
-    // Build where clause - Always filter by authenticated user's ID
-    const where = {
-      userId: authenticatedUserId // Filter by authenticated user only
-    };
-    
+    // Build search conditions for the SQL query
+    let searchConditions = '';
+    let queryParams = [authenticatedUserId];
+    let paramIndex = 2;
+
     if (search) {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { customerFullName: { contains: search, mode: 'insensitive' } },
-        { customerPhone: { contains: search, mode: 'insensitive' } },
-        { selectedServices: { contains: search, mode: 'insensitive' } }
-      ];
+      searchConditions = `
+        AND (
+          c."firstName" ILIKE $${paramIndex} OR 
+          c."lastName" ILIKE $${paramIndex} OR 
+          c."customerFullName" ILIKE $${paramIndex} OR 
+          c."customerPhone" ILIKE $${paramIndex} OR 
+          c."selectedServices" ILIKE $${paramIndex}
+        )
+      `;
+      queryParams.push(`%${search}%`);
+      paramIndex++;
     }
 
     if (businessId) {
-      where.businessId = parseInt(businessId);
+      searchConditions += ` AND c."businessId" = $${paramIndex}`;
+      queryParams.push(parseInt(businessId));
+      paramIndex++;
     }
 
-    // Get all customers (no pagination) and include user data
-    const customers = await prisma.customers.findMany({
-      where,
-      include: {
+    // Single optimized query to get all customer data with aggregations
+    const customersQuery = `
+      SELECT 
+        c.*,
+        u."businessName" as "userBusinessName",
+        u."businessType" as "userBusinessType",
+        COALESCE(cu.status, 'active') as "customerStatus",
+        COALESCE(appointment_counts.total, 0) as "totalAppointments",
+        COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
+        COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
+        payment_data.last_payment_date as "lastPaymentDate",
+        COALESCE(payment_data.payment_count, 0) as "paymentCount",
+        COALESCE(review_stats.total_reviews, 0) as "totalReviews",
+        COALESCE(review_stats.avg_rating, 0) as "averageRating",
+        COALESCE(review_stats.min_rating, 0) as "minRating",
+        COALESCE(review_stats.max_rating, 0) as "maxRating",
+        review_stats.last_rating as "lastRating"
+      FROM "customers" c
+      LEFT JOIN "users" u ON c."userId" = u.id
+      LEFT JOIN "customer_users" cu ON c.id = cu."customerId" 
+        AND cu."userId" = c."userId" 
+        AND cu."isDeleted" = false
+      LEFT JOIN (
+        SELECT 
+          "customerId", 
+          COUNT(*) as total
+        FROM "appointments" 
+        GROUP BY "customerId"
+      ) appointment_counts ON c.id = appointment_counts."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          SUM(total) as total_paid,
+          MAX(total) as last_payment_amount,
+          MAX("paymentDate") as last_payment_date,
+          COUNT(*) as payment_count
+        FROM "payment_webhooks" 
+        WHERE status = 'success'
+        GROUP BY "customerId"
+      ) payment_data ON c.id = payment_data."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          COUNT(*) as total_reviews,
+          AVG(rating) as avg_rating,
+          MIN(rating) as min_rating,
+          MAX(rating) as max_rating,
+          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
+        FROM "reviews" r
+        GROUP BY "customerId"
+      ) review_stats ON c.id = review_stats."customerId"
+      WHERE c."userId" = $1
+      ${searchConditions}
+      ORDER BY c."createdAt" DESC
+    `;
+
+    const customersData = await prisma.$queryRawUnsafe(customersQuery, ...queryParams);
+
+    // Process the results - all data already fetched in single query
+    const customersWithTotalCount = customersData.map((customer) => {
+      return {
+        // Basic customer data
+        id: customer.id,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        email: customer.email,
+        customerPhone: customer.customerPhone,
+        appointmentCount: customer.appointmentCount,
+        customerFullName: customer.customerFullName,
+        selectedServices: customer.selectedServices,
+        endDate: customer.endDate,
+        duration: customer.duration,
+        startDate: customer.startDate,
+        businessId: customer.businessId,
+        employeeId: customer.employeeId,
+        businessName: customer.businessName,
+        profileImage: customer.profileImage,
+        coverImage: customer.coverImage,
+        documentImage: customer.documentImage,
+        userId: customer.userId,
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+        
+        // User data
         user: {
-          select: {
-            id: true,
-            businessName: true,
-            businessType: true
-          }
+          id: customer.userId,
+          businessName: customer.userBusinessName,
+          businessType: customer.userBusinessType
+        },
+        
+        // Aggregated data from joins
+        totalAppointmentCount: Number(customer.totalAppointments),
+        customerStatus: customer.customerStatus,
+        lastRating: Number(customer.lastRating) || 0,
+        lastVisit: customer.lastPaymentDate,
+        
+        // Payment data
+        totalPaidAmount: Number(customer.totalPaidAmount),
+        lastPaymentAmount: Number(customer.lastPaymentAmount),
+        lastPaymentDate: customer.lastPaymentDate,
+        paymentCount: Number(customer.paymentCount),
+        
+        // Review statistics
+        reviews: [], // Empty array since we have aggregated stats
+        reviewStatistics: {
+          totalReviews: Number(customer.totalReviews),
+          averageRating: customer.averageRating ? parseFloat(Number(customer.averageRating).toFixed(2)) : 0,
+          minRating: Number(customer.minRating),
+          maxRating: Number(customer.maxRating),
+          lastRating: Number(customer.lastRating) || 0
         }
-      },
-      orderBy: { createdAt: 'desc' }
+      };
     });
 
-    // Calculate totalAppointmentCount, get CustomerUser status and reviews for each customer
-    const customersWithTotalCount = await Promise.all(
-      customers.map(async (customer) => {
-        // Get total appointments count
-        const totalAppointments = await prisma.appointment.count({
-          where: {
-            customerId: customer.id
-          }
-        });
-
-        // Get customer status from CustomerUser table (same logic as getCustomersStatusCount)
-        const customerUserStatus = await prisma.customerUser.findFirst({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId,
-            isDeleted: false // Only active relationships
-          },
-          orderBy: {
-            createdAt: 'desc'
-          },
-          select: {
-            status: true
-          }
-        });
-
-        const realTimeStatus = customerUserStatus?.status || 'active';
-
-        // Get all reviews for this customer that match with the business owner (userId)
-        const customerReviews = await prisma.review.findMany({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                businessName: true,
-                firstName: true,
-                lastName: true
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        });
-
-        // Calculate review statistics for this customer with specific userId
-        const reviewStats = await prisma.review.aggregate({
-          where: { 
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          _avg: { rating: true },
-          _count: { rating: true },
-          _min: { rating: true },
-          _max: { rating: true }
-        });
-
-        // Get latest review rating (most recent one) for "Last" star display
-        const latestReview = customerReviews.length > 0 ? customerReviews[0] : null;
-        const lastRating = latestReview ? latestReview.rating : 0;
-
-        // Get latest appointment updatedAt only
-        const lastVisit = await prisma.appointment.findFirst({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          orderBy: { updatedAt: 'desc' }, // Latest updated appointment
-          select: {
-            updatedAt: true // Only updatedAt field
-          }
-        });
-
-        // Get payment data from PaymentWebhook table
-        const paymentData = await prisma.paymentWebhook.findMany({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId, // Match with business owner
-            status: 'success' // Only successful payments
-          },
-          orderBy: { paymentDate: 'desc' }, // Order by payment date
-          select: {
-            total: true,
-            paymentDate: true,
-            status: true
-          }
-        });
-
-        // Calculate total paid amount and last payment
-        const totalPaidAmount = paymentData.reduce((sum, payment) => sum + payment.total, 0);
-        const lastPayment = paymentData.length > 0 ? paymentData[0] : null;
-
-        return {
-          ...customer,
-          totalAppointmentCount: totalAppointments,
-          customerStatus: realTimeStatus || 'active', // Use real-time calculated status
-          reviews: customerReviews,
-          lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
-          lastVisit: lastPayment?.paymentDate || null, // Only updatedAt field
-          // Payment data
-          totalPaidAmount: totalPaidAmount, // Total amount paid by customer
-          lastPaymentAmount: lastPayment?.total || 0, // Last payment amount
-          lastPaymentDate: lastPayment?.paymentDate || null, // Last payment date
-          paymentCount: paymentData.length, // Total number of payments
-          reviewStatistics: {
-            totalReviews: reviewStats._count.rating || 0,
-            averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
-            minRating: reviewStats._min.rating || 0,
-            maxRating: reviewStats._max.rating || 0,
-            lastRating: lastRating // Also include in statistics for easy access
-          }
-        };
-      })
-    );
-
     // Get total count for reference
-    const total = await prisma.customers.count({ where });
+    const total = customersData.length;
 
     return successResponse(res, {
       customers: customersWithTotalCount,  // ✅ customers with totalAppointmentCount and payment data
@@ -177,7 +166,7 @@ const getAllCustomers = async (req, res) => {
   }
 };
 
-// Get ten customers without pagination
+// Get ten customers without pagination - OPTIMIZED
 const getTenCustomers = async (req, res) => {
   try {
     const { businessId } = req.query;
@@ -185,147 +174,142 @@ const getTenCustomers = async (req, res) => {
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
 
-    // Build where clause - Always filter by authenticated user's ID
-    const where = {
-      userId: authenticatedUserId // Filter by authenticated user only
-    };
+    // Build search conditions for the SQL query
+    let searchConditions = '';
+    let queryParams = [authenticatedUserId];
+    let paramIndex = 2;
 
     if (businessId) {
-      where.businessId = parseInt(businessId);
+      searchConditions += ` AND c."businessId" = $${paramIndex}`;
+      queryParams.push(parseInt(businessId));
+      paramIndex++;
     }
 
-    // Get total count first to check how many customers exist
-    const totalCustomersCount = await prisma.customers.count({ where });
-    
-    // Get customers (either 10 or all if less than 10 exist)
-    const takeLimit = Math.min(10, totalCustomersCount);
-    const customers = await prisma.customers.findMany({
-      where,
-      take: takeLimit,
-      include: {
+    // Single optimized query to get top 10 customers with all data
+    const customersQuery = `
+      SELECT 
+        c.*,
+        u."businessName" as "userBusinessName",
+        u."businessType" as "userBusinessType",
+        COALESCE(cu.status, 'active') as "customerStatus",
+        COALESCE(appointment_counts.total, 0) as "totalAppointments",
+        COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
+        COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
+        payment_data.last_payment_date as "lastPaymentDate",
+        COALESCE(payment_data.payment_count, 0) as "paymentCount",
+        COALESCE(review_stats.total_reviews, 0) as "totalReviews",
+        COALESCE(review_stats.avg_rating, 0) as "averageRating",
+        COALESCE(review_stats.min_rating, 0) as "minRating",
+        COALESCE(review_stats.max_rating, 0) as "maxRating",
+        review_stats.last_rating as "lastRating"
+      FROM "customers" c
+      LEFT JOIN "users" u ON c."userId" = u.id
+      LEFT JOIN "customer_users" cu ON c.id = cu."customerId" 
+        AND cu."userId" = c."userId" 
+        AND cu."isDeleted" = false
+      LEFT JOIN (
+        SELECT 
+          "customerId", 
+          COUNT(*) as total
+        FROM "appointments" 
+        GROUP BY "customerId"
+      ) appointment_counts ON c.id = appointment_counts."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          SUM(total) as total_paid,
+          MAX(total) as last_payment_amount,
+          MAX("paymentDate") as last_payment_date,
+          COUNT(*) as payment_count
+        FROM "payment_webhooks" 
+        WHERE status = 'success'
+        GROUP BY "customerId"
+      ) payment_data ON c.id = payment_data."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          COUNT(*) as total_reviews,
+          AVG(rating) as avg_rating,
+          MIN(rating) as min_rating,
+          MAX(rating) as max_rating,
+          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
+        FROM "reviews" r
+        GROUP BY "customerId"
+      ) review_stats ON c.id = review_stats."customerId"
+      WHERE c."userId" = $1
+      ${searchConditions}
+      ORDER BY c."createdAt" DESC
+      LIMIT 10
+    `;
+
+    const customersData = await prisma.$queryRawUnsafe(customersQuery, ...queryParams);
+
+    // Get total count for reference
+    const totalCountQuery = `
+      SELECT COUNT(*) as total
+      FROM "customers" c
+      WHERE c."userId" = $1
+      ${searchConditions}
+    `;
+
+    const totalCountResult = await prisma.$queryRawUnsafe(totalCountQuery, ...queryParams);
+    const totalCustomersCount = Number(totalCountResult[0]?.total) || 0;
+
+    // Process the results - all data already fetched in single query
+    const customersWithTotalCount = customersData.map((customer) => {
+      return {
+        // Basic customer data
+        id: customer.id,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        email: customer.email,
+        customerPhone: customer.customerPhone,
+        appointmentCount: customer.appointmentCount,
+        customerFullName: customer.customerFullName,
+        selectedServices: customer.selectedServices,
+        endDate: customer.endDate,
+        duration: customer.duration,
+        startDate: customer.startDate,
+        businessId: customer.businessId,
+        employeeId: customer.employeeId,
+        businessName: customer.businessName,
+        profileImage: customer.profileImage,
+        coverImage: customer.coverImage,
+        documentImage: customer.documentImage,
+        userId: customer.userId,
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+        
+        // User data
         user: {
-          select: {
-            id: true,
-            businessName: true,
-            businessType: true
-          }
+          id: customer.userId,
+          businessName: customer.userBusinessName,
+          businessType: customer.userBusinessType
+        },
+        
+        // Aggregated data from joins
+        totalAppointmentCount: Number(customer.totalAppointments),
+        customerStatus: customer.customerStatus,
+        lastRating: Number(customer.lastRating) || 0,
+        lastVisit: customer.lastPaymentDate,
+        
+        // Payment data
+        totalPaidAmount: Number(customer.totalPaidAmount),
+        lastPaymentAmount: Number(customer.lastPaymentAmount),
+        lastPaymentDate: customer.lastPaymentDate,
+        paymentCount: Number(customer.paymentCount),
+        
+        // Review statistics
+        reviews: [], // Empty array since we have aggregated stats
+        reviewStatistics: {
+          totalReviews: Number(customer.totalReviews),
+          averageRating: customer.averageRating ? parseFloat(Number(customer.averageRating).toFixed(2)) : 0,
+          minRating: Number(customer.minRating),
+          maxRating: Number(customer.maxRating),
+          lastRating: Number(customer.lastRating) || 0
         }
-      },
-      orderBy: { createdAt: 'desc' }
+      };
     });
-
-    // Calculate totalAppointmentCount, get CustomerUser status and reviews for each customer
-    const customersWithTotalCount = await Promise.all(
-      customers.map(async (customer) => {
-        // Get total appointments count
-        const totalAppointments = await prisma.appointment.count({
-          where: {
-            customerId: customer.id
-          }
-        });
-
-        // Get CustomerUser status (latest active status)
-        const customerUserStatus = await prisma.customerUser.findFirst({
-          where: {
-            customerId: customer.id,
-            isDeleted: false // Only get active relationships
-          },
-          orderBy: {
-            createdAt: 'desc'
-          },
-          select: {
-            status: true
-          }
-        });
-
-        // Get all reviews for this customer that match with the business owner (userId)
-        const customerReviews = await prisma.review.findMany({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                businessName: true,
-                firstName: true,
-                lastName: true
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        });
-
-        // Calculate review statistics for this customer with specific userId
-        const reviewStats = await prisma.review.aggregate({
-          where: { 
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          _avg: { rating: true },
-          _count: { rating: true },
-          _min: { rating: true },
-          _max: { rating: true }
-        });
-
-        // Get latest review rating (most recent one) for "Last" star display
-        const latestReview = customerReviews.length > 0 ? customerReviews[0] : null;
-        const lastRating = latestReview ? latestReview.rating : 0;
-
-        // Get latest appointment updatedAt only
-        const lastVisit = await prisma.appointment.findFirst({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId // Match with business owner
-          },
-          orderBy: { updatedAt: 'desc' }, // Latest updated appointment
-          select: {
-            updatedAt: true // Only updatedAt field
-          }
-        });
-
-        // Get payment data from PaymentWebhook table
-        const paymentData = await prisma.paymentWebhook.findMany({
-          where: {
-            customerId: customer.id,
-            userId: customer.userId, // Match with business owner
-            status: 'success' // Only successful payments
-          },
-          orderBy: { paymentDate: 'desc' }, // Order by payment date
-          select: {
-            total: true,
-            paymentDate: true,
-            status: true
-          }
-        });
-
-        // Calculate total paid amount and last payment
-        const totalPaidAmount = paymentData.reduce((sum, payment) => sum + payment.total, 0);
-        const lastPayment = paymentData.length > 0 ? paymentData[0] : null;
-
-        return {
-          ...customer,
-          totalAppointmentCount: totalAppointments,
-          customerStatus: customerUserStatus?.status || 'active', // Default to active if no status found
-          reviews: customerReviews,
-          lastRating: lastRating, // Latest review rating for "Last: X ⭐" display
-          lastVisit: lastPayment?.paymentDate || null, // Only updatedAt field
-          // Payment data
-          totalPaidAmount: totalPaidAmount, // Total amount paid by customer
-          lastPaymentAmount: lastPayment?.total || 0, // Last payment amount
-          lastPaymentDate: lastPayment?.paymentDate || null, // Last payment date
-          paymentCount: paymentData.length, // Total number of payments
-          reviewStatistics: {
-            totalReviews: reviewStats._count.rating || 0,
-            averageRating: reviewStats._avg.rating ? parseFloat(reviewStats._avg.rating.toFixed(2)) : 0,
-            minRating: reviewStats._min.rating || 0,
-            maxRating: reviewStats._max.rating || 0,
-            lastRating: lastRating // Also include in statistics for easy access
-          }
-        };
-      })
-    );
 
     return successResponse(res, {
       customers: customersWithTotalCount,
@@ -343,25 +327,27 @@ const getTenCustomers = async (req, res) => {
   }
 };
 
-// Get customer status counts for dashboard
+// Get customer status counts for dashboard - OPTIMIZED
 const getCustomersStatusCount = async (req, res) => {
   try {
     // Get user ID from authenticated token
     const authenticatedUserId = req.user.userId;
 
-    // Build where clause - Always filter by authenticated user's ID
-    const where = {
-      userId: authenticatedUserId // Filter by authenticated user only
-    };
+    // Single optimized query to get status counts
+    const statusCountsQuery = `
+      SELECT 
+        COALESCE(cu.status, 'active') as status,
+        COUNT(*) as count
+      FROM "customers" c
+      LEFT JOIN "customer_users" cu ON c.id = cu."customerId" 
+        AND cu."userId" = $1 
+        AND cu."isDeleted" = false
+      WHERE c."userId" = $1
+      GROUP BY COALESCE(cu.status, 'active')
+      ORDER BY status
+    `;
 
-    // Get all customers for this user
-    const allCustomers = await prisma.customers.findMany({
-      where,
-      select: {
-        id: true,
-        userId: true
-      }
-    });
+    const statusResults = await prisma.$queryRawUnsafe(statusCountsQuery, authenticatedUserId);
 
     // Initialize counters
     const statusCounts = {
@@ -372,30 +358,17 @@ const getCustomersStatusCount = async (req, res) => {
       new: 0
     };
 
-    // Get status for each customer from CustomerUser table
-    for (const customer of allCustomers) {
-      const customerUserStatus = await prisma.customerUser.findFirst({
-        where: {
-          customerId: customer.id,
-          userId: customer.userId,
-          isDeleted: false // Only count active relationships
-        },
-        orderBy: {
-          createdAt: 'desc'
-        },
-        select: {
-          status: true
-        }
-      });
-
-      const status = customerUserStatus?.status || 'active';
+    // Process results
+    let total = 0;
+    for (const result of statusResults) {
+      const status = result.status;
+      const count = Number(result.count);
+      total += count;
+      
       if (statusCounts.hasOwnProperty(status)) {
-        statusCounts[status]++;
+        statusCounts[status] = count;
       }
     }
-
-    // Calculate total
-    const total = allCustomers.length;
 
     return successResponse(res, {
       statusCounts,
