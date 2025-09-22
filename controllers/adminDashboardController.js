@@ -635,177 +635,22 @@ class AdminDashboardController {
     }
   }
 
-  // Get Revenue Impact with filters - OPTIMIZED
+  // Get Revenue Impact with filters (same as backup code structure)
   getRevenueImpacts = async (req, res) => {
     try {
       const authenticatedUser = req.user;
-      const currentDate = new Date();
-      const currentYear = currentDate.getFullYear();
 
-      // Single query for last 6 months data (only recovered customers - same as original)
-      const sixMonthsAgo = new Date(currentYear, currentDate.getMonth() - 5, 1);
-      const monthlyQuery = `
-        SELECT 
-          EXTRACT(YEAR FROM "paymentDate") as year,
-          EXTRACT(MONTH FROM "paymentDate") as month,
-          SUM(total) as total_revenue,
-          SUM("totalWithoutVAT") as total_without_vat,
-          SUM("totalVAT") as total_vat,
-          COUNT(*) as transaction_count
-        FROM "payment_webhooks"
-        WHERE status = 'success'
-        AND "revenuePaymentStatus" = 'recovered'
-        AND "paymentDate" >= $1
-        AND "paymentDate" <= $2
-        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-        GROUP BY EXTRACT(YEAR FROM "paymentDate"), EXTRACT(MONTH FROM "paymentDate")
-        ORDER BY year, month
-      `;
-
-      const monthlyParams = authenticatedUser.role === 'user' 
-        ? [sixMonthsAgo, currentDate, authenticatedUser.userId]
-        : [sixMonthsAgo, currentDate];
-
-      const monthlyResults = await prisma.$queryRawUnsafe(monthlyQuery, ...monthlyParams);
-
-      // Process monthly data
-      const monthlyData = [];
-      for (let i = 5; i >= 0; i--) {
-        const targetDate = new Date(currentYear, currentDate.getMonth() - i, 1);
-        const targetYear = targetDate.getFullYear();
-        const targetMonth = targetDate.getMonth() + 1;
-        
-        const monthResult = monthlyResults.find(r => 
-          Number(r.year) === targetYear && Number(r.month) === targetMonth
-        );
-        
-        monthlyData.push({
-          label: targetDate.toLocaleString('default', { month: 'short' }),
-          revenue: monthResult ? Number(monthResult.total_revenue) : 0,
-          revenueWithoutVAT: monthResult ? Number(monthResult.total_without_vat) : 0,
-          vat: monthResult ? Number(monthResult.total_vat) : 0,
-          transactionCount: monthResult ? Number(monthResult.transaction_count) : 0,
-          month: targetMonth,
-          year: targetYear
-        });
+      // Build where clause based on user role
+      let where = {};
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
       }
 
-      // Get weekly data for current month (optimized single query)
-      const currentMonthStart = new Date(currentYear, currentDate.getMonth(), 1);
-      const currentMonthEnd = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
-      
-      // Single query for current month weekly data
-      const currentWeeklyQuery = `
-        SELECT 
-          EXTRACT(WEEK FROM "paymentDate") as week_number,
-          SUM(total) as total_revenue,
-          SUM("totalWithoutVAT") as total_without_vat,
-          SUM("totalVAT") as total_vat,
-          COUNT(*) as transaction_count
-        FROM "payment_webhooks"
-        WHERE status = 'success'
-        AND "revenuePaymentStatus" = 'recovered'
-        AND "paymentDate" >= $1
-        AND "paymentDate" <= $2
-        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-        GROUP BY EXTRACT(WEEK FROM "paymentDate")
-        ORDER BY week_number
-      `;
-
-      const currentWeeklyParams = authenticatedUser.role === 'user' 
-        ? [currentMonthStart, currentMonthEnd, authenticatedUser.userId]
-        : [currentMonthStart, currentMonthEnd];
-
-      const currentWeeklyResults = await prisma.$queryRawUnsafe(currentWeeklyQuery, ...currentWeeklyParams);
-      
-      // Build weekly data array
-      const weeklyData = currentWeeklyResults.map((result, index) => ({
-        label: `Week ${index + 1}`,
-        revenue: Number(result.total_revenue) || 0,
-        revenueWithoutVAT: Number(result.total_without_vat) || 0,
-        vat: Number(result.total_vat) || 0,
-        transactionCount: Number(result.transaction_count) || 0,
-        week: index + 1
-      }));
-
-      // Get yearly data for last 3 years (optimized)
-      const yearlyQuery = `
-        SELECT 
-          EXTRACT(YEAR FROM "paymentDate") as year,
-          SUM(total) as total_revenue,
-          SUM("totalWithoutVAT") as total_without_vat,
-          SUM("totalVAT") as total_vat,
-          COUNT(*) as transaction_count
-        FROM "payment_webhooks"
-        WHERE status = 'success'
-        AND "revenuePaymentStatus" = 'recovered'
-        AND "paymentDate" >= $1
-        AND "paymentDate" <= $2
-        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-        GROUP BY EXTRACT(YEAR FROM "paymentDate")
-        ORDER BY year
-      `;
-
-      const threeYearsAgo = new Date(currentYear - 2, 0, 1);
-      const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
-      
-      const yearlyParams = authenticatedUser.role === 'user' 
-        ? [threeYearsAgo, yearEnd, authenticatedUser.userId]
-        : [threeYearsAgo, yearEnd];
-
-      const yearlyResults = await prisma.$queryRawUnsafe(yearlyQuery, ...yearlyParams);
-
-      // Process yearly data
-      const yearlyData = [];
-      for (let year = currentYear - 2; year <= currentYear; year++) {
-        const yearResult = yearlyResults.find(r => Number(r.year) === year);
-        
-        yearlyData.push({
-          label: year.toString(),
-          revenue: yearResult ? Number(yearResult.total_revenue) : 0,
-          revenueWithoutVAT: yearResult ? Number(yearResult.total_without_vat) : 0,
-          vat: yearResult ? Number(yearResult.total_vat) : 0,
-          transactionCount: yearResult ? Number(yearResult.transaction_count) : 0
-        });
-      }
-
-      // Get last month's weekly data (optimized single query)
-      const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
-      const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
-      
-      // Single query for last month weekly data
-      const lastMonthWeeklyQuery = `
-        SELECT 
-          EXTRACT(WEEK FROM "paymentDate") as week_number,
-          SUM(total) as total_revenue,
-          SUM("totalWithoutVAT") as total_without_vat,
-          SUM("totalVAT") as total_vat,
-          COUNT(*) as transaction_count
-        FROM "payment_webhooks"
-        WHERE status = 'success'
-        AND "revenuePaymentStatus" = 'recovered'
-        AND "paymentDate" >= $1
-        AND "paymentDate" <= $2
-        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-        GROUP BY EXTRACT(WEEK FROM "paymentDate")
-        ORDER BY week_number
-      `;
-
-      const lastMonthWeeklyParams = authenticatedUser.role === 'user' 
-        ? [lastMonthStart, lastMonthEnd, authenticatedUser.userId]
-        : [lastMonthStart, lastMonthEnd];
-
-      const lastMonthWeeklyResults = await prisma.$queryRawUnsafe(lastMonthWeeklyQuery, ...lastMonthWeeklyParams);
-      
-      // Build last month weekly data array
-      const lastMonthData = lastMonthWeeklyResults.map((result, index) => ({
-        label: `Week ${index + 1}`,
-        revenue: Number(result.total_revenue) || 0,
-        revenueWithoutVAT: Number(result.total_without_vat) || 0,
-        vat: Number(result.total_vat) || 0,
-        transactionCount: Number(result.transaction_count) || 0,
-        week: index + 1
-      }));
+      // Get data for different periods (same as backup code - calls getRevenuePeriodData)
+      const monthlyData = await this.getRevenuePeriodData('monthly', authenticatedUser);
+      const weeklyData = await this.getRevenuePeriodData('weekly', authenticatedUser);
+      const lastMonthData = await this.getRevenuePeriodData('last-month', authenticatedUser);
+      const yearlyData = await this.getRevenuePeriodData('yearly', authenticatedUser);
 
       return res.json({
         success: true,
@@ -827,7 +672,7 @@ class AdminDashboardController {
     }
   }
 
-  // Helper function to get revenue period data (similar to getPeriodData)
+  // Helper function to get revenue period data - OPTIMIZED
   async getRevenuePeriodData(period, authenticatedUser) {
     try {
       let where = {};
@@ -844,36 +689,50 @@ class AdminDashboardController {
       
       switch (period) {
         case 'monthly':
-          // Get last 6 months data
+          // Get last 6 months data with single optimized query
+          const sixMonthsAgo = new Date(currentYear, currentDate.getMonth() - 5, 1);
+          const monthlyEndDate = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
+          
+          const monthlyQuery = `
+            SELECT 
+              EXTRACT(YEAR FROM "paymentDate") as year,
+              EXTRACT(MONTH FROM "paymentDate") as month,
+              SUM(total) as total_revenue,
+              SUM("totalWithoutVAT") as total_without_vat,
+              SUM("totalVAT") as total_vat,
+              COUNT(*) as transaction_count
+            FROM "payment_webhooks"
+            WHERE status = 'success'
+            AND "revenuePaymentStatus" = 'recovered'
+            AND "paymentDate" >= $1
+            AND "paymentDate" <= $2
+            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            GROUP BY EXTRACT(YEAR FROM "paymentDate"), EXTRACT(MONTH FROM "paymentDate")
+            ORDER BY year, month
+          `;
+          
+          const monthlyParams = authenticatedUser.role === 'user' 
+            ? [sixMonthsAgo, monthlyEndDate, authenticatedUser.userId]
+            : [sixMonthsAgo, monthlyEndDate];
+            
+          const monthlyResults = await prisma.$queryRawUnsafe(monthlyQuery, ...monthlyParams);
+          
+          // Build monthly data array (same structure as backup)
           for (let i = 5; i >= 0; i--) {
             const targetDate = new Date(currentYear, currentDate.getMonth() - i, 1);
-            const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
-            const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+            const targetYear = targetDate.getFullYear();
+            const targetMonth = targetDate.getMonth() + 1;
             
-            // Get revenue data from PaymentWebhook table (only recovered customers)
-            const revenueData = await prisma.paymentWebhook.aggregate({
-              where: {
-                ...where,
-                paymentDate: { gte: startDate, lte: endDate },
-                status: 'success',
-                revenuePaymentStatus: 'recovered'  // Only recovered customers
-              },
-              _sum: {
-                total: true,
-                totalWithoutVAT: true,
-                totalVAT: true
-              },
-              _count: {
-                id: true
-              }
-            });
+            const monthResult = monthlyResults.find(r => 
+              Number(r.year) === targetYear && Number(r.month) === targetMonth
+            );
             
             data.push({
               label: targetDate.toLocaleString('default', { month: 'short' }),
-              revenue: revenueData._sum.total || 0,
-              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
-              vat: revenueData._sum.totalVAT || 0,
-              transactionCount: revenueData._count.id || 0,
+              revenue: monthResult ? Number(monthResult.total_revenue) : 0,
+              revenueWithoutVAT: monthResult ? Number(monthResult.total_without_vat) : 0,
+              vat: monthResult ? Number(monthResult.total_vat) : 0,
+              transactionCount: monthResult ? Number(monthResult.transaction_count) : 0,
               month: targetDate.getMonth() + 1,
               year: targetDate.getFullYear()
             });
@@ -881,7 +740,7 @@ class AdminDashboardController {
           break;
           
         case 'weekly':
-          // Get current month's weekly data - Calendar weeks (Sunday to Saturday)
+          // Get current month's weekly data - Calendar weeks (Sunday to Saturday) - same as backup
           const currentMonthStart = new Date(currentYear, currentDate.getMonth(), 1);
           const currentMonthEnd = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
           
@@ -951,7 +810,7 @@ class AdminDashboardController {
           break;
           
         case 'last-month':
-          // Last month's weekly data - Calendar weeks (Sunday to Saturday)
+          // Last month's weekly data - Calendar weeks (Sunday to Saturday) - same as backup
           const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
           const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
           
@@ -1021,34 +880,43 @@ class AdminDashboardController {
           break;
           
         case 'yearly':
-          // Get yearly data for last 3 years (like QR analytics)
-          for (let year = currentYear - 2; year <= currentYear; year++) {
-            const startDate = new Date(year, 0, 1);
-            const endDate = new Date(year, 11, 31, 23, 59, 59);
+          // Get yearly data for last 3 years - optimized with single query
+          const threeYearsAgo = new Date(currentYear - 2, 0, 1);
+          const currentYearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
+          
+          const yearlyQuery = `
+            SELECT 
+              EXTRACT(YEAR FROM "paymentDate") as year,
+              SUM(total) as total_revenue,
+              SUM("totalWithoutVAT") as total_without_vat,
+              SUM("totalVAT") as total_vat,
+              COUNT(*) as transaction_count
+            FROM "payment_webhooks"
+            WHERE status = 'success'
+            AND "revenuePaymentStatus" = 'recovered'
+            AND "paymentDate" >= $1
+            AND "paymentDate" <= $2
+            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            GROUP BY EXTRACT(YEAR FROM "paymentDate")
+            ORDER BY year
+          `;
+          
+          const yearlyParams = authenticatedUser.role === 'user' 
+            ? [threeYearsAgo, currentYearEnd, authenticatedUser.userId]
+            : [threeYearsAgo, currentYearEnd];
             
-            const revenueData = await prisma.paymentWebhook.aggregate({
-              where: {
-                ...where,
-                paymentDate: { gte: startDate, lte: endDate },
-                status: 'success',
-                revenuePaymentStatus: 'recovered'  // Only recovered customers
-              },
-              _sum: {
-                total: true,
-                totalWithoutVAT: true,
-                totalVAT: true
-              },
-              _count: {
-                id: true
-              }
-            });
+          const yearlyResults = await prisma.$queryRawUnsafe(yearlyQuery, ...yearlyParams);
+          
+          // Build yearly data array (same structure as backup)
+          for (let year = currentYear - 2; year <= currentYear; year++) {
+            const yearResult = yearlyResults.find(r => Number(r.year) === year);
             
             data.push({
               label: year.toString(),
-              revenue: revenueData._sum.total || 0,
-              revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
-              vat: revenueData._sum.totalVAT || 0,
-              transactionCount: revenueData._count.id || 0
+              revenue: yearResult ? Number(yearResult.total_revenue) : 0,
+              revenueWithoutVAT: yearResult ? Number(yearResult.total_without_vat) : 0,
+              vat: yearResult ? Number(yearResult.total_vat) : 0,
+              transactionCount: yearResult ? Number(yearResult.transaction_count) : 0
             });
           }
           break;
