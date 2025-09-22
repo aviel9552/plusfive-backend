@@ -19,7 +19,7 @@
     "functions": {
         "api/**/*.js": {
           "runtime": "nodejs18.x",
-         "regions": ["sfo1"]  // US-West (San Francisco)
+         "regions": ["sfo1"]
     }
   }
   }
