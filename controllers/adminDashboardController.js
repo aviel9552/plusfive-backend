@@ -690,75 +690,43 @@ class AdminDashboardController {
         });
       }
 
-      // Get weekly data for current month (proper calendar weeks - Sunday to Saturday)
+      // Get weekly data for current month (optimized single query)
       const currentMonthStart = new Date(currentYear, currentDate.getMonth(), 1);
       const currentMonthEnd = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
       
-      const weeklyData = [];
-      let currentWeekNumber = 1;
-      
-      // Find the first Sunday of the month or before the month starts
-      let currentWeekStartDate = new Date(currentMonthStart);
-      const currentFirstDayOfWeek = currentMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
-      
-      // If month doesn't start on Sunday, go back to previous Sunday
-      if (currentFirstDayOfWeek !== 0) {
-        currentWeekStartDate.setDate(currentMonthStart.getDate() - currentFirstDayOfWeek);
-      }
-      
-      while (currentWeekStartDate <= currentMonthEnd) {
-        // Week runs from Sunday to Saturday
-        let currentWeekEndDate = new Date(currentWeekStartDate);
-        currentWeekEndDate.setDate(currentWeekStartDate.getDate() + 6);
-        currentWeekEndDate.setHours(23, 59, 59, 999);
-        
-        // Only count weeks that have at least one day in the target month
-        const weekHasDaysInMonth = (currentWeekStartDate <= currentMonthEnd) && 
-                                 (currentWeekEndDate >= currentMonthStart);
-        
-        if (weekHasDaysInMonth) {
-          // Limit dates to within the month for data query
-          const queryStartDate = currentWeekStartDate < currentMonthStart ? currentMonthStart : currentWeekStartDate;
-          const queryEndDate = currentWeekEndDate > currentMonthEnd ? currentMonthEnd : currentWeekEndDate;
-          
-          const weeklyQuery = `
-            SELECT 
-              SUM(total) as total_revenue,
-              SUM("totalWithoutVAT") as total_without_vat,
-              SUM("totalVAT") as total_vat,
-              COUNT(*) as transaction_count
-            FROM "payment_webhooks"
-            WHERE status = 'success'
-            AND "revenuePaymentStatus" = 'recovered'
-            AND "paymentDate" >= $1
-            AND "paymentDate" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-          `;
+      // Single query for current month weekly data
+      const currentWeeklyQuery = `
+        SELECT 
+          EXTRACT(WEEK FROM "paymentDate") as week_number,
+          SUM(total) as total_revenue,
+          SUM("totalWithoutVAT") as total_without_vat,
+          SUM("totalVAT") as total_vat,
+          COUNT(*) as transaction_count
+        FROM "payment_webhooks"
+        WHERE status = 'success'
+        AND "revenuePaymentStatus" = 'recovered'
+        AND "paymentDate" >= $1
+        AND "paymentDate" <= $2
+        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+        GROUP BY EXTRACT(WEEK FROM "paymentDate")
+        ORDER BY week_number
+      `;
 
-          const weeklyParams = authenticatedUser.role === 'user' 
-            ? [queryStartDate, queryEndDate, authenticatedUser.userId]
-            : [queryStartDate, queryEndDate];
+      const currentWeeklyParams = authenticatedUser.role === 'user' 
+        ? [currentMonthStart, currentMonthEnd, authenticatedUser.userId]
+        : [currentMonthStart, currentMonthEnd];
 
-          const weeklyResult = await prisma.$queryRawUnsafe(weeklyQuery, ...weeklyParams);
-          const result = weeklyResult[0];
-          
-          weeklyData.push({
-            label: `Week ${currentWeekNumber}`,
-            revenue: Number(result.total_revenue) || 0,
-            revenueWithoutVAT: Number(result.total_without_vat) || 0,
-            vat: Number(result.total_vat) || 0,
-            transactionCount: Number(result.transaction_count) || 0,
-            week: currentWeekNumber
-          });
-          
-          currentWeekNumber++;
-        }
-        
-        // Move to next Sunday
-        currentWeekStartDate = new Date(currentWeekEndDate);
-        currentWeekStartDate.setDate(currentWeekEndDate.getDate() + 1);
-        currentWeekStartDate.setHours(0, 0, 0, 0);
-      }
+      const currentWeeklyResults = await prisma.$queryRawUnsafe(currentWeeklyQuery, ...currentWeeklyParams);
+      
+      // Build weekly data array
+      const weeklyData = currentWeeklyResults.map((result, index) => ({
+        label: `Week ${index + 1}`,
+        revenue: Number(result.total_revenue) || 0,
+        revenueWithoutVAT: Number(result.total_without_vat) || 0,
+        vat: Number(result.total_vat) || 0,
+        transactionCount: Number(result.transaction_count) || 0,
+        week: index + 1
+      }));
 
       // Get yearly data for last 3 years (optimized)
       const yearlyQuery = `
@@ -801,75 +769,43 @@ class AdminDashboardController {
         });
       }
 
-      // Get last month's weekly data (proper calendar weeks - Sunday to Saturday)
+      // Get last month's weekly data (optimized single query)
       const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
       const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
       
-      const lastMonthData = [];
-      let lastMonthWeekNumber = 1;
-      
-      // Find the first Sunday of the last month or before the month starts
-      let lastMonthWeekStartDate = new Date(lastMonthStart);
-      const lastMonthFirstDayOfWeek = lastMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
-      
-      // If month doesn't start on Sunday, go back to previous Sunday
-      if (lastMonthFirstDayOfWeek !== 0) {
-        lastMonthWeekStartDate.setDate(lastMonthStart.getDate() - lastMonthFirstDayOfWeek);
-      }
-      
-      while (lastMonthWeekStartDate <= lastMonthEnd) {
-        // Week runs from Sunday to Saturday
-        let lastMonthWeekEndDate = new Date(lastMonthWeekStartDate);
-        lastMonthWeekEndDate.setDate(lastMonthWeekStartDate.getDate() + 6);
-        lastMonthWeekEndDate.setHours(23, 59, 59, 999);
-        
-        // Only count weeks that have at least one day in the target month
-        const weekHasDaysInMonth = (lastMonthWeekStartDate <= lastMonthEnd) && 
-                                 (lastMonthWeekEndDate >= lastMonthStart);
-        
-        if (weekHasDaysInMonth) {
-          // Limit dates to within the month for data query
-          const queryStartDate = lastMonthWeekStartDate < lastMonthStart ? lastMonthStart : lastMonthWeekStartDate;
-          const queryEndDate = lastMonthWeekEndDate > lastMonthEnd ? lastMonthEnd : lastMonthWeekEndDate;
-          
-          const lastMonthQuery = `
-            SELECT 
-              SUM(total) as total_revenue,
-              SUM("totalWithoutVAT") as total_without_vat,
-              SUM("totalVAT") as total_vat,
-              COUNT(*) as transaction_count
-            FROM "payment_webhooks"
-            WHERE status = 'success'
-            AND "revenuePaymentStatus" = 'recovered'
-            AND "paymentDate" >= $1
-            AND "paymentDate" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
-          `;
+      // Single query for last month weekly data
+      const lastMonthWeeklyQuery = `
+        SELECT 
+          EXTRACT(WEEK FROM "paymentDate") as week_number,
+          SUM(total) as total_revenue,
+          SUM("totalWithoutVAT") as total_without_vat,
+          SUM("totalVAT") as total_vat,
+          COUNT(*) as transaction_count
+        FROM "payment_webhooks"
+        WHERE status = 'success'
+        AND "revenuePaymentStatus" = 'recovered'
+        AND "paymentDate" >= $1
+        AND "paymentDate" <= $2
+        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+        GROUP BY EXTRACT(WEEK FROM "paymentDate")
+        ORDER BY week_number
+      `;
 
-          const lastMonthParams = authenticatedUser.role === 'user' 
-            ? [queryStartDate, queryEndDate, authenticatedUser.userId]
-            : [queryStartDate, queryEndDate];
+      const lastMonthWeeklyParams = authenticatedUser.role === 'user' 
+        ? [lastMonthStart, lastMonthEnd, authenticatedUser.userId]
+        : [lastMonthStart, lastMonthEnd];
 
-          const lastMonthResult = await prisma.$queryRawUnsafe(lastMonthQuery, ...lastMonthParams);
-          const result = lastMonthResult[0];
-          
-          lastMonthData.push({
-            label: `Week ${lastMonthWeekNumber}`,
-            revenue: Number(result.total_revenue) || 0,
-            revenueWithoutVAT: Number(result.total_without_vat) || 0,
-            vat: Number(result.total_vat) || 0,
-            transactionCount: Number(result.transaction_count) || 0,
-            week: lastMonthWeekNumber
-          });
-          
-          lastMonthWeekNumber++;
-        }
-        
-        // Move to next Sunday
-        lastMonthWeekStartDate = new Date(lastMonthWeekEndDate);
-        lastMonthWeekStartDate.setDate(lastMonthWeekEndDate.getDate() + 1);
-        lastMonthWeekStartDate.setHours(0, 0, 0, 0);
-      }
+      const lastMonthWeeklyResults = await prisma.$queryRawUnsafe(lastMonthWeeklyQuery, ...lastMonthWeeklyParams);
+      
+      // Build last month weekly data array
+      const lastMonthData = lastMonthWeeklyResults.map((result, index) => ({
+        label: `Week ${index + 1}`,
+        revenue: Number(result.total_revenue) || 0,
+        revenueWithoutVAT: Number(result.total_without_vat) || 0,
+        vat: Number(result.total_vat) || 0,
+        transactionCount: Number(result.transaction_count) || 0,
+        week: index + 1
+      }));
 
       return res.json({
         success: true,
