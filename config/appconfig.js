@@ -138,7 +138,7 @@ const getConfig = () => {
         pass: process.env.MAIL_PASSWORD || 'zlskhxekyxjmqffy'
       },
       from: process.env.MAIL_FROM || 'dev2.webbuildinfotech@gmail.com',
-      fromName: process.env.MAIL_FROM_NAME || 'PlusFive Backend'
+      fromName: process.env.MAIL_FROM_NAME || 'PlusFive'
     },
     
     stripe: {

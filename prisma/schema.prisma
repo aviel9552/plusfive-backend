@@ -68,6 +68,7 @@ model User {
   appointments      Appointment[]    // Appointments relation
   customerUsers     CustomerUser[]   // Customer-User relations
   paymentWebhooks   PaymentWebhook[] // Payment webhook relations
+  paymentHistory    PaymentHistory[] // Payment history tracking
      reviews           Review[]         // Reviews received by business owner
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
@@ -536,4 +537,37 @@ model whatsappMessage {
   updatedAt        DateTime     @updatedAt
 
   @@map("whatsappMessage")
+}
+
+// Payment History Tracking
+model PaymentHistory {
+  id                String    @id @default(cuid())
+  userId            String    // User who made the payment
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Payment Details
+  paymentType       String    // 'subscription' or 'simple'
+  amount            Float     // Amount paid
+  currency          String    // Currency code (USD, ILS, etc.)
+  description       String?   // Payment description
+  
+  // Stripe Details
+  stripeSessionId   String?   // Stripe checkout session ID
+  stripePaymentId   String?   // Stripe payment intent ID
+  stripeSubscriptionId String? // Stripe subscription ID (for subscriptions)
+  stripeCustomerId  String?   // Stripe customer ID
+  
+  // Payment Status
+  status            String    // 'pending', 'succeeded', 'failed', 'canceled'
+  paymentMethod     String?   // 'card', 'link', etc.
+  
+  // Metadata
+  metadata          Json?     // Additional payment metadata
+  source            String?   // 'email_link', 'dashboard', 'api', etc.
+  
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@map("paymentHistory")
 } 

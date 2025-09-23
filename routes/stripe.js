@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { 
-  createCheckoutSession, 
+  createCheckoutSession,
+  createSimpleCheckout, 
   getPrices, 
   getSubscription, 
   cancelSubscription, 
@@ -13,7 +14,11 @@ const {
   updatePaymentMethod,
   removePaymentMethod,
   handleWebhook,
-  triggerMonthlyUsageReporting
+  triggerMonthlyUsageReporting,
+  testUpdateSubscription,
+  directUpdateSubscription,
+  updatePaymentStatus,
+  getPaymentHistory
 } = require('../controllers/stripeController');
 const { authenticateToken } = require('../middleware/auth');
 
@@ -23,6 +28,7 @@ router.post('/webhook', handleWebhook);
 
 // Protected routes (authentication required)
 router.post('/checkout', authenticateToken, createCheckoutSession);
+router.post('/simple-checkout', authenticateToken, createSimpleCheckout);
 router.post('/customer-portal', authenticateToken, createCustomerPortalSession);
 router.get('/subscription', authenticateToken, getSubscription);
 router.post('/subscription/:subscriptionId/cancel', authenticateToken, cancelSubscription);
@@ -37,5 +43,17 @@ router.delete('/payment-methods/:paymentMethodId', authenticateToken, removePaym
 
 // Monthly usage reporting
 router.post('/monthly-usage-reporting', authenticateToken, triggerMonthlyUsageReporting);
+
+// Test endpoint to manually update subscription data
+router.post('/test-update-subscription/:subscriptionId', authenticateToken, testUpdateSubscription);
+
+// Direct update endpoint (no auth required for testing)
+router.post('/direct-update-subscription', directUpdateSubscription);
+
+// Payment history endpoint
+router.get('/payment-history', authenticateToken, getPaymentHistory);
+
+// Update payment status endpoint
+router.post('/update-payment-status', authenticateToken, updatePaymentStatus);
 
 module.exports = router;

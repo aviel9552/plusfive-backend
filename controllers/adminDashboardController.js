@@ -381,25 +381,22 @@ class AdminDashboardController {
         }
       });
 
-      // Get revenue from payments made by recovered customers after their recovery date
-      let totalRecoveredRevenue = 0;
-      for (const recoveredCustomer of recoveredCustomers) {
-        const paymentsAfterRecovery = await prisma.paymentWebhook.aggregate({
-          where: {
-            customerId: recoveredCustomer.customerId,
-            status: 'success',
-            paymentDate: {
-              gte: recoveredCustomer.updatedAt // Payments after recovery date
-            },
-            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-          },
-          _sum: {
-            total: true
-          }
-        });
-        
-        totalRecoveredRevenue += paymentsAfterRecovery._sum.total || 0;
-      }
+      // Get revenue from payments with revenuePaymentStatus = 'recovered'
+      const recoveredPayments = await prisma.paymentWebhook.findMany({
+        where: {
+          status: 'success',
+          revenuePaymentStatus: 'recovered',
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          total: true,
+          customerId: true,
+          paymentDate: true
+        }
+      });
+      
+      // Calculate total recovered revenue
+      const totalRecoveredRevenue = recoveredPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
 
       const recoveredCustomersCount = recoveredCustomers.length;
 
@@ -447,23 +444,35 @@ class AdminDashboardController {
       
       const averageLTV = allCustomers.length > 0 ? totalMonthsAllCustomers / allCustomers.length : 0;
 
-      // Calculate lost revenue using proper formula: Average Transaction × LTV (in months)
-      let totalLostRevenue = 0;
-      let totalAverageTransaction = 0;
-      const lostCustomerDetails = [];
+      // Get revenue from payments with revenuePaymentStatus = 'lost'
+      const lostPayments = await prisma.paymentWebhook.findMany({
+        where: {
+          status: 'success',
+          revenuePaymentStatus: 'lost',
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          total: true,
+          customerId: true,
+          paymentDate: true
+        }
+      });
+      
+      // Calculate total lost revenue
+      const totalLostRevenue = lostPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
 
+      // Get lost customer details for additional metrics
+      const lostCustomerDetails = [];
       for (const lostCustomer of lostCustomers) {
         const customerId = lostCustomer.customer.id;
-        const latestChangeDate = lostCustomer.changedAt; // Latest changeAt date when status became Lost
+        const latestChangeDate = lostCustomer.changedAt;
 
-        // Get payments that happened AFTER the latest status change date
+        // Get payments for this customer
         const customerPayments = await prisma.paymentWebhook.findMany({
           where: {
             customerId: customerId,
             status: 'success',
-            paymentDate: {
-              gte: latestChangeDate // Only payments after latest status change
-            }
+            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
           },
           select: {
             total: true,
@@ -472,14 +481,8 @@ class AdminDashboardController {
         });
 
         if (customerPayments.length > 0) {
-          // Calculate average transaction value for payments after status change
           const totalSpent = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
           const averageTransaction = totalSpent / customerPayments.length;
-          
-          // Calculate lost revenue for this customer: Average Transaction × LTV
-          const customerLostRevenue = averageTransaction * averageLTV;
-          totalLostRevenue += customerLostRevenue;
-          totalAverageTransaction += averageTransaction;
 
           lostCustomerDetails.push({
             customerId: customerId,
@@ -488,11 +491,9 @@ class AdminDashboardController {
             totalPayments: customerPayments.length,
             totalSpent: totalSpent,
             averageTransaction: Math.round(averageTransaction * 100) / 100,
-            lostRevenue: Math.round(customerLostRevenue * 100) / 100,
             ltv: Math.round(averageLTV * 100) / 100
           });
         } else {
-          // Customer became Lost but made no payments after the status change
           lostCustomerDetails.push({
             customerId: customerId,
             customerName: lostCustomer.customer.customerFullName,
@@ -500,7 +501,6 @@ class AdminDashboardController {
             totalPayments: 0,
             totalSpent: 0,
             averageTransaction: 0,
-            lostRevenue: 0,
             ltv: Math.round(averageLTV * 100) / 100
           });
         }
@@ -522,7 +522,7 @@ class AdminDashboardController {
           // Additional metrics
           totalCustomers: allCustomers.length,
           averageTransactionValue: lostCustomerDetails.length > 0 
-            ? Math.round((totalAverageTransaction / lostCustomerDetails.length) * 100) / 100 
+            ? Math.round((lostCustomerDetails.reduce((sum, customer) => sum + customer.averageTransaction, 0) / lostCustomerDetails.length) * 100) / 100 
             : 0
         }
       });
