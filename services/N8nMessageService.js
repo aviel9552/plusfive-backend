@@ -17,26 +17,19 @@ class N8nMessageService {
    */
   async sendWebhookTrigger(data) {
     try {
-      console.log('Sending webhook to n8n:', JSON.stringify(data, null, 2));
-      
       const response = await this.client.post(this.webhookUrl, data);
-      
-      console.log('Webhook sent successfully to n8n:', response.status);
       return {
         success: true,
         status: response.status,
         data: response.data
       };
     } catch (error) {
-      console.error('Error sending webhook to n8n:', error.message);
-      if (error.response) {
-        console.error('Error Response:', error.response.data);
-        console.error('Error Status:', error.response.status);
-      }
+      console.error('❌ N8n Service - Error sending webhook:', error.message);
       return {
         success: false,
         error: error.message,
-        status: error.response?.status
+        status: error.response?.status,
+        fullError: error
       };
     }
   }

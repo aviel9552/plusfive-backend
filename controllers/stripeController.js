@@ -55,7 +55,7 @@ const createCheckoutSession = async (req, res) => {
       data: {
         subscriptionStartDate: new Date(),
         subscriptionStatus: 'pending', // Will be 'active' after payment success
-        subscriptionExpirationDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59, 999), // End of month
+        subscriptionExpirationDate: null, // Will be set by webhook with actual Stripe data
         subscriptionPlan: planName
       }
     });
@@ -266,10 +266,9 @@ const getSubscription = async (req, res) => {
         subscriptions = subscriptionResults.flatMap(result => result.data);
         invoices = invoiceResults.flatMap(result => result.data);
       }
-    } catch (stripeError) {
-      console.warn('Error fetching Stripe data:', stripeError.message);
-      // Return empty data instead of error
-    }
+      } catch (stripeError) {
+        // Return empty data instead of error
+      }
 
     // Format subscriptions
     const formattedSubscriptions = subscriptions.map(sub => {
@@ -463,8 +462,6 @@ const reactivateSubscription = async (req, res) => {
  * Handle Stripe webhooks
  */
 const handleWebhook = async (req, res) => {
-  console.log('🔔 Webhook received:', req.headers['stripe-signature'] ? 'Stripe webhook' : 'Test webhook');
-  
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -473,7 +470,6 @@ const handleWebhook = async (req, res) => {
   try {
     // Verify webhook signature
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    console.log('✅ Webhook signature verified, event type:', event.type);
   } catch (err) {
     console.error('❌ Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -530,8 +526,6 @@ const handleWebhook = async (req, res) => {
                 }
               });
 
-            } else {
-              console.warn(`⚠️ No referral found for partner ${commissionData.partnerId} with promotion code ${commissionData.promotionCodeId}`);
             }
           }
         } catch (commissionError) {
@@ -645,12 +639,11 @@ const handleSubscriptionChange = async (customerId, subscription) => {
           user = await prisma.user.findFirst({ where: { email: stripeCustomer.email } });
         }
       } catch (err) {
-        console.warn('Error retrieving Stripe Customer:', err.message);
+        // Stripe customer retrieval failed
       }
     }
 
     if (!user) {
-      console.warn(`⚠️ User not found for customerId="${customerId}". Skipping update.`);
       return;
     }
 
@@ -668,13 +661,8 @@ const handleSubscriptionChange = async (customerId, subscription) => {
 
     const status = subscription.status;
 
-    // For monthly subscriptions, set expiration to end of month
+    // Use Stripe's actual period end date
     let subscriptionExpirationDate = periodEnd;
-    if (status === 'active' && periodStart) {
-      // Set expiration to end of current month
-      const now = new Date();
-      subscriptionExpirationDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-    }
 
     // Update user in database
     await prisma.user.update({
@@ -1324,8 +1312,6 @@ const removePaymentMethod = async (req, res) => {
  */
 const handleCheckoutSessionCompleted = async (session) => {
   try {
-    console.log('🔔 Checkout session completed:', session.id);
-    
     // Find user by customer ID
     const customer = await stripe.customers.retrieve(session.customer);
     const user = await prisma.user.findFirst({ 
@@ -1333,7 +1319,6 @@ const handleCheckoutSessionCompleted = async (session) => {
     });
 
     if (!user) {
-      console.warn(`⚠️ User not found for checkout session ${session.id}`);
       return;
     }
 
@@ -1359,7 +1344,6 @@ const handleCheckoutSessionCompleted = async (session) => {
       }
     });
 
-    console.log(`✅ Payment updated for session ${session.id}: ${paymentIntent.id}`);
 
   } catch (error) {
     console.error('❌ Error handling checkout session completed:', error);
@@ -1371,8 +1355,6 @@ const handleCheckoutSessionCompleted = async (session) => {
  */
 const handlePaymentIntentSucceeded = async (paymentIntent) => {
   try {
-    console.log('🔔 Payment intent succeeded:', paymentIntent.id);
-    
     // Find payment record by payment intent ID
     const paymentRecord = await prisma.paymentHistory.findFirst({
       where: { stripePaymentId: paymentIntent.id }
@@ -1394,8 +1376,6 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
           }
         }
       });
-
-      console.log(`✅ Payment intent ${paymentIntent.id} updated successfully`);
     }
 
   } catch (error) {
@@ -1424,10 +1404,7 @@ const handleCustomerChange = async (customer) => {
         });
       
       } catch (err) {
-        console.warn(
-          `⚠️ (customer.updated) Could not update user by metadata.userId="${metadataUserId}":`,
-          err.message
-        );
+        // User update failed
       }
     } else if (email) {
       // Find user by email
@@ -1440,10 +1417,7 @@ const handleCustomerChange = async (customer) => {
           });
         
         } catch (err) {
-          console.warn(
-            `⚠️ (customer.updated) Could not update user by id="${user.id}":`,
-            err.message
-          );
+          // User update failed
         }
       }
     }
@@ -1546,7 +1520,7 @@ const directUpdateSubscription = async (req, res) => {
       updatedFields: {
         subscriptionStartDate: subscription.current_period_start ? new Date(subscription.current_period_start * 1000) : null,
         subscriptionStatus: subscription.status,
-        subscriptionExpirationDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59, 999),
+        subscriptionExpirationDate: subscription.current_period_end ? new Date(subscription.current_period_end * 1000) : null,
         stripeSubscriptionId: subscription.id,
         subscriptionPlan: subscription.items?.data?.[0]?.price?.nickname || subscription.items?.data?.[0]?.price?.id
       }
@@ -1663,7 +1637,6 @@ const getPaymentHistory = async (req, res) => {
     
         return { receiptUrl, invoiceUrl };
       } catch (err) {
-        console.warn(`Stripe fetch failed: ${err.message}`);
         return { receiptUrl: null, invoiceUrl: null };
       }
     };

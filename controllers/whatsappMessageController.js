@@ -1,18 +1,19 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { stripe } = require('../lib/stripe');
 
 // Create WhatsApp message record for usage tracking
 async function createWhatsappMessageRecord(customerName, phoneNumber, messageType, userId = null) {
     try {
-        // Find customer by name and phone number
+        // Find customer by phone number only (more reliable)
         const customer = await prisma.customers.findFirst({
             where: {
-                customerFullName: customerName,
                 customerPhone: phoneNumber
             },
             select: {
                 id: true,
-                userId: true
+                userId: true,
+                customerFullName: true
             }
         });
 
@@ -56,7 +57,8 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
             }
         });
 
-
+        // Report usage to Stripe immediately after database record creation
+        await reportUsageToStripe(businessUserId);
 
         return whatsappMessage;
     } catch (error) {
@@ -123,7 +125,135 @@ async function getAllWhatsappMessages(req, res) {
     }
 }
 
+// Report usage to Stripe for metered billing
+async function reportUsageToStripe(userId) {
+    try {
+        // Get user with Stripe subscription
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { 
+                id: true, 
+                email: true, 
+                stripeSubscriptionId: true 
+            }
+        });
+
+        if (!user || !user.stripeSubscriptionId) {
+            return;
+        }
+        
+        // Get subscription from Stripe
+        const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+        
+        // Find the metered subscription item (WhatsApp messages)
+        const meteredItem = subscription.items.data.find(item => 
+            item.price?.recurring?.usage_type === 'metered'
+        );
+
+        if (!meteredItem) {
+            return;
+        }
+
+        // Report 1 usage to Stripe
+        const usageRecord = await stripe.subscriptionItems.createUsageRecord(
+            meteredItem.id,
+            {
+                quantity: 1,
+                timestamp: Math.floor(Date.now() / 1000),
+                action: 'increment' // Add 1 to existing usage
+            }
+        );
+
+    } catch (error) {
+        console.error('❌ Error reporting usage to Stripe:', error.message);
+        // Don't throw error - database record was created successfully
+    }
+}
+
+// ✅ Stripe usage reporting for metered billing (Stripe v17+)
+async function reportUsageToStripe1(req, res) {
+    try {
+      const { userId } = req.body;
+    //   console.log('🧪 userId:', userId);
+    //   console.log('🧪 stripe keys:', Object.keys(stripe));
+    //   console.log('🧪 stripe.meterEvents:', stripe.meterEvents);
+      
+  
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "userId is required in body"
+        });
+      }
+  
+      // Fetch user from DB
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          stripeSubscriptionId: true
+        }
+      });
+  
+      if (!user || !user.stripeSubscriptionId) {
+        return res.status(404).json({
+          success: false,
+          message: `No Stripe subscription found for user ${userId}`
+        });
+      }
+  
+      // Get subscription from Stripe
+      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+  
+      // Find metered item
+      const meteredItem = subscription.items.data.find(
+        item => item.price?.recurring?.usage_type === 'metered'
+      );
+  
+      if (!meteredItem) {
+        return res.status(400).json({
+          success: false,
+          message: `No metered subscription item found for user ${user.email}`
+        });
+      }
+  
+      // ✅ Correct usage record creation (Stripe v17+)
+    //   const usageRecord = await stripe.meterEvents.create({
+    //     customer: subscription.customer,
+    //     timestamp: Math.floor(Date.now() / 1000),
+    //     meter_event_type: 'whatsapp_message', // 👈 Define this in Stripe dashboard
+    //     quantity: 1
+    //   });
+    const usageRecord = await stripe.request({
+        method: 'POST',
+        path: '/v1/billing/meter_events',
+        body: {
+          customer: subscription.customer,
+          timestamp: Math.floor(Date.now() / 1000),
+          meter_event_type: 'whatsapp_message',
+          quantity: 1
+        }
+      });
+  
+      return res.json({
+        success: true,
+        message: `Usage reported for user ${user.email}`,
+        usageRecord
+      });
+  
+    } catch (error) {
+      console.error('❌ Error reporting usage to Stripe:', error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to report usage",
+        error: error.message
+      });
+    }
+  }
+
 module.exports = {
     getAllWhatsappMessages,
     createWhatsappMessageRecord,
+    reportUsageToStripe1,
 };

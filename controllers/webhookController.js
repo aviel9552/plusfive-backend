@@ -565,6 +565,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           }
         });
 
+
         if (customer) {
           const n8nService = new N8nMessageService();
           
@@ -592,8 +593,40 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             customer_status: customerStatus
           };
 
-          await n8nService.triggerReviewRequest(webhookParams);
-          console.log(`✅ N8n review request triggered for customer: ${customer.customerFullName}`);
+          const n8nResult = await n8nService.triggerReviewRequest(webhookParams);
+          console.log(`✅ N8n review request triggered successfully for customer: ${customer.customerFullName}`);
+
+          // ALSO trigger direct ReviewService for database tracking
+          try {
+            const ReviewService = require('../services/Whatsapp/ReviewService');
+            const reviewService = new ReviewService();
+            
+            if (customerStatus === 'new') {
+              await reviewService.sendNewCustomerRatingRequest(
+                customer.customerFullName,
+                customer.user?.businessName || 'Business',
+                customer.customerPhone
+              );
+            } else {
+              // For active customers, randomly choose v1 or v2
+              const useV1 = Math.random() < 0.5;
+              if (useV1) {
+                await reviewService.sendRegularCustomerRatingRequest1(
+                  customer.customerFullName,
+                  customer.user?.businessName || 'Business',
+                  customer.customerPhone
+                );
+              } else {
+                await reviewService.sendRegularCustomerRatingRequest2(
+                  customer.customerFullName,
+                  customer.user?.businessName || 'Business',
+                  customer.customerPhone
+                );
+              }
+            }
+          } catch (reviewError) {
+            console.error('❌ Error in direct ReviewService call:', reviewError);
+          }
         }
       } catch (webhookError) {
         console.error('❌ Error triggering n8n review request after payment:', webhookError);

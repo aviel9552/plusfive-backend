@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { createWhatsappMessageRecord } = require('../../controllers/whatsappMessageController');
+const { stripe } = require('../../lib/stripe');
 
 // Global conversation states (shared across all instances)
 const globalReviewConversationStates = new Map();
@@ -47,6 +48,7 @@ class ReviewService {
   // Helper function to send rating buttons
   async sendRatingButtons(phoneNumber, message) {
     try {
+      
       // Send first message with ratings 1-3
       const payload1 = {
         messaging_product: 'whatsapp',
@@ -86,6 +88,11 @@ class ReviewService {
         }
       };
 
+      const response1 = await this.client.post('/messages', payload1);
+      
+      // Small delay between messages
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       // Send second message with ratings 4-5
       const payload2 = {
         messaging_product: 'whatsapp',
@@ -118,20 +125,71 @@ class ReviewService {
         }
       };
 
-      const response1 = await this.client.post('/messages', payload1);
-      
-      // Small delay between messages
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
       const response2 = await this.client.post('/messages', payload2);
       
+      // Report usage to Stripe immediately after sending WhatsApp message
+      await this.reportUsageToStripe(phoneNumber);
+
       return {
         message1: response1.data,
         message2: response2.data
       };
     } catch (error) {
-      console.error('Error sending rating buttons:', error);
+      console.error('❌ ReviewService - Error sending rating buttons:', error.message);
       throw error;
+    }
+  }
+
+  // Report usage to Stripe for metered billing
+  async reportUsageToStripe(phoneNumber) {
+    try {
+      // Find customer by phone number
+      const customer = await this.prisma.customers.findFirst({
+        where: { customerPhone: phoneNumber },
+        include: { user: true }
+      });
+
+      if (!customer || !customer.user) {
+        console.log(`No customer found for phone: ${phoneNumber}`);
+        return;
+      }
+
+      const user = customer.user;
+
+      // Check if user has active Stripe subscription
+      if (!user.stripeSubscriptionId) {
+        console.log(`No Stripe subscription found for user: ${user.email}`);
+        return;
+      }
+
+      // Get subscription from Stripe
+      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      
+      // Find the metered subscription item (WhatsApp messages)
+      const meteredItem = subscription.items.data.find(item => 
+        item.price?.recurring?.usage_type === 'metered'
+      );
+
+      if (!meteredItem) {
+        console.log(`No metered subscription item found for user: ${user.email}`);
+        return;
+      }
+
+      // Report 1 usage to Stripe
+      await stripe.subscriptionItems.createUsageRecord(
+        meteredItem.id,
+        {
+          quantity: 1,
+          timestamp: Math.floor(Date.now() / 1000),
+          action: 'increment' // Add 1 to existing usage
+        }
+      );
+
+      console.log(`✅ Reported 1 WhatsApp message usage to Stripe for user ${user.email}`);
+
+    } catch (error) {
+      console.error('❌ Error reporting usage to Stripe:', error.message);
+      // Don't throw error - WhatsApp message was sent successfully
     }
   }
 
@@ -178,7 +236,7 @@ class ReviewService {
         whatsappResponse: result
       };
     } catch (error) {
-      console.error('Error sending new customer rating request:', error);
+      console.error('❌ ReviewService - Error sending new customer rating request:', error.message);
       throw error;
     }
   }
