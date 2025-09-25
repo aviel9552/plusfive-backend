@@ -134,10 +134,10 @@ const getConfig = () => {
       port: parseInt(process.env.MAIL_PORT) || 587,
       secure: process.env.MAIL_SECURE === 'true',
       auth: {
-        user: process.env.MAIL_EMAIL || 'dev2.webbuildinfotech@gmail.com',
-        pass: process.env.MAIL_PASSWORD || 'zlskhxekyxjmqffy'
+        user: process.env.MAIL_EMAIL,
+        pass: process.env.MAIL_PASSWORD
       },
-      from: process.env.MAIL_FROM || 'dev2.webbuildinfotech@gmail.com',
+      from: process.env.MAIL_FROM,
       fromName: process.env.MAIL_FROM_NAME || 'PlusFive'
     },
     
