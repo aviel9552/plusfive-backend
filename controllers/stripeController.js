@@ -322,6 +322,8 @@ const getSubscription = async (req, res) => {
  * Cancel subscription
  */
 const cancelSubscription = async (req, res) => {
+  console.log('🔍 Debug Cancel Subscription:', req.params);
+  console.log('🔍 Debug Cancel Subscription:', req.user);
   try {
     const { subscriptionId } = req.params;
     const userId = req.user.userId;
@@ -329,23 +331,73 @@ const cancelSubscription = async (req, res) => {
     // Verify user owns this subscription
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { stripeCustomerId: true }
+      select: { id: true, email: true, stripeCustomerId: true }
     });
 
-    if (!user?.stripeCustomerId) {
-      return errorResponse(res, 'User not found or no Stripe customer', 404);
-    }
+    // if (!user?.stripeCustomerId) {
+    //   return errorResponse(res, 'User not found or no Stripe customer', 404);
+    // }
 
     // Get subscription to verify ownership
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    if (subscription.customer !== user.stripeCustomerId) {
+    console.log('🔍 Debug Cancel Subscription:', {
+      userId: user.id,
+      userStripeCustomerId: user.stripeCustomerId,
+      subscriptionId: subscriptionId,
+      subscriptionCustomer: subscription.customer,
+      subscriptionStatus: subscription.status,
+      match: subscription.customer === user.stripeCustomerId
+    });
+    
+    // If user doesn't have stripeCustomerId, find by email
+    let customerId = user.stripeCustomerId;
+    if (!customerId || customerId !== subscription.customer) {
+      const customers = await stripe.customers.list({
+        email: user.email,
+        limit: 10  // Get all customers with this email
+      });
+      console.log('🔍 Found customers by email:', customers.data.length);
+      if (customers.data.length > 0) {
+        // Check if any customer matches the subscription
+        const matchingCustomer = customers.data.find(customer => 
+          customer.id === subscription.customer
+        );
+        
+        if (matchingCustomer) {
+          customerId = matchingCustomer.id;
+          console.log('✅ Found matching customer:', customerId);
+        } else {
+          // Use first customer as fallback
+          customerId = customers.data[0].id;
+          console.log('⚠️ Using first customer as fallback:', customerId);
+        }
+        
+        // Update user's stripeCustomerId in database
+        await prisma.user.update({
+          where: { id: userId },
+          data: { stripeCustomerId: customerId }
+        });
+        console.log('✅ Updated user stripeCustomerId:', customerId);
+      }
+    }
+
+    console.log('🔍 Debug Cancel Subscription:', {
+      userId: user.id,
+      userEmail: user.email,
+      userStripeCustomerId: user.stripeCustomerId,
+      foundCustomerId: customerId,
+      subscriptionId: subscriptionId,
+      subscriptionCustomer: subscription.customer,
+      subscriptionStatus: subscription.status,
+      match: subscription.customer === customerId
+    });
+    
+    if (!customerId || subscription.customer !== customerId) {
       return errorResponse(res, 'Subscription not found or access denied', 404);
     }
 
-    // Cancel subscription at period end
-    const canceledSubscription = await stripe.subscriptions.update(subscriptionId, {
-        cancel_at_period_end: true
-      });
+    // Cancel subscription immediately
+    const canceledSubscription = await stripe.subscriptions.cancel(subscriptionId);
 
     // Update user in database
     await prisma.user.update({
@@ -421,16 +473,68 @@ const reactivateSubscription = async (req, res) => {
     // Verify user owns this subscription
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { stripeCustomerId: true }
+      select: { id: true, email: true, stripeCustomerId: true }
     });
 
-    if (!user?.stripeCustomerId) {
-      return errorResponse(res, 'User not found or no Stripe customer', 404);
-    }
+    // if (!user?.stripeCustomerId) {
+    //   return errorResponse(res, 'User not found or no Stripe customer', 404);
+    // }
 
     // Get subscription to verify ownership
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    if (subscription.customer !== user.stripeCustomerId) {
+    console.log('🔍 Debug Cancel Subscription:', {
+      userId: user.id,
+      userStripeCustomerId: user.stripeCustomerId,
+      subscriptionId: subscriptionId,
+      subscriptionCustomer: subscription.customer,
+      subscriptionStatus: subscription.status,
+      match: subscription.customer === user.stripeCustomerId
+    });
+    
+    // If user doesn't have stripeCustomerId, find by email
+    let customerId = user.stripeCustomerId;
+    if (!customerId || customerId !== subscription.customer) {
+      const customers = await stripe.customers.list({
+        email: user.email,
+        limit: 10  // Get all customers with this email
+      });
+      console.log('🔍 Found customers by email:', customers.data.length);
+      if (customers.data.length > 0) {
+        // Check if any customer matches the subscription
+        const matchingCustomer = customers.data.find(customer => 
+          customer.id === subscription.customer
+        );
+        
+        if (matchingCustomer) {
+          customerId = matchingCustomer.id;
+          console.log('✅ Found matching customer:', customerId);
+        } else {
+          // Use first customer as fallback
+          customerId = customers.data[0].id;
+          console.log('⚠️ Using first customer as fallback:', customerId);
+        }
+        
+        // Update user's stripeCustomerId in database
+        await prisma.user.update({
+          where: { id: userId },
+          data: { stripeCustomerId: customerId }
+        });
+        console.log('✅ Updated user stripeCustomerId:', customerId);
+      }
+    }
+
+    console.log('🔍 Debug Cancel Subscription:', {
+      userId: user.id,
+      userEmail: user.email,
+      userStripeCustomerId: user.stripeCustomerId,
+      foundCustomerId: customerId,
+      subscriptionId: subscriptionId,
+      subscriptionCustomer: subscription.customer,
+      subscriptionStatus: subscription.status,
+      match: subscription.customer === customerId
+    });
+    
+    if (!customerId || subscription.customer !== customerId) {
       return errorResponse(res, 'Subscription not found or access denied', 404);
     }
 

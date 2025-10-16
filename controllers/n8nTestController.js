@@ -9,10 +9,12 @@ class N8nTestController {
 
   // Test at-risk message trigger
   async testAtRiskTrigger(req, res) {
+    
+console.log('testAtRiskTrigger');
     try {
       const {
         customerName = 'Test Customer',
-        customerPhone = '972524684119',
+        customerPhone = '972523042776',
         businessName = 'Test Business',
         businessType = 'barbershop',
         customerService = 'Test Service',
@@ -132,11 +134,11 @@ class N8nTestController {
     try {
       const {
         customerName = 'Test Customer',
-        customerPhone = '972524684119',
+        customerPhone = '+972524684119',
         businessName = 'Test Business',
         businessType = 'barbershop',
         customerService = 'Test Service',
-        businessOwnerPhone = '972523042776',
+        businessOwnerPhone = '+972524684119',
         lastVisitDate = new Date().toISOString().split('T')[0],
         whatsappPhone,
         futureAppointment = '2024-02-15',

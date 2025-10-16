@@ -204,6 +204,7 @@ const handleAppointmentWebhook = async (req, res) => {
           firstName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ')[0] : null,
           lastName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ').slice(1).join(' ') : null,
           customerPhone: formattedPhone,
+          email: webhookData.CustomerEmail || null,
           appointmentCount: webhookData.AppointmentCount || 0,
           customerFullName: webhookData.CustomerFullName || null,
           selectedServices: webhookData.SelectedServices || null,
