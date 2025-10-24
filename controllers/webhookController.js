@@ -153,7 +153,7 @@ const handleAppointmentWebhook = async (req, res) => {
     });
 
     console.log('webhookLog', webhookLog);
-    
+
     // Check if customer exists in Customers table
     let existingCustomer = null;
 
@@ -448,7 +448,7 @@ const handleAppointmentWebhook = async (req, res) => {
 const handleRatingWebhook = async (req, res) => {
   try {
     const webhookData = req.body;
-
+    console.log('calmark webhookData', webhookData);
     // 1. Store in WebhookPaymentLog table (raw log data)
     const ratingLog = await prisma.webhookPaymentLog.create({
       data: {
@@ -457,7 +457,7 @@ const handleRatingWebhook = async (req, res) => {
         createdDate: new Date()
       }
     });
-
+    console.log('ratingLog', ratingLog);
     // Extract actual data
     const actualData = webhookData;
 
@@ -469,6 +469,7 @@ const handleRatingWebhook = async (req, res) => {
     let userId = null;
     let customerId = null;
 
+    console.log('actualData', actualData);
     // First try to find by CustomerFullName (exact match)
     if (actualData.CustomerFullName) {
       const existingCustomerByName = await prisma.customers.findFirst({
@@ -492,6 +493,7 @@ const handleRatingWebhook = async (req, res) => {
 
     // If not found by name, try by BusinessId AND EmployeeId
     if (!customerId && actualData.BusinessId && actualData.EmployeeId) {
+      console.log('Inside', actualData.BusinessId, actualData.EmployeeId);
       const existingCustomer = await prisma.customers.findFirst({
         where: {
           AND: [
@@ -506,7 +508,7 @@ const handleRatingWebhook = async (req, res) => {
           userId: true
         }
       });
-
+      console.log('existingCustomer', existingCustomer);
       if (existingCustomer) {
         customerId = existingCustomer.id;
         userId = existingCustomer.userId;
@@ -516,6 +518,7 @@ const handleRatingWebhook = async (req, res) => {
     // 3. Store rating data in Review table
     let reviewId = null;
     if (customerId && actualData.Rating) {
+      console.log('Inside', customerId, actualData.Rating);
       const review = await prisma.review.create({
         data: {
           customerId: customerId,
