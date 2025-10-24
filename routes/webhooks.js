@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const {
   handleAppointmentWebhook,
+  handleRatingWebhook,
   handlePaymentCheckoutWebhook,
   getAllWebhookLogs,
   getWebhookLogById,
@@ -13,6 +14,7 @@ const {
 
 // Webhook endpoints (no authentication required)
 router.post('/appointment', handleAppointmentWebhook);
+router.post('/rating', handleRatingWebhook);
 router.post('/payment-checkout', handlePaymentCheckoutWebhook);
 
 // WhatsApp webhook endpoints

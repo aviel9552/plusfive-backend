@@ -362,6 +362,10 @@ model Appointment {
   userId          String?  // Reference to User table (business owner)
   user            User?    @relation(fields: [userId], references: [id])
   
+  // Related payments and reviews
+  payments        PaymentWebhook[] // Payments for this appointment
+  reviews         Review[]         // Reviews for this appointment
+  
   // Timestamps
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -450,6 +454,10 @@ model PaymentWebhook {
   userId            String?  // Reference to User table (BusinessId)
   user              User?    @relation(fields: [userId], references: [id])
   
+  // Appointment tracking
+  appointmentId     String?  // Reference to Appointment table
+  appointment       Appointment? @relation(fields: [appointmentId], references: [id])
+  
   // Additional fields
   paymentDate       DateTime @default(now())
   status            String   @default("success") // success, failed, pending
@@ -504,6 +512,10 @@ model Review {
   customer    Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
   userId      String   // Reference to User table (business owner)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Appointment tracking
+  appointmentId     String?  // Reference to Appointment table
+  appointment       Appointment? @relation(fields: [appointmentId], references: [id])
   
   // WhatsApp message tracking (optional)
   whatsappMessageId String? // WhatsApp message ID if sent via WhatsApp

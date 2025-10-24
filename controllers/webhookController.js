@@ -438,6 +438,142 @@ const handleAppointmentWebhook = async (req, res) => {
   }
 };
 
+// Handle rating webhook - store customer rating data
+const handleRatingWebhook = async (req, res) => {
+  try {
+    const webhookData = req.body;
+
+    // 1. Store in WebhookPaymentLog table (raw log data)
+    const ratingLog = await prisma.webhookPaymentLog.create({
+      data: {
+        data: webhookData,
+        type: 'rating_webhook',
+        createdDate: new Date()
+      }
+    });
+
+    // Extract actual data
+    const actualData = webhookData;
+
+    if (!actualData) {
+      return errorResponse(res, 'Invalid webhook data structure', 400);
+    }
+
+    // 2. Find customer by CustomerFullName or BusinessId + EmployeeId
+    let userId = null;
+    let customerId = null;
+
+    // First try to find by CustomerFullName (exact match)
+    if (actualData.CustomerFullName) {
+      const existingCustomerByName = await prisma.customers.findFirst({
+        where: {
+          customerFullName: actualData.CustomerFullName
+        },
+        select: {
+          id: true,
+          businessId: true,
+          employeeId: true,
+          userId: true,
+          customerFullName: true
+        }
+      });
+
+      if (existingCustomerByName) {
+        customerId = existingCustomerByName.id;
+        userId = existingCustomerByName.userId;
+      }
+    }
+
+    // If not found by name, try by BusinessId AND EmployeeId
+    if (!customerId && actualData.BusinessId && actualData.EmployeeId) {
+      const existingCustomer = await prisma.customers.findFirst({
+        where: {
+          AND: [
+            { businessId: parseInt(actualData.BusinessId) },
+            { employeeId: parseInt(actualData.EmployeeId) }
+          ]
+        },
+        select: {
+          id: true,
+          businessId: true,
+          employeeId: true,
+          userId: true
+        }
+      });
+
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+        userId = existingCustomer.userId;
+      }
+    }
+
+    // 3. Store rating data in Review table
+    let reviewId = null;
+    if (customerId && actualData.Rating) {
+      const review = await prisma.review.create({
+        data: {
+          customerId: customerId,
+          userId: userId,
+          rating: parseInt(actualData.Rating) || 0,
+          message: actualData.Comment || actualData.Feedback || '',
+          status: 'received', // received, processed, responded
+          whatsappMessageId: null, // Optional WhatsApp message ID
+          messageStatus: 'sent' // sent, delivered, read, failed
+        }
+      });
+      reviewId = review.id;
+
+      // 4. Update customer's average rating
+      if (userId) {
+        const customerReviews = await prisma.review.findMany({
+          where: {
+            customerId: customerId,
+            userId: userId,
+            status: 'received' // Use correct status field
+          },
+          select: {
+            rating: true
+          }
+        });
+
+        if (customerReviews.length > 0) {
+          const averageRating = customerReviews.reduce((sum, review) => sum + review.rating, 0) / customerReviews.length;
+          
+          // Update customer's review statistics (if reviewStatistics field exists)
+          try {
+            await prisma.customers.update({
+              where: { id: customerId },
+              data: {
+                reviewStatistics: {
+                  averageRating: parseFloat(averageRating.toFixed(1)),
+                  totalReviews: customerReviews.length,
+                  lastReviewDate: new Date()
+                }
+              }
+            });
+          } catch (updateError) {
+            console.log('Review statistics update skipped (field may not exist)');
+          }
+        }
+      }
+    }
+
+    return successResponse(res, {
+      webhookId: ratingLog.id,
+      reviewId: reviewId,
+      userId: userId,
+      customerId: customerId,
+      message: 'Rating webhook received successfully',
+      data: actualData,
+      ratingStored: reviewId ? true : false
+    }, 'Rating webhook processed successfully', 201);
+
+  } catch (error) {
+    console.error('Rating webhook error:', error);
+    return errorResponse(res, 'Failed to process rating webhook', 500);
+  }
+};
+
 // Handle payment checkout webhook - store data in both WebhookPaymentLog and PaymentWebhook tables
 const handlePaymentCheckoutWebhook = async (req, res) => {
   try {
@@ -1006,6 +1142,7 @@ const verifyWhatsAppWebhook = async (req, res) => {
 
 module.exports = {
   handleAppointmentWebhook,
+  handleRatingWebhook,
   handlePaymentCheckoutWebhook,
   getAllWebhookLogs,
   getWebhookLogById,
