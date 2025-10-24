@@ -120,10 +120,12 @@ const formatIsraeliPhone = (phoneNumber) => {
 const handleAppointmentWebhook = async (req, res) => {
   try {
     const webhookData = req.body;
+    console.log('calmark webhookData', webhookData);
 
     // Check if business exists in User table FIRST - before ANY database operations
     let existingUser = null;
     if (webhookData.BusinessName) {
+      console.log('Inside', webhookData.BusinessName);
       existingUser = await prisma.user.findFirst({
         where: {
           businessName: webhookData.BusinessName
@@ -135,6 +137,7 @@ const handleAppointmentWebhook = async (req, res) => {
       });
     }
 
+  console.log('existingUser', existingUser);
     // If business doesn't exist, return error immediately - NO data should be stored
     if (!existingUser) {
       return errorResponse(res, `Business '${webhookData.BusinessName}' not found. Please create user first.`, 400);
@@ -148,6 +151,9 @@ const handleAppointmentWebhook = async (req, res) => {
         status: 'pending'
       }
     });
+
+    console.log('webhookLog', webhookLog);
+    
     // Check if customer exists in Customers table
     let existingCustomer = null;
 
