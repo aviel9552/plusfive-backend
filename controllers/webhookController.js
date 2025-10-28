@@ -879,6 +879,453 @@ const updateWebhookLogStatus = async (req, res) => {
   }
 };
 
+// Get all payment webhooks
+const getAllPaymentWebhooks = async (req, res) => {
+  try {
+    const { userId, customerId, status, page = 1, limit = 50 } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = {};
+    if (userId) where.userId = userId;
+    if (customerId) where.customerId = customerId;
+    if (status) where.status = status;
+
+    // Get payment webhooks with pagination
+    const paymentWebhooks = await prisma.paymentWebhook.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get total count
+    const totalCount = await prisma.paymentWebhook.count({ where });
+
+    return successResponse(res, {
+      paymentWebhooks,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Payment webhooks retrieved successfully');
+
+  } catch (error) {
+    console.error('Get payment webhooks error:', error);
+    return errorResponse(res, 'Failed to retrieve payment webhooks', 500);
+  }
+};
+
+// Get payment webhook by ID
+const getPaymentWebhookById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const paymentWebhook = await prisma.paymentWebhook.findUnique({
+      where: { id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true,
+            duration: true,
+            selectedServices: true
+          }
+        }
+      }
+    });
+
+    if (!paymentWebhook) {
+      return errorResponse(res, 'Payment webhook not found', 404);
+    }
+
+    return successResponse(res, paymentWebhook, 'Payment webhook retrieved successfully');
+
+  } catch (error) {
+    console.error('Get payment webhook by ID error:', error);
+    return errorResponse(res, 'Failed to retrieve payment webhook', 500);
+  }
+};
+
+// Get payment webhooks by customer ID
+const getPaymentWebhooksByCustomerId = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { page = 1, limit = 50, status } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = { customerId };
+    if (status) where.status = status;
+
+    // Get payment webhooks for this customer with pagination
+    const paymentWebhooks = await prisma.paymentWebhook.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true,
+            duration: true,
+            selectedServices: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get customer details
+    const customer = await prisma.customers.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        customerFullName: true,
+        customerPhone: true,
+        selectedServices: true,
+        email: true,
+        createdAt: true,
+        appointmentCount: true
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Get total count
+    const totalCount = await prisma.paymentWebhook.count({ where });
+
+    // Calculate total revenue for this customer
+    const totalRevenue = await prisma.paymentWebhook.aggregate({
+      where: { customerId },
+      _sum: { total: true },
+      _count: { total: true }
+    });
+
+    return successResponse(res, {
+      customer,
+      paymentWebhooks,
+      summary: {
+        totalPayments: totalRevenue._count.total || 0,
+        totalRevenue: totalRevenue._sum.total || 0
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Payment webhooks retrieved successfully by customer ID');
+
+  } catch (error) {
+    console.error('Get payment webhooks by customer ID error:', error);
+    return errorResponse(res, 'Failed to retrieve payment webhooks', 500);
+  }
+};
+
+// Get all appointments
+const getAllAppointments = async (req, res) => {
+  try {
+    const { userId, customerId, employeeId, page = 1, limit = 50 } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = {};
+    if (userId) where.userId = userId;
+    if (customerId) where.customerId = customerId;
+    if (employeeId) where.employeeId = parseInt(employeeId);
+
+    // Get appointments with pagination
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            status: true,
+            paymentDate: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get total count
+    const totalCount = await prisma.appointment.count({ where });
+
+    return successResponse(res, {
+      appointments,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Appointments retrieved successfully');
+
+  } catch (error) {
+    console.error('Get appointments error:', error);
+    return errorResponse(res, 'Failed to retrieve appointments', 500);
+  }
+};
+
+// Get appointment by ID
+const getAppointmentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true,
+            appointmentCount: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            totalWithoutVAT: true,
+            totalVAT: true,
+            status: true,
+            revenuePaymentStatus: true,
+            paymentDate: true,
+            createdAt: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    return successResponse(res, appointment, 'Appointment retrieved successfully');
+
+  } catch (error) {
+    console.error('Get appointment by ID error:', error);
+    return errorResponse(res, 'Failed to retrieve appointment', 500);
+  }
+};
+
+// Get appointments by customer ID
+const getAppointmentsByCustomerId = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { page = 1, limit = 50, userId } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = { customerId };
+    if (userId) where.userId = userId;
+
+    // Get appointments for this customer with pagination
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            status: true,
+            revenuePaymentStatus: true,
+            paymentDate: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get customer details
+    const customer = await prisma.customers.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        customerFullName: true,
+        customerPhone: true,
+        selectedServices: true,
+        email: true,
+        createdAt: true,
+        appointmentCount: true
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Get total count
+    const totalCount = await prisma.appointment.count({ where });
+
+    // Calculate statistics
+    const totalAppointments = totalCount;
+    const appointmentsWithPayments = await prisma.appointment.count({
+      where: {
+        customerId,
+        payments: {
+          some: {}
+        }
+      }
+    });
+
+    return successResponse(res, {
+      customer,
+      appointments,
+      summary: {
+        totalAppointments,
+        appointmentsWithPayments,
+        appointmentsWithoutPayments: totalAppointments - appointmentsWithPayments
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Appointments retrieved successfully by customer ID');
+
+  } catch (error) {
+    console.error('Get appointments by customer ID error:', error);
+    return errorResponse(res, 'Failed to retrieve appointments', 500);
+  }
+};
+
 
 
 // Handle incoming WhatsApp messages from Meta/Facebook
@@ -1157,5 +1604,11 @@ module.exports = {
   getWebhookLogById,
   updateWebhookLogStatus,
   handleWhatsAppIncomingMessage,
-  verifyWhatsAppWebhook
+  verifyWhatsAppWebhook,
+  getAllPaymentWebhooks,
+  getPaymentWebhookById,
+  getPaymentWebhooksByCustomerId,
+  getAllAppointments,
+  getAppointmentById,
+  getAppointmentsByCustomerId
 };

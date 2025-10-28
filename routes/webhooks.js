@@ -9,7 +9,13 @@ const {
   getWebhookLogById,
   updateWebhookLogStatus,
   handleWhatsAppIncomingMessage,
-  verifyWhatsAppWebhook
+  verifyWhatsAppWebhook,
+  getAllPaymentWebhooks,
+  getPaymentWebhookById,
+  getPaymentWebhooksByCustomerId,
+  getAllAppointments,
+  getAppointmentById,
+  getAppointmentsByCustomerId
 } = require('../controllers/webhookController');
 
 // Webhook endpoints (no authentication required)
@@ -25,5 +31,15 @@ router.post('/whatsapp', handleWhatsAppIncomingMessage);  // For incoming messag
 router.get('/logs', authenticateToken, getAllWebhookLogs);
 router.get('/logs/:id', authenticateToken, getWebhookLogById);
 router.patch('/logs/:id/status', authenticateToken, updateWebhookLogStatus);
+
+// Payment webhooks endpoints (authentication required)
+router.get('/payment-webhooks', authenticateToken, getAllPaymentWebhooks);
+router.get('/payment-webhooks/:id', authenticateToken, getPaymentWebhookById);
+router.get('/payment-webhooks/customer/:customerId', authenticateToken, getPaymentWebhooksByCustomerId);
+
+// Appointment endpoints (authentication required)
+router.get('/appointments', authenticateToken, getAllAppointments);
+router.get('/appointments/:id', authenticateToken, getAppointmentById);
+router.get('/appointments/customer/:customerId', authenticateToken, getAppointmentsByCustomerId);
 
 module.exports = router;

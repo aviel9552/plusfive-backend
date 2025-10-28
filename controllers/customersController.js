@@ -450,14 +450,14 @@ const getCustomerById = async (req, res) => {
       }
     });
 
-    // Get all appointments for this customer
+    // Get ALL appointments for this customer
     const appointments = await prisma.appointment.findMany({
       where: {
         customerId: customer.id,
         userId: customer.userId // Match with business owner
       },
-      orderBy: { createdAt: 'desc' },
-      take: 10 // Latest 10 appointments
+      orderBy: { createdAt: 'desc' }
+      // Removed take: 10 to get all appointments
     });
 
     // Get CustomerUser status (latest active status)
@@ -515,7 +515,7 @@ const getCustomerById = async (req, res) => {
     const lastVisit = await prisma.appointment.findFirst({
       where: {
         customerId: customer.id,
-        userId: customer.userId // Match with business owner
+        // userId: customer.userId // Match with business owner
       },
       orderBy: { updatedAt: 'desc' }, // Latest updated appointment
       select: {
@@ -526,14 +526,14 @@ const getCustomerById = async (req, res) => {
       }
     });
 
-    // Get payment webhooks for this customer
+    // Get ALL payment webhooks for this customer
     const paymentHistory = await prisma.paymentWebhook.findMany({
       where: {
         customerId: customer.id,
-        userId: customer.userId
+        // userId: customer.userId
       },
-      orderBy: { createdAt: 'desc' },
-      take: 10 // Latest 10 payments
+      orderBy: { createdAt: 'desc' }
+      // Removed take: 10 to get all records
     });
 
     // Calculate total spent
