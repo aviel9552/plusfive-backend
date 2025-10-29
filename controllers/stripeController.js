@@ -399,12 +399,15 @@ const cancelSubscription = async (req, res) => {
     // Cancel subscription immediately
     const canceledSubscription = await stripe.subscriptions.cancel(subscriptionId);
 
-    // Update user in database
+    // Update user in database - Clear subscription fields on cancel
     await prisma.user.update({
       where: { id: userId },
       data: {
         subscriptionStatus: 'canceled',
-        subscriptionExpirationDate: new Date(canceledSubscription.current_period_end * 1000)
+        subscriptionPlan: null,
+        subscriptionStartDate: null,
+        subscriptionExpirationDate: null,
+        stripeSubscriptionId: null
       }
     });
 
