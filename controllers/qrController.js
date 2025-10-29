@@ -37,9 +37,32 @@ const getAllQRCodes = async (req, res) => {
       }
     });
     
-    // Generate QR code images for codes that don't have them
-    const qrCodesWithImages = await Promise.all(
+    // Get actual scan and share counts from qr_code_scans table
+    const qrCodesWithActualCounts = await Promise.all(
       qrCodes.map(async (qrCode) => {
+        // Count actual scans (where scanData is not null and sharedata is null)
+        const actualScanCount = await prisma.qRCodeScan.count({
+          where: {
+            qrCodeId: qrCode.id,
+            AND: [
+              { scanData: { not: null } },
+              { sharedata: null }
+            ]
+          }
+        });
+        
+        // Count actual shares (where sharedata is not null and scanData is null)
+        const actualShareCount = await prisma.qRCodeScan.count({
+          where: {
+            qrCodeId: qrCode.id,
+            AND: [
+              { sharedata: { not: null } },
+              { scanData: null }
+            ]
+          }
+        });
+        
+        // Generate QR code images for codes that don't have them
         if (!qrCode.qrCodeImage) {
           try {
             const qrCodeImage = await QRCode.toDataURL(qrCode.qrData, {
@@ -59,22 +82,38 @@ const getAllQRCodes = async (req, res) => {
               data: { qrCodeImage: qrCodeImage }
             });
             
-            return { ...qrCode, qrCodeImage };
+            return { 
+              ...qrCode, 
+              qrCodeImage,
+              scanCount: actualScanCount, // Override with actual count from database
+              shareCount: actualShareCount // Override with actual count from database
+            };
           } catch (error) {
             console.error(`Error generating QR code image for ${qrCode.id}:`, error);
-            return qrCode;
+            return {
+              ...qrCode,
+              scanCount: actualScanCount, // Override with actual count from database
+              shareCount: actualShareCount // Override with actual count from database
+            };
           }
         }
-        return qrCode;
+        
+        return {
+          ...qrCode,
+          scanCount: actualScanCount, // Override with actual count from database
+          shareCount: actualShareCount // Override with actual count from database
+        };
       })
     );
     
-    return successResponse(res, {
-      qrCodes: qrCodesWithImages,
-      total: qrCodesWithImages.length,
+    const responseData = {
+      qrCodes: qrCodesWithActualCounts,
+      total: qrCodesWithActualCounts.length,
       userRole: req.user.role,
       isAdmin: req.user.role === 'admin'
-    });
+    };
+    
+    return successResponse(res, responseData);
     
   } catch (error) {
     console.error('Get QR codes error:', error);
@@ -596,9 +635,32 @@ const getUserOwnQRCodes = async (req, res) => {
       }
     });
     
-    // Generate QR code images for codes that don't have them
-    const qrCodesWithImages = await Promise.all(
+    // Get actual scan and share counts from qr_code_scans table
+    const qrCodesWithActualCounts = await Promise.all(
       qrCodes.map(async (qrCode) => {
+        // Count actual scans (where scanData is not null and sharedata is null)
+        const actualScanCount = await prisma.qRCodeScan.count({
+          where: {
+            qrCodeId: qrCode.id,
+            AND: [
+              { scanData: { not: null } },
+              { sharedata: null }
+            ]
+          }
+        });
+        
+        // Count actual shares (where sharedata is not null and scanData is null)
+        const actualShareCount = await prisma.qRCodeScan.count({
+          where: {
+            qrCodeId: qrCode.id,
+            AND: [
+              { sharedata: { not: null } },
+              { scanData: null }
+            ]
+          }
+        });
+        
+        // Generate QR code images for codes that don't have them
         if (!qrCode.qrCodeImage) {
           try {
             const qrCodeImage = await QRCode.toDataURL(qrCode.qrData, {
@@ -618,21 +680,37 @@ const getUserOwnQRCodes = async (req, res) => {
               data: { qrCodeImage: qrCodeImage }
             });
             
-            return { ...qrCode, qrCodeImage };
+            return { 
+              ...qrCode, 
+              qrCodeImage,
+              scanCount: actualScanCount, // Override with actual count from database
+              shareCount: actualShareCount // Override with actual count from database
+            };
           } catch (error) {
             console.error(`Error generating QR code image for ${qrCode.id}:`, error);
-            return qrCode;
+            return {
+              ...qrCode,
+              scanCount: actualScanCount, // Override with actual count from database
+              shareCount: actualShareCount // Override with actual count from database
+            };
           }
         }
-        return qrCode;
+        
+        return {
+          ...qrCode,
+          scanCount: actualScanCount, // Override with actual count from database
+          shareCount: actualShareCount // Override with actual count from database
+        };
       })
     );
     
-    return successResponse(res, {
-      qrCodes: qrCodesWithImages,
-      total: qrCodesWithImages.length,
+    const responseData = {
+      qrCodes: qrCodesWithActualCounts,
+      total: qrCodesWithActualCounts.length,
       message: 'User\'s own QR codes retrieved successfully'
-    });
+    };
+    
+    return successResponse(res, responseData);
     
   } catch (error) {
     console.error('Get user own QR codes error:', error);
