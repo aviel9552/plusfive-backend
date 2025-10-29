@@ -448,16 +448,6 @@ const handleAppointmentWebhook = async (req, res) => {
 const handleRatingWebhook = async (req, res) => {
   try {
     const webhookData = req.body;
-    console.log('calmark webhookData', webhookData);
-    // 1. Store in WebhookPaymentLog table (raw log data)
-    const ratingLog = await prisma.webhookPaymentLog.create({
-      data: {
-        data: webhookData,
-        type: 'rating_webhook',
-        createdDate: new Date()
-      }
-    });
-    console.log('ratingLog', ratingLog);
     // Extract actual data
     const actualData = webhookData;
 
@@ -465,11 +455,15 @@ const handleRatingWebhook = async (req, res) => {
       return errorResponse(res, 'Invalid webhook data structure', 400);
     }
 
+    // Validate RatingId before creating log (paymentId is optional fallback)
+    if (!actualData.RatingId && !actualData.paymentId) {
+      return errorResponse(res, 'Rating ID or Payment ID is required', 400);
+    }
+
     // 2. Find customer by CustomerFullName or BusinessId + EmployeeId
     let userId = null;
     let customerId = null;
 
-    console.log('actualData', actualData);
     // First try to find by CustomerFullName (exact match)
     if (actualData.CustomerFullName) {
       const existingCustomerByName = await prisma.customers.findFirst({
@@ -515,27 +509,61 @@ const handleRatingWebhook = async (req, res) => {
       }
     }
 
-    // 3. Validate rating ID first
-    if (!actualData.RatingId) {
-      return errorResponse(res, 'Rating ID is required', 400);
+    // 3. Find review by RatingId OR paymentId (payment webhook ID)
+    let existingReview = null;
+    let reviewId = null;
+
+    // Priority 1: If RatingId is provided, use it
+    if (actualData.RatingId) {
+      existingReview = await prisma.review.findUnique({
+        where: { id: actualData.RatingId },
+        select: { id: true, customerId: true, userId: true }
+      });
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
     }
 
-    // Check if rating ID exists in Review table
-    const existingReview = await prisma.review.findUnique({
-      where: { id: actualData.RatingId },
-      select: { id: true, customerId: true, userId: true }
-    });
+    // Priority 2: If paymentId (payment webhook ID) is provided and RatingId not found, find review by paymentWebhookId
+    if (!existingReview && actualData.paymentId) {
+      existingReview = await prisma.review.findFirst({
+        where: { paymentWebhookId: actualData.paymentId },
+        select: { id: true, customerId: true, userId: true }
+      });
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
+    }
 
+    // Validate that review was found
     if (!existingReview) {
-      return errorResponse(res, 'Invalid rating ID or rating not found', 404);
+      const errorMsg = actualData.RatingId || actualData.paymentId
+        ? 'Invalid Rating ID or Payment ID - review not found'
+        : 'Either Rating ID or Payment ID is required';
+      return errorResponse(res, errorMsg, 404);
     }
 
     // 4. Store rating data in Review table (UPDATE existing review)
-    let reviewId = existingReview.id;
-    if (customerId && actualData.Rating) {
+    if (actualData.Rating && reviewId) {
       console.log('Inside', customerId, actualData.Rating, 'Updating review ID:', reviewId);
       const review = await prisma.review.update({
-        where: { id: actualData.RatingId },
+        where: { id: reviewId }, // Use reviewId (already found from RatingId or paymentId)
         data: {
           rating: parseInt(actualData.Rating) || 0,
           message: actualData.Comment || actualData.Feedback || '',
@@ -547,7 +575,7 @@ const handleRatingWebhook = async (req, res) => {
       reviewId = review.id;
 
       // 4. Update customer's average rating
-      if (userId) {
+      if (userId && customerId) {
         const customerReviews = await prisma.review.findMany({
           where: {
             customerId: customerId,
@@ -582,7 +610,6 @@ const handleRatingWebhook = async (req, res) => {
     }
 
     return successResponse(res, {
-      webhookId: ratingLog.id,
       reviewId: reviewId,
       userId: userId,
       customerId: customerId,
