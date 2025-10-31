@@ -455,9 +455,9 @@ const handleRatingWebhook = async (req, res) => {
       return errorResponse(res, 'Invalid webhook data structure', 400);
     }
 
-    // Validate RatingId before creating log (paymentId is optional fallback)
-    if (!actualData.RatingId && !actualData.paymentId) {
-      return errorResponse(res, 'Rating ID or Payment ID is required', 400);
+    // Validate RatingId/review_id before creating log (paymentId is optional fallback)
+    if (!actualData.RatingId && !actualData.review_id && !actualData.paymentId) {
+      return errorResponse(res, 'Rating ID, Review ID or Payment ID is required', 400);
     }
 
     // 2. Find customer by CustomerFullName or BusinessId + EmployeeId
@@ -509,7 +509,7 @@ const handleRatingWebhook = async (req, res) => {
       }
     }
 
-    // 3. Find review by RatingId OR paymentId (payment webhook ID)
+    // 3. Find review by RatingId, review_id OR paymentId (payment webhook ID)
     let existingReview = null;
     let reviewId = null;
 
@@ -532,7 +532,26 @@ const handleRatingWebhook = async (req, res) => {
       }
     }
 
-    // Priority 2: If paymentId (payment webhook ID) is provided and RatingId not found, find review by paymentWebhookId
+    // Priority 2: If review_id is provided and RatingId not found, use it
+    if (!existingReview && actualData.review_id) {
+      existingReview = await prisma.review.findUnique({
+        where: { id: actualData.review_id },
+        select: { id: true, customerId: true, userId: true }
+      });
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
+    }
+
+    // Priority 3: If paymentId (payment webhook ID) is provided and RatingId/review_id not found, find review by paymentWebhookId
     if (!existingReview && actualData.paymentId) {
       existingReview = await prisma.review.findFirst({
         where: { paymentWebhookId: actualData.paymentId },
@@ -553,9 +572,9 @@ const handleRatingWebhook = async (req, res) => {
 
     // Validate that review was found
     if (!existingReview) {
-      const errorMsg = actualData.RatingId || actualData.paymentId
-        ? 'Invalid Rating ID or Payment ID - review not found'
-        : 'Either Rating ID or Payment ID is required';
+      const errorMsg = actualData.RatingId || actualData.review_id || actualData.paymentId
+        ? 'Invalid Rating ID, Review ID or Payment ID - review not found'
+        : 'Either Rating ID, Review ID or Payment ID is required';
       return errorResponse(res, errorMsg, 404);
     }
 
@@ -573,49 +592,20 @@ const handleRatingWebhook = async (req, res) => {
         }
       });
       reviewId = review.id;
-
-      // 4. Update customer's average rating
-      if (userId && customerId) {
-        const customerReviews = await prisma.review.findMany({
-          where: {
-            customerId: customerId,
-            userId: userId,
-            status: 'received' // Use correct status field
-          },
-          select: {
-            rating: true
-          }
-        });
-
-        if (customerReviews.length > 0) {
-          const averageRating = customerReviews.reduce((sum, review) => sum + review.rating, 0) / customerReviews.length;
-          
-          // Update customer's review statistics (if reviewStatistics field exists)
-          try {
-            await prisma.customers.update({
-              where: { id: customerId },
-              data: {
-                reviewStatistics: {
-                  averageRating: parseFloat(averageRating.toFixed(1)),
-                  totalReviews: customerReviews.length,
-                  lastReviewDate: new Date()
-                }
-              }
-            });
-          } catch (updateError) {
-            console.log('Review statistics update skipped (field may not exist)');
-          }
-        }
-      }
     }
 
     return successResponse(res, {
-      reviewId: reviewId,
-      userId: userId,
+      CustomerFullName: actualData.CustomerFullName || null,
+      BusinessId: actualData.BusinessId ? parseInt(actualData.BusinessId) : null,
+      EmployeeId: actualData.EmployeeId ? parseInt(actualData.EmployeeId) : null,
+      Rating: actualData.Rating ? parseInt(actualData.Rating) : null,
+      Comment: actualData.Comment || null,
+      Feedback: actualData.Feedback || null,
+      review_id: reviewId,
       customerId: customerId,
-      message: 'Rating webhook received successfully',
-      data: actualData,
-      ratingStored: reviewId ? true : false
+      userId: userId,
+      ratingStored: reviewId ? true : false,
+      message: 'Rating webhook processed successfully'
     }, 'Rating webhook processed successfully', 201);
 
   } catch (error) {
