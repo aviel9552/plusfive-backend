@@ -95,7 +95,9 @@ class N8nMessageService {
       business_owner_phone: params.business_owner_phone,
       last_visit_date: params.last_visit_date,
       whatsapp_phone: params.whatsapp_phone || params.customer_phone,
-      trigger_type: 'review_request'
+      trigger_type: 'review_request',
+      review_id: params.review_id || null, // ✅ Include review_id in webhook
+      payment_webhook_id: params.payment_webhook_id || null // ✅ Include payment_webhook_id in webhook
     };
 
     return await this.sendWebhookTrigger(webhookData);
