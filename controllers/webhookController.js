@@ -770,25 +770,17 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             customer_status: customerStatus
           };
 
-          // Will update webhookParams with review_id after creating review record
-          // First send without review_id (n8n trigger)
-          const n8nResult = await n8nService.triggerReviewRequest(webhookParams);
-          console.log(`✅ N8n review request triggered successfully for customer: ${customer.customerFullName}`);
-
-          // ALSO trigger direct ReviewService for database tracking
+          // Create review record first, then trigger N8N with review_id
+          // Note: WhatsApp messaging is handled by N8N (360dialog removed)
           try {
-            const ReviewService = require('../services/Whatsapp/ReviewService');
-            const reviewService = new ReviewService();
-            
-            // Create review record in database BEFORE sending WhatsApp message
             const reviewRecord = await prisma.review.create({
               data: {
                 customerId: customerId,
                 userId: userId,
                 rating: 0, // Placeholder - will be updated when customer responds
-                message: `Rating request sent via WhatsApp after payment`,
+                message: `Rating request sent via N8N after payment`,
                 status: 'sent', // sent, received, responded
-                whatsappMessageId: null, // Will be updated after WhatsApp sent
+                whatsappMessageId: null, // Will be updated by N8N if needed
                 messageStatus: 'pending', // pending, sent, delivered, read
                 paymentWebhookId: paymentWebhook.id // Link to payment webhook
               }
@@ -796,63 +788,17 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             
             console.log(`✅ Review record created with ID: ${reviewRecord.id}`);
             
-            if (customerStatus === 'new') {
-              const reviewResult = await reviewService.sendNewCustomerRatingRequest(
-                customer.customerFullName,
-                customer.user?.businessName || 'Business',
-                customer.customerPhone,
-                reviewRecord.id // Pass review ID instead of payment webhook ID
-              );
-              
-              // Update review with WhatsApp message ID if available
-              if (reviewResult.whatsappResponse?.message1?.messages?.[0]?.id) {
-                await prisma.review.update({
-                  where: { id: reviewRecord.id },
-                  data: {
-                    whatsappMessageId: reviewResult.whatsappResponse.message1.messages[0].id,
-                    messageStatus: 'sent'
-                  }
-                });
-              }
-            } else {
-              // For active customers, randomly choose v1 or v2
-              const useV1 = Math.random() < 0.5;
-              const reviewResult = useV1 
-                ? await reviewService.sendRegularCustomerRatingRequest1(
-                    customer.customerFullName,
-                    customer.user?.businessName || 'Business',
-                    customer.customerPhone,
-                    reviewRecord.id // Pass review ID instead of payment webhook ID
-                  )
-                : await reviewService.sendRegularCustomerRatingRequest2(
-                    customer.customerFullName,
-                    customer.user?.businessName || 'Business',
-                    customer.customerPhone,
-                    reviewRecord.id // Pass review ID instead of payment webhook ID
-                  );
-              
-              // Update review with WhatsApp message ID if available
-              if (reviewResult.whatsappResponse?.message1?.messages?.[0]?.id) {
-                await prisma.review.update({
-                  where: { id: reviewRecord.id },
-                  data: {
-                    whatsappMessageId: reviewResult.whatsappResponse.message1.messages[0].id,
-                    messageStatus: 'sent'
-                  }
-                });
-              }
-            }
-            
-            // Send review_id to n8n after review record created
+            // Trigger N8N with review_id - N8N will handle WhatsApp messaging
             await n8nService.triggerReviewRequest({
               ...webhookParams,
               review_id: reviewRecord.id, // ✅ Pass review ID to n8n
               payment_webhook_id: paymentWebhook.id // Also pass payment webhook ID
             });
             
-            console.log(`✅ Review sent with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
+            console.log(`✅ Review record created and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
           } catch (reviewError) {
-            console.error('❌ Error in direct ReviewService call:', reviewError);
+            console.error('❌ Error creating review record or triggering N8N:', reviewError);
+            // Don't fail webhook if review record creation or N8N fails
           }
         }
       } catch (webhookError) {
