@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const N8nMessageService = require('./N8nMessageService');
+const { createWhatsappMessageRecord } = require('../controllers/whatsappMessageController');
 
 class CustomerStatusService {
     constructor() {
@@ -266,7 +267,9 @@ class CustomerStatusService {
                     user: {
                         select: {
                             businessName: true,
-                            phoneNumber: true
+                            businessType: true,
+                            phoneNumber: true,
+                            whatsappNumber: true
                         }
                     }
                 }
@@ -325,6 +328,8 @@ class CustomerStatusService {
                 if (newStatus === 'at_risk' || newStatus === 'lost' || newStatus === 'recovered') {
                     try {
                         const webhookParams = {
+                            customer_id: customerId,
+                            user_id: userId || customer.userId,
                             customer_name: customer.customerFullName,
                             customer_phone: customer.customerPhone,
                             business_name: customer.user?.businessName || 'Business',
@@ -334,6 +339,14 @@ class CustomerStatusService {
                             last_visit_date: daysSinceLastVisit ? new Date(Date.now() - (daysSinceLastVisit * 24 * 60 * 60 * 1000)).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
                             whatsapp_phone: customer.customerPhone
                         };
+
+                        // Store WhatsApp message record BEFORE triggering N8N
+                        await createWhatsappMessageRecord(
+                            customer.customerFullName, 
+                            customer.customerPhone, 
+                            newStatus, 
+                            userId || customer.userId
+                        );
 
                         if (newStatus === 'at_risk') {
                             await this.n8nService.triggerAtRiskMessage(webhookParams);
@@ -346,7 +359,7 @@ class CustomerStatusService {
                             await this.n8nService.triggerRecoveredCustomerNotification(webhookParams);
                         }
 
-                        console.log(`✅ N8n webhook triggered for ${newStatus} status change - Customer: ${customer.customerFullName}`);
+                        console.log(`✅ WhatsApp message record created and N8n webhook triggered for ${newStatus} - Customer: ${customer.customerFullName}`);
                     } catch (webhookError) {
                         console.error('❌ Error triggering n8n webhook for status change:', webhookError);
                         // Don't fail the status update if webhook fails

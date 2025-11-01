@@ -1,99 +1,8 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const N8nMessageService = require('../services/N8nMessageService');
-
-// Send WhatsApp review request function
-async function sendWhatsAppReviewRequest(customerId) {
-  try {
-    // Import review service
-    const ReviewService = require('../services/Whatsapp/ReviewService');
-    const reviewService = new ReviewService();
-
-    // Fetch customer details from database
-    const customer = await prisma.customers.findUnique({
-      where: { id: customerId },
-      include: {
-        user: {
-          select: {
-            businessName: true,
-            firstName: true,
-            lastName: true,
-            phoneNumber: true,
-            whatsappNumber: true
-          }
-        }
-      }
-    });
-
-    if (!customer) {
-      throw new Error('Customer not found');
-    }
-
-    if (!customer.user) {
-      throw new Error('Business owner information not found for this customer');
-    }
-
-    // Determine if this is a new or regular customer based on appointmentCount
-    const isNewCustomer = customer.appointmentCount <= 1;
-
-    let result;
-    if (isNewCustomer) {
-      // Send new customer rating request
-      result = await reviewService.sendNewCustomerRatingRequest(
-        customer.customerFullName,
-        customer.user.businessName,
-        customer.customerPhone
-      );
-    } else {
-      // Send regular customer rating request (randomly choose v1 or v2)
-      const useV1 = Math.random() < 0.5;
-      if (useV1) {
-        result = await reviewService.sendRegularCustomerRatingRequest1(
-          customer.customerFullName,
-          customer.user.businessName,
-          customer.customerPhone
-        );
-      } else {
-        result = await reviewService.sendRegularCustomerRatingRequest2(
-          customer.customerFullName,
-          customer.user.businessName,
-          customer.customerPhone
-        );
-      }
-    }
-
-    // Store in database for tracking
-    const reviewRecord = await prisma.review.create({
-      data: {
-        customerId: customer.id,
-        userId: customer.userId,
-        rating: 0, // Placeholder - will be updated when customer responds
-        message: `Rating request sent to ${isNewCustomer ? 'new' : 'regular'} customer via WhatsApp after payment`,
-        status: 'sent',
-        whatsappMessageId: result.whatsappResponse?.messages?.[0]?.id || null,
-        messageStatus: 'sent'
-      }
-    });
-
-    return {
-      success: true,
-      result,
-      reviewRecord,
-      customerDetails: {
-        id: customer.id,
-        name: customer.customerFullName,
-        phone: customer.customerPhone,
-        businessName: customer.user.businessName,
-        isNewCustomer: isNewCustomer,
-        appointmentCount: customer.appointmentCount
-      }
-    };
-
-  } catch (error) {
-    console.error('Error sending WhatsApp review request:', error);
-    throw error;
-  }
-}
+const { createWhatsappMessageRecord } = require('./whatsappMessageController');
+const { stripe } = require('../lib/stripe');
 
 // Helper function to format Israeli phone numbers
 const formatIsraeliPhone = (phoneNumber) => {
@@ -771,7 +680,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           };
 
           // Create review record first, then trigger N8N with review_id
-          // Note: WhatsApp messaging is handled by N8N (360dialog removed)
+          // Note: WhatsApp messaging is handled by N8N only
           try {
             const reviewRecord = await prisma.review.create({
               data: {
@@ -788,6 +697,14 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             
             console.log(`✅ Review record created with ID: ${reviewRecord.id}`);
             
+            // Store WhatsApp message record BEFORE triggering N8N
+            await createWhatsappMessageRecord(
+              customer.customerFullName,
+              customer.customerPhone,
+              'review_request',
+              userId
+            );
+            
             // Trigger N8N with review_id - N8N will handle WhatsApp messaging
             await n8nService.triggerReviewRequest({
               ...webhookParams,
@@ -795,7 +712,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               payment_webhook_id: paymentWebhook.id // Also pass payment webhook ID
             });
             
-            console.log(`✅ Review record created and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
+            console.log(`✅ Review record, whatsappMessage record created and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
           } catch (reviewError) {
             console.error('❌ Error creating review record or triggering N8N:', reviewError);
             // Don't fail webhook if review record creation or N8N fails
@@ -1360,14 +1277,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
   try {
     const webhookData = req.body;
 
-    // Import services for handling different conversation types
-    const RiskService = require('../services/Whatsapp/RiskService');
-    const LostService = require('../services/Whatsapp/LostService');
-    const ReviewService = require('../services/Whatsapp/ReviewService');
     const { PrismaClient } = require('@prisma/client');
-    const riskService = new RiskService();
-    const lostService = new LostService();
-    const reviewService = new ReviewService();
     const prisma = new PrismaClient();
 
 
@@ -1475,113 +1385,7 @@ const handleWhatsAppIncomingMessage = async (req, res) => {
 
               }
 
-              // ===== HEBREW CONVERSATION FLOWS (AT-RISK, LOST & REVIEW CUSTOMERS) =====
-              // Check if this is part of a review conversation (HIGHEST PRIORITY - for ratings)
-              const reviewConversationState = await reviewService.getConversationState(from);
-              // Check if this is part of an at-risk conversation
-              const riskConversationState = await riskService.getConversationState(from);
-              // Check if this is part of a lost customer conversation
-              const lostConversationState = await lostService.getConversationState(from);
-
-              // Check conversation status to determine priority (but only if conversation is NOT ended)
-              if (reviewConversationState && reviewConversationState.status === 'at_review' && !reviewConversationState.conversationEnded) {
-
-                try {
-                  // Get business owner info for potential alert
-                  const businessOwnerPhone = existingCustomer.user?.whatsappNumber || existingCustomer.user?.phoneNumber || null;
-
-                  const reviewResult = await reviewService.handleIncomingMessage(
-                    from,
-                    messageContent,
-                    existingCustomer.customerFullName,
-                    existingCustomer.businessName || existingCustomer.user?.businessName,
-                    existingCustomer.selectedServices || 'Service details not available',
-                    'Last payment amount', // You can enhance this
-                    businessOwnerPhone
-                  );
-
-                  if (reviewResult.action !== 'no_active_conversation') {
-
-                    // Extract and save rating to database if provided
-                    const rating = reviewService.extractRating(messageContent);
-                    if (rating !== null) {
-
-                      // Update existing review record or create new one
-                      const recentReview = await prisma.review.findFirst({
-                        where: {
-                          customerId: existingCustomer.id,
-                          rating: 0 // Placeholder rating
-                        },
-                        orderBy: { createdAt: 'desc' }
-                      });
-
-                      if (recentReview) {
-                        await prisma.review.update({
-                          where: { id: recentReview.id },
-                          data: {
-                            rating: rating,
-                            message: `Customer rated ${rating}/5 via WhatsApp button`,
-                            status: rating >= 4 ? 'positive' : 'needs_attention',
-                            messageStatus: 'responded'
-                          }
-                        });
-                      } else {
-                        // Create new review record
-                        const newReview = await prisma.review.create({
-                          data: {
-                            customerId: existingCustomer.id,
-                            userId: existingCustomer.userId,
-                            rating: rating,
-                            message: `Customer rated ${rating}/5 via WhatsApp button (direct response)`,
-                            status: rating >= 4 ? 'positive' : 'needs_attention',
-                            messageStatus: 'responded'
-                          }
-                        });
-                      }
-                    }
-                  }
-                } catch (reviewError) {
-                  console.error('❌ Error handling review conversation:', reviewError);
-                }
-              } else if (riskConversationState && riskConversationState.status === 'at_risk' && !riskConversationState.conversationEnded) {
-
-                try {
-                  const riskResult = await riskService.handleIncomingMessage(
-                    from,
-                    messageContent,
-                    existingCustomer.customerFullName
-                  );
-
-                  if (riskResult.action !== 'no_active_conversation') {
-                  }
-                } catch (riskError) {
-                  console.error('❌ Error handling at-risk conversation:', riskError);
-                }
-              } else if (lostConversationState && lostConversationState.status === 'at_lost' && !lostConversationState.conversationEnded) {
-
-                try {
-                  const lostResult = await lostService.handleIncomingMessage(
-                    from,
-                    messageContent,
-                    existingCustomer.customerFullName
-                  );
-
-                  if (lostResult.action !== 'no_active_conversation') {
-                  }
-                } catch (lostError) {
-                  console.error('❌ Error handling lost customer conversation:', lostError);
-                }
-
-              } else {
-                // Check if there are ended conversations
-                const hasEndedReview = reviewConversationState && reviewConversationState.conversationEnded;
-                const hasEndedRisk = riskConversationState && riskConversationState.conversationEnded;
-                const hasEndedLost = lostConversationState && lostConversationState.conversationEnded;
-
-                if (hasEndedReview || hasEndedRisk || hasEndedLost) {
-                } else {
-                }
-              }
+              // Note: Conversation flows (at-risk, lost) removed - now handled by N8N only
 
 
 
@@ -1623,6 +1427,127 @@ const verifyWhatsAppWebhook = async (req, res) => {
   }
 };
 
+// Create WhatsApp message with validation (customer_id and user_id must match)
+const createWhatsappMessageWithValidation = async (req, res) => {
+  try {
+    const { customer_id, user_id, messageType, billStatus, billDate } = req.body;
+
+    // Validate required fields
+    if (!customer_id || !user_id || !messageType) {
+      return errorResponse(res, 'Missing required fields: customer_id, user_id, and messageType are required', 400);
+    }
+
+    // Validate that customer exists and belongs to the user
+    const customer = await prisma.customers.findUnique({
+      where: { id: customer_id },
+      select: {
+        id: true,
+        userId: true,
+        customerFullName: true,
+        customerPhone: true
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Validate that customer belongs to the user
+    if (customer.userId !== user_id) {
+      return errorResponse(res, 'Customer does not belong to this user. Validation failed.', 403);
+    }
+
+    // Validate that user exists
+    const user = await prisma.user.findUnique({
+      where: { id: user_id },
+      select: {
+        id: true,
+        businessName: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Create whatsappMessage record
+    const whatsappMessage = await prisma.whatsappMessage.create({
+      data: {
+        messageType: messageType,
+        messageDate: new Date(),
+        billStatus: billStatus || false,
+        billDate: billDate ? new Date(billDate) : null,
+        customerId: customer_id,
+        userId: user_id
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true
+          }
+        }
+      }
+    });
+
+    // Report usage to Stripe
+    try {
+      const userWithStripe = await prisma.user.findUnique({
+        where: { id: user_id },
+        select: { 
+          id: true, 
+          email: true, 
+          stripeSubscriptionId: true 
+        }
+      });
+
+      if (userWithStripe && userWithStripe.stripeSubscriptionId) {
+        const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId);
+        const meteredItem = subscription.items.data.find(item => 
+          item.price?.recurring?.usage_type === 'metered'
+        );
+
+        if (meteredItem) {
+          await stripe.subscriptionItems.createUsageRecord(
+            meteredItem.id,
+            {
+              quantity: 1,
+              timestamp: Math.floor(Date.now() / 1000),
+              action: 'increment'
+            }
+          );
+        }
+      }
+    } catch (stripeError) {
+      console.error('❌ Error reporting usage to Stripe:', stripeError.message);
+      // Don't fail the request if Stripe reporting fails
+    }
+
+    return successResponse(res, {
+      whatsappMessage,
+      messageType: whatsappMessage.messageType, // Explicitly show stored messageType
+      validation: {
+        customer_id: customer_id,
+        user_id: user_id,
+        customer_belongs_to_user: true,
+        message: 'Validation successful - customer belongs to user',
+        messageType_stored: true
+      }
+    }, 'WhatsApp message stored successfully with validation', 201);
+
+  } catch (error) {
+    console.error('Error creating WhatsApp message with validation:', error);
+    return errorResponse(res, 'Failed to create WhatsApp message', 500);
+  }
+};
+
 module.exports = {
   handleAppointmentWebhook,
   handleRatingWebhook,
@@ -1637,5 +1562,6 @@ module.exports = {
   getPaymentWebhooksByCustomerId,
   getAllAppointments,
   getAppointmentById,
-  getAppointmentsByCustomerId
+  getAppointmentsByCustomerId,
+  createWhatsappMessageWithValidation
 };

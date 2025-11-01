@@ -73,24 +73,17 @@ const sendRatingRequest = async (req, res) => {
     
     const reviewLink = `reviews?customerId=${customer.id}&userId=${customer.userId}&timestamp=${timestamp}&expires=${expiryTime.getTime()}`;
 
-    // Send 360dialog template only (no fallback)
-    const result = await whatsappService.sendEngTemplateReview(
-      customer.customerFullName || customer.firstName || 'Customer',
-      customer.customerPhone,
-      reviewLink
-    );
-
+    // Note: WhatsApp messaging now handled by N8N only - no template sending
     return successResponse(res, {
       customerId: customer.id,
       customerName: customer.customerFullName,
       phoneNumber: customer.customerPhone,
       customerType,
-      templateUsed: 'test_link_eng_temp1', // Using 360dialog test_link_eng_temp1 template with button
       reviewLink: reviewLink,
       linkExpiresAt: expiryTime.toISOString(),
       linkValidFor: '24 hours',
-      whatsappResponse: result
-    }, 'Rating request sent successfully using test_link_eng_temp1 template with button link', 200);
+      note: 'Message sending handled by N8N'
+    }, 'Rating request processed - N8N will handle messaging', 200);
 
   } catch (error) {
     console.error('Send rating request error:', error);

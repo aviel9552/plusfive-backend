@@ -42,6 +42,8 @@ class N8nMessageService {
     // Directly use webhook field names to avoid confusion
     const webhookData = {
       action: 'client',
+      customer_id: params.customer_id,
+      user_id: params.user_id,
       customer_name: params.customer_name,
       customer_phone: params.customer_phone,
       customer_status: 'at_risk',
@@ -64,6 +66,8 @@ class N8nMessageService {
     // Directly use webhook field names to avoid confusion
     const webhookData = {
       action: 'client',
+      customer_id: params.customer_id,
+      user_id: params.user_id,
       customer_name: params.customer_name,
       customer_phone: params.customer_phone,
       customer_status: 'lost',
@@ -148,32 +152,36 @@ class N8nMessageService {
    */
   async triggerRecoveredCustomerNotification(params) {
     const {
-      customerName,
-      customerPhone,
-      businessName,
-      businessType = 'general',
-      customerService,
-      businessOwnerPhone,
-      lastVisitDate,
-      whatsappPhone,
-      futureAppointment,
-      previousStatus = 'at_risk'
+      customer_id,
+      user_id,
+      customer_name,
+      customer_phone,
+      business_name,
+      business_type = 'general',
+      customer_service,
+      business_owner_phone,
+      last_visit_date,
+      whatsapp_phone,
+      future_appointment,
+      previous_status = 'at_risk'
     } = params;
 
     const webhookData = {
       action: 'owner', // notification to business owner
-      customer_name: customerName,
-      customer_phone: customerPhone,
+      customer_id: customer_id,
+      user_id: user_id,
+      customer_name: customer_name,
+      customer_phone: customer_phone,
       customer_status: 'recovered',
-      business_name: businessName,
-      business_type: businessType,
-      customer_service: customerService || '',
-      business_owner_phone: businessOwnerPhone,
-      last_visit_date: lastVisitDate,
-      whatsapp_phone: whatsappPhone || customerPhone,
+      business_name: business_name,
+      business_type: business_type,
+      customer_service: customer_service || '',
+      business_owner_phone: business_owner_phone,
+      last_visit_date: last_visit_date,
+      whatsapp_phone: whatsapp_phone || customer_phone,
       trigger_type: 'recovered_customer',
-      future_appointment: futureAppointment,
-      previous_status: previousStatus
+      future_appointment: future_appointment,
+      previous_status: previous_status
     };
 
     return await this.sendWebhookTrigger(webhookData);

@@ -85,8 +85,9 @@ const getAllCustomers = async (req, res) => {
           AVG(rating) as avg_rating,
           MIN(rating) as min_rating,
           MAX(rating) as max_rating,
-          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
+          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" AND r2.status != 'sent' ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
         FROM "reviews" r
+        WHERE status != 'sent'
         GROUP BY "customerId"
       ) review_stats ON c.id = review_stats."customerId"
       WHERE c."userId" = $1
@@ -232,8 +233,9 @@ const getTenCustomers = async (req, res) => {
           AVG(rating) as avg_rating,
           MIN(rating) as min_rating,
           MAX(rating) as max_rating,
-          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
+          (SELECT rating FROM "reviews" r2 WHERE r2."customerId" = r."customerId" AND r2.status != 'sent' ORDER BY r2."createdAt" DESC LIMIT 1) as last_rating
         FROM "reviews" r
+        WHERE status != 'sent'
         GROUP BY "customerId"
       ) review_stats ON c.id = review_stats."customerId"
       WHERE c."userId" = $1

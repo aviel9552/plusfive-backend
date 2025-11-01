@@ -15,7 +15,8 @@ const {
   getPaymentWebhooksByCustomerId,
   getAllAppointments,
   getAppointmentById,
-  getAppointmentsByCustomerId
+  getAppointmentsByCustomerId,
+  createWhatsappMessageWithValidation
 } = require('../controllers/webhookController');
 
 // Webhook endpoints (no authentication required)
@@ -41,5 +42,8 @@ router.get('/payment-webhooks/customer/:customerId', authenticateToken, getPayme
 router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
 router.get('/appointments/customer/:customerId', authenticateToken, getAppointmentsByCustomerId);
+
+// WhatsApp message endpoint (authentication required) - Store with validation
+router.post('/whatsapp-message', authenticateToken, createWhatsappMessageWithValidation);
 
 module.exports = router;

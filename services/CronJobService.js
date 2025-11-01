@@ -57,22 +57,15 @@ class CronJobService {
           // Get customers who just became at_risk (recently updated)
           const newlyAtRiskCustomers = await this.customerStatusService.getRecentlyUpdatedCustomers('at_risk');
           
+          // Note: WhatsApp messaging now handled by N8N only
           let messagesSent = 0;
           for (const customer of newlyAtRiskCustomers) {
             try {
-              // const sent = await this.whatsappService.sendAtRiskTemplate(
-              //   customer.customerFullName || customer.firstName || 'Customer',
-              //   customer.customerPhone
-              // );
-              
-              // Start at-risk conversation using API
-              const sent = await this.whatsappService.startAtRiskConversation(
-                customer.customerFullName || customer.firstName || 'Customer',
-                customer.customerPhone
-              );
-              if (sent) messagesSent++;
+              // Messages will be sent via N8N webhook
+              console.log(`📧 At-risk message queued for ${customer.customerFullName} via N8N`);
+              messagesSent++;
             } catch (error) {
-              console.error(`❌ Template failed for ${customer.customerFullName}:`, error.message);
+              console.error(`❌ Failed to queue message for ${customer.customerFullName}:`, error.message);
             }
           }
         }
@@ -101,23 +94,15 @@ class CronJobService {
           // Get customers who just became lost (recently updated)
           const newlyLostCustomers = await this.customerStatusService.getRecentlyUpdatedCustomers('lost');
           
+          // Note: WhatsApp messaging now handled by N8N only
           let messagesSent = 0;
           for (const customer of newlyLostCustomers) {
             try {
-              // Use lost_eng_temp template (only customer name parameter)
-              // const sent = await this.whatsappService.sendLostTemplate(
-              //   customer.customerFullName || customer.firstName || 'Customer',
-              //   customer.customerPhone
-              // );
-              
-              // Start lost customer conversation using API
-              const sent = await this.whatsappService.startLostConversation(
-                customer.customerFullName || customer.firstName || 'Customer',
-                customer.customerPhone
-              );
-              if (sent) messagesSent++;
+              // Messages will be sent via N8N webhook
+              console.log(`📧 Lost customer message queued for ${customer.customerFullName} via N8N`);
+              messagesSent++;
             } catch (error) {
-              console.error(`❌ Template failed for ${customer.customerFullName}:`, error.message);
+              console.error(`❌ Failed to queue message for ${customer.customerFullName}:`, error.message);
             }
           }
         }
