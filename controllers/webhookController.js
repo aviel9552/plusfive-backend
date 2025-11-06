@@ -249,27 +249,8 @@ const handleAppointmentWebhook = async (req, res) => {
           console.warn('No phone number found for business owner to send recovered customer notification');
         }
       } else if (previousStatus === 'new') {
-        // Update to active only if status was 'new'
-        const updatedCustomerUser = await prisma.customerUser.update({
-          where: {
-            id: existingCustomerUser.id
-          },
-          data: {
-            status: 'active'
-          }
-        });
-        customerUserId = updatedCustomerUser.id;
-
-        // Create CustomerStatusLog for New to Active transition
-        await prisma.customerStatusLog.create({
-          data: {
-            customerId: customerId,
-            userId: userId,
-            oldStatus: 'New',
-            newStatus: 'Active',
-            reason: 'First appointment booked'
-          }
-        });
+        // Keep status as 'new' - will be updated to 'active' after payment
+        customerUserId = existingCustomerUser.id;
       } else if (previousStatus === 'recovered') {
         // Recovered customers stay recovered - no status change
         customerUserId = existingCustomerUser.id;
@@ -632,6 +613,51 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       }
     });
 
+
+    // Update CustomerUser status from 'new' to 'active' after payment
+    if (customerId && userId) {
+      try {
+        // Check if CustomerUser record exists
+        const existingCustomerUser = await prisma.customerUser.findFirst({
+          where: {
+            customerId: customerId,
+            userId: userId
+          },
+          select: {
+            id: true,
+            status: true
+          }
+        });
+
+        // If customer status is 'new', update to 'active' after payment
+        if (existingCustomerUser && existingCustomerUser.status === 'new') {
+          await prisma.customerUser.update({
+            where: {
+              id: existingCustomerUser.id
+            },
+            data: {
+              status: 'active'
+            }
+          });
+
+          // Create CustomerStatusLog for New to Active transition
+          await prisma.customerStatusLog.create({
+            data: {
+              customerId: customerId,
+              userId: userId,
+              oldStatus: 'New',
+              newStatus: 'Active',
+              reason: 'First payment received'
+            }
+          });
+
+          console.log(`✅ Customer status updated from 'new' to 'active' after payment - Customer ID: ${customerId}`);
+        }
+      } catch (statusUpdateError) {
+        console.error('❌ Error updating customer status after payment:', statusUpdateError);
+        // Don't fail the webhook if status update fails
+      }
+    }
 
     // If customerId is found, trigger n8n review request
     if (customerId) {
