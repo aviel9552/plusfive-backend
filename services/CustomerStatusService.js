@@ -7,6 +7,8 @@ class CustomerStatusService {
         // Test mode vs Production thresholds
         this.isTestMode = process.env.CRON_TEST_MODE === 'true';
 
+        console.log('isTestMode', this.isTestMode);
+
         this.statusThresholds = this.isTestMode ? {
             // Testing thresholds - from environment variables
             atRisk: {

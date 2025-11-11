@@ -10,6 +10,9 @@ class CronJobService {
     this.whatsappService = new WhatsAppService();
     // Test mode vs Production schedules
     this.isTestMode = process.env.CRON_TEST_MODE === 'true';
+    
+    console.log('isTestMode', this.isTestMode);
+    
     this.schedules = {
       production: {
         job1: '0 */6 * * *',  // Every 6 hours
