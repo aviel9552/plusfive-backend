@@ -38,7 +38,24 @@ class CronJobService {
 
     // Cron job 1
     this.scheduleJob('cron-job-1', currentSchedules.job1, async () => {
-      // Cron Job 1 executed
+      console.log('⏱️ [cron-job-1] Status sync started');
+      try {
+        const results = await this.customerStatusService.processAllCustomerStatuses();
+        console.log('✅ [cron-job-1] Status sync completed', {
+          processed: results.processed,
+          updated: results.updated,
+          counts: {
+            new: results.new,
+            active: results.active,
+            at_risk: results.at_risk,
+            lost: results.lost,
+            recovered: results.recovered
+          },
+          errors: results.errors
+        });
+      } catch (error) {
+        console.error('❌ [cron-job-1] Status sync failed:', error.message);
+      }
     });
 
     // Cron job 2 - At Risk
@@ -48,7 +65,7 @@ class CronJobService {
         const currentAtRiskCustomers = await this.customerStatusService.getCustomersByStatus('at_risk');
         const beforeCount = currentAtRiskCustomers.length;
 
-        // Call status update API for At Risk processing
+        console.log('⏱️ [cron-job-2] At-risk status update started');
         const results = await this.customerStatusService.processAllCustomerStatuses();
 
         // Get at_risk customers after status update
@@ -72,6 +89,19 @@ class CronJobService {
             }
           }
         }
+
+        console.log('✅ [cron-job-2] At-risk status update completed', {
+          processed: results.processed,
+          updated: results.updated,
+          counts: {
+            new: results.new,
+            active: results.active,
+            at_risk: results.at_risk,
+            lost: results.lost,
+            recovered: results.recovered
+          },
+          errors: results.errors
+        });
 
       } catch (error) {
         console.error('❌ At Risk Status Update Error:', error.message);
@@ -110,6 +140,19 @@ class CronJobService {
           }
         }
 
+        console.log('✅ [cron-job-3] Lost status update completed', {
+          processed: results.processed,
+          updated: results.updated,
+          counts: {
+            new: results.new,
+            active: results.active,
+            at_risk: results.at_risk,
+            lost: results.lost,
+            recovered: results.recovered
+          },
+          errors: results.errors
+        });
+
       } catch (error) {
         console.error('❌ Lost Status Update Error:', error.message);
       }
@@ -117,7 +160,7 @@ class CronJobService {
 
     // Cron job 4
     this.scheduleJob('cron-job-4', currentSchedules.job4, async () => {
-      // Cron Job 4 executed
+      console.log('⏱️ [cron-job-4] Heartbeat triggered');
     });
 
     // Monthly usage reporting job
