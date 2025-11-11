@@ -4,18 +4,34 @@ const prisma = require('../lib/prisma');
 class CustomerStatusCronService {
     constructor() {
         this.jobs = new Map();
-        
-        // Production-only configuration
-        this.statusThresholds = {
-            risk: 30,   // 30 days for production
-            lost: 60    // 60 days for production
+        this.isTestMode = process.env.CRON_TEST_MODE === 'true';
+
+        const parseDays = (value, fallback) => {
+            const parsed = parseInt(value, 10);
+            return Number.isNaN(parsed) ? fallback : parsed;
         };
 
-        // Production cron schedule
-        this.schedules = {
-            statusUpdate: '0 */6 * * *',    // Every 6 hours for production
-        };
+        if (this.isTestMode) {
+            this.statusThresholds = {
+                risk: parseDays(process.env.AT_RISK_TEST_DAYS, 2),
+                lost: parseDays(process.env.LOST_TEST_DAYS, 3)
+            };
 
+            this.schedules = {
+                statusUpdate: '*/30 * * * * *', // Every 30 seconds in test mode
+            };
+        } else {
+            this.statusThresholds = {
+                risk: parseDays(process.env.AT_RISK_DEFAULT_DAYS, 30),
+                lost: parseDays(process.env.LOST_DEFAULT_DAYS, 60)
+            };
+
+            this.schedules = {
+                statusUpdate: '0 */6 * * *',    // Every 6 hours for production
+            };
+        }
+
+        console.log(`CustomerStatusCronService running in ${this.isTestMode ? 'TEST' : 'PRODUCTION'} mode (risk: ${this.statusThresholds.risk}d, lost: ${this.statusThresholds.lost}d)`);
     }
 
     // Get last activity (appointment or payment) for a customer with a specific user
