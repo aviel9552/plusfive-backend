@@ -6,15 +6,15 @@ class CustomerStatusCronService {
         this.jobs = new Map();
         this.isTestMode = process.env.CRON_TEST_MODE === 'true';
 
-        const parseDays = (value, fallback) => {
+        const parseNumber = (value, fallback) => {
             const parsed = parseInt(value, 10);
             return Number.isNaN(parsed) ? fallback : parsed;
         };
 
         if (this.isTestMode) {
             this.statusThresholds = {
-                risk: parseDays(process.env.AT_RISK_TEST_DAYS, 2),
-                lost: parseDays(process.env.LOST_TEST_DAYS, 3)
+                risk: parseNumber(process.env.AT_RISK_TEST_MINUTES, 1),
+                lost: parseNumber(process.env.LOST_TEST_MINUTES, 2)
             };
 
             this.schedules = {
@@ -22,8 +22,8 @@ class CustomerStatusCronService {
             };
         } else {
             this.statusThresholds = {
-                risk: parseDays(process.env.AT_RISK_DEFAULT_DAYS, 30),
-                lost: parseDays(process.env.LOST_DEFAULT_DAYS, 60)
+                risk: parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30),
+                lost: parseNumber(process.env.LOST_DEFAULT_DAYS, 60)
             };
 
             this.schedules = {
@@ -31,7 +31,8 @@ class CustomerStatusCronService {
             };
         }
 
-        console.log(`CustomerStatusCronService running in ${this.isTestMode ? 'TEST' : 'PRODUCTION'} mode (risk: ${this.statusThresholds.risk}d, lost: ${this.statusThresholds.lost}d)`);
+        const unit = this.isTestMode ? 'minute(s)' : 'day(s)';
+        console.log(`CustomerStatusCronService running in ${this.isTestMode ? 'TEST' : 'PRODUCTION'} mode (risk: ${this.statusThresholds.risk} ${unit}, lost: ${this.statusThresholds.lost} ${unit})`);
     }
 
     // Get last activity (appointment or payment) for a customer with a specific user
@@ -91,6 +92,9 @@ class CustomerStatusCronService {
     // Calculate days between two dates
     calculateDaysBetween(date1, date2) {
         const diffTime = Math.abs(date2 - date1);
+        if (this.isTestMode) {
+            return Math.ceil(diffTime / (1000 * 60)); // minutes
+        }
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
 
@@ -125,10 +129,12 @@ class CustomerStatusCronService {
         const oldStatusCap = this.capitalizeStatus(oldStatus);
         const newStatusCap = this.capitalizeStatus(newStatus);
 
+        const unit = this.isTestMode ? 'minutes' : 'days';
+
         if (newStatus === 'at_risk') {
-            return `No ${activityType || 'activity'} for ${daysSinceLastActivity} days (threshold: ${this.statusThresholds.risk} days)`;
+            return `No ${activityType || 'activity'} for ${daysSinceLastActivity} ${unit} (threshold: ${this.statusThresholds.risk} ${unit})`;
         } else if (newStatus === 'lost') {
-            return `No ${activityType || 'activity'} for ${daysSinceLastActivity} days (threshold: ${this.statusThresholds.lost} days)`;
+            return `No ${activityType || 'activity'} for ${daysSinceLastActivity} ${unit} (threshold: ${this.statusThresholds.lost} ${unit})`;
         } else if (newStatus === 'recovered') {
             if (oldStatus === 'lost') {
                 return `Customer returned with ${activityType || 'activity'} after being lost`;

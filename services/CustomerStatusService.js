@@ -9,25 +9,32 @@ class CustomerStatusService {
 
         console.log('isTestMode', this.isTestMode);
 
+        const parseNumber = (value, fallback) => {
+            const parsed = parseInt(value, 10);
+            return Number.isNaN(parsed) ? fallback : parsed;
+        };
+
+        this.timeUnitLabel = this.isTestMode ? 'minutes' : 'days';
+
         this.statusThresholds = this.isTestMode ? {
-            // Testing thresholds - from environment variables
+            // Testing thresholds - minute-based
             atRisk: {
-                defaultDays: parseInt(process.env.AT_RISK_TEST_DAYS) || 2,
+                defaultDays: parseNumber(process.env.AT_RISK_TEST_MINUTES, 1),
                 bufferDays: 0
             },
             lost: {
-                defaultDays: parseInt(process.env.LOST_TEST_DAYS) || 3,
+                defaultDays: parseNumber(process.env.LOST_TEST_MINUTES, 2),
                 bufferDays: 0
             }
         } : {
             // Production thresholds - from environment variables
             atRisk: {
-                defaultDays: parseInt(process.env.AT_RISK_DEFAULT_DAYS) || 30,
-                bufferDays: parseInt(process.env.AT_RISK_BUFFER_DAYS) || 5
+                defaultDays: parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30),
+                bufferDays: parseNumber(process.env.AT_RISK_BUFFER_DAYS, 5)
             },
             lost: {
-                defaultDays: parseInt(process.env.LOST_DEFAULT_DAYS) || 60,
-                bufferDays: parseInt(process.env.LOST_BUFFER_DAYS) || 15
+                defaultDays: parseNumber(process.env.LOST_DEFAULT_DAYS, 60),
+                bufferDays: parseNumber(process.env.LOST_BUFFER_DAYS, 15)
             }
         };
 
@@ -37,6 +44,9 @@ class CustomerStatusService {
     // Calculate days between two dates
     calculateDaysBetween(date1, date2) {
         const diffTime = Math.abs(date2 - date1);
+        if (this.isTestMode) {
+            return Math.ceil(diffTime / (1000 * 60)); // minutes
+        }
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
 
@@ -96,10 +106,10 @@ class CustomerStatusService {
                 return 'Customer is actively booking appointments';
 
             case 'at_risk':
-                return `No activity for ${daysSinceLastVisit} days (threshold: ${threshold} days)`;
+                return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (threshold: ${threshold} ${this.timeUnitLabel})`;
 
             case 'lost':
-                return `No activity for ${daysSinceLastVisit} days (threshold: ${threshold} days)`;
+                return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (threshold: ${threshold} ${this.timeUnitLabel})`;
 
             case 'recovered':
                 if (oldStatus === 'lost') {
@@ -329,6 +339,10 @@ class CustomerStatusService {
                 // Trigger n8n webhook for status changes (at_risk, lost, recovered)
                 if (newStatus === 'at_risk' || newStatus === 'lost' || newStatus === 'recovered') {
                     try {
+                        const offsetMs = this.isTestMode
+                            ? (daysSinceLastVisit * 60 * 1000)
+                            : (daysSinceLastVisit * 24 * 60 * 60 * 1000);
+
                         const webhookParams = {
                             customer_id: customerId,
                             user_id: userId || customer.userId,
@@ -338,7 +352,7 @@ class CustomerStatusService {
                             business_type: customer.user?.businessType || 'general',
                             customer_service: customer.selectedServices || '',
                             business_owner_phone: customer.user?.phoneNumber || customer.user?.whatsappNumber,
-                            last_visit_date: daysSinceLastVisit ? new Date(Date.now() - (daysSinceLastVisit * 24 * 60 * 60 * 1000)).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                            last_visit_date: daysSinceLastVisit ? new Date(Date.now() - offsetMs).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
                             whatsapp_phone: customer.customerPhone
                         };
 
