@@ -3,7 +3,9 @@ const appConfig = {
   // Server configuration
   server: {
     port: process.env.PORT || 3000,
-    host: process.env.HOST || 'localhost',
+    // In development, use 0.0.0.0 to allow network access (for phone testing)
+    // In production, use localhost or specific host
+    host: process.env.HOST || (process.env.NODE_ENV === 'development' ? '0.0.0.0' : 'localhost'),
     environment: process.env.NODE_ENV || 'development',
           cors: {
         origin: process.env.CORS_ORIGIN || '*',
@@ -81,7 +83,9 @@ const getConfig = () => {
   return {
     server: {
       port: parseInt(process.env.PORT) || 3000,
-      host: process.env.HOST || 'localhost',
+      // In development, use 0.0.0.0 to allow network access (for phone testing)
+      // In production, use localhost or specific host
+      host: process.env.HOST || (environment === 'development' ? '0.0.0.0' : 'localhost'),
       environment,
           cors: {
       origin: process.env.CORS_ORIGIN || '*',

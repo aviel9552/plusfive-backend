@@ -47,8 +47,6 @@ model User {
   updatedAt         DateTime  @updatedAt
 
   // Relations
-  sessions          Session[]
-  accounts          Account[]
   orders            Order[]
   payments          Payment[]
   qrCodes           QRCode[]
@@ -62,8 +60,6 @@ model User {
   referralsReceived Referral[] @relation("ReferredUser")
   
   // Customer relations
-  customersManaged  CustomerMaster[] @relation("User")
-  customerOf        CustomerMaster[] @relation("Customer")
   customers         Customers[]      // New customers table relation
   appointments      Appointment[]    // Appointments relation
   customerUsers     CustomerUser[]   // Customer-User relations
@@ -78,45 +74,6 @@ model User {
   @@unique([email, isDeleted])
   @@unique([businessName, isDeleted])
   @@map("users")
-}
-
-model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@map("accounts")
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-  @@map("verification_tokens")
 }
 
 // Email verification tokens
@@ -263,33 +220,6 @@ model Referral {
   referredUser   User     @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
 
   @@map("referrals")
-}
-
-// Customer Master table - Business owners can manage their customers
-model CustomerMaster {
-  id              String   @id @default(cuid())
-  userId          String   // User with role 'user' (business owner)
-  customerId      String   // User with role 'customer'
-  notes           String?  // Business owner's notes about customer
-  status          String   @default("active") // active, inactive, blocked
-  totalVisits     Int?      @default(0) // How many times customer visited
-  lastVisit       DateTime? // Last visit date
-  totalSpent      Float?    @default(0.00) // Total amount spent by customer
-  
-  // Additional fields for customer management
-  rating          Float?    @default(0.0) // Customer rating (0.0 to 5.0)
-  lastPayment     Float?    @default(0.00) // Last payment amount
-  totalPaid       Float?    @default(0.00) // Total amount paid by customer
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  // Relations
-  user            User     @relation("User", fields: [userId], references: [id], onDelete: Cascade)
-  customer        User     @relation("Customer", fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, customerId]) // One customer per business owner
-  @@map("customer_master")
 }
 
 // New Customers table - Simple customer information

@@ -421,7 +421,7 @@ class AdminDashboardController {
         distinct: ['customerId'] // Get the latest status for each customer
       });
 
-      // Calculate average LTV for all customers (not just lost ones)
+      // Get all customers for calculating average LTV (Average Lifetime Visits)
       const allCustomers = await prisma.customers.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
@@ -432,17 +432,71 @@ class AdminDashboardController {
         }
       });
 
-      // Calculate average LTV across all customers
-      let totalMonthsAllCustomers = 0;
-      const currentDate = new Date();
+      const totalCustomers = allCustomers.length;
+
+      // Calculate average LTV (Average Lifetime Visits) using optimized aggregation queries
+      // Formula: (Total number of services received by all customers) ÷ (Total number of customers)
+      // Services = Appointments (services received) OR Successful Payments (transactions/purchases)
+      // We use appointments as primary metric (services received), payments as fallback
       
-      for (const customer of allCustomers) {
-        const customerCreatedDate = new Date(customer.createdAt);
-        const monthsActive = Math.max(1, Math.ceil((currentDate - customerCreatedDate) / (1000 * 60 * 60 * 24 * 30)));
-        totalMonthsAllCustomers += monthsActive;
+      // Build where conditions for user role filtering
+      const userId = authenticatedUser.userId;
+      const userWhereCondition = authenticatedUser.role === 'user' 
+        ? `AND a."userId" = '${userId}'` 
+        : '';
+      const paymentUserWhereCondition = authenticatedUser.role === 'user' 
+        ? `AND pw."userId" = '${userId}'` 
+        : '';
+      const customerUserWhereCondition = authenticatedUser.role === 'user' 
+        ? `WHERE c."userId" = '${userId}'` 
+        : '';
+
+      // Optimized SQL query to get service counts per customer
+      // Count appointments (primary) and payments (fallback) for each customer
+      const servicesQuery = `
+        SELECT 
+          c.id as "customerId",
+          COALESCE(appointment_counts.total_appointments, 0) as "appointmentCount",
+          COALESCE(payment_counts.total_payments, 0) as "paymentCount"
+        FROM "customers" c
+        LEFT JOIN (
+          SELECT 
+            a."customerId",
+            COUNT(*) as total_appointments
+          FROM "appointments" a
+          WHERE a."customerId" IS NOT NULL ${userWhereCondition}
+          GROUP BY a."customerId"
+        ) appointment_counts ON c.id = appointment_counts."customerId"
+        LEFT JOIN (
+          SELECT 
+            pw."customerId",
+            COUNT(*) as total_payments
+          FROM "payment_webhooks" pw
+          WHERE pw."customerId" IS NOT NULL 
+            AND pw.status = 'success' ${paymentUserWhereCondition}
+          GROUP BY pw."customerId"
+        ) payment_counts ON c.id = payment_counts."customerId"
+        ${customerUserWhereCondition}
+      `;
+
+      // Execute the query
+      const servicesResults = await prisma.$queryRawUnsafe(servicesQuery);
+      
+      // Calculate total services received
+      // Use appointments as primary metric, payments as fallback if no appointments
+      let totalServicesReceived = 0;
+      for (const result of servicesResults) {
+        const appointmentCount = Number(result.appointmentCount) || 0;
+        const paymentCount = Number(result.paymentCount) || 0;
+        
+        // Use appointments if available, otherwise use payments
+        // This represents services received (appointments) or transactions (payments)
+        const customerServices = appointmentCount > 0 ? appointmentCount : paymentCount;
+        totalServicesReceived += customerServices;
       }
       
-      const averageLTV = allCustomers.length > 0 ? totalMonthsAllCustomers / allCustomers.length : 0;
+      // Calculate average: Total services ÷ Total customers
+      const averageLTV = totalCustomers > 0 ? totalServicesReceived / totalCustomers : 0;
 
       // Get revenue from payments with revenuePaymentStatus = 'lost'
       const lostPayments = await prisma.paymentWebhook.findMany({
@@ -933,7 +987,9 @@ class AdminDashboardController {
     }
   }
 
-  // Get monthly LTV Count data (Total Days in Month / Payment Count per Customer) - OPTIMIZED
+  // Get monthly LTV (Lifetime Value) data - Average revenue per customer per month
+  // Formula: (Total revenue from all customers) ÷ (Total number of customers)
+  // For each customer, sum up total amount spent from first payment until lost/inactive
   getMonthlyLTVCount = async (req, res) => {
     try {
       const authenticatedUser = req.user;
@@ -942,28 +998,85 @@ class AdminDashboardController {
       const yearStart = new Date(currentYear, 0, 1);
       const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
 
-      // Single optimized query to get all payment data for the year
-      const paymentQuery = `
-        SELECT 
-          pw."customerId",
-          c."customerFullName",
-          EXTRACT(MONTH FROM pw."paymentDate") as month,
-          COUNT(*) as "paymentCount"
-        FROM "payment_webhooks" pw
-        JOIN "customers" c ON pw."customerId" = c.id
-        ${authenticatedUser.role === 'user' ? 'WHERE pw."userId" = $1' : 'WHERE 1=1'}
-        AND pw.status = 'success'
-        AND pw."paymentDate" >= ${authenticatedUser.role === 'user' ? '$2' : '$1'}
-        AND pw."paymentDate" <= ${authenticatedUser.role === 'user' ? '$3' : '$2'}
-        GROUP BY pw."customerId", c."customerFullName", EXTRACT(MONTH FROM pw."paymentDate")
-        ORDER BY month, c."customerFullName"
-      `;
+      // Get all customers for this user
+      const allCustomers = await prisma.customers.findMany({
+        where: {
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          id: true,
+          customerFullName: true,
+          createdAt: true
+        }
+      });
 
-      const queryParams = authenticatedUser.role === 'user' 
-        ? [authenticatedUser.userId, yearStart, yearEnd]
-        : [yearStart, yearEnd];
+      const totalCustomers = allCustomers.length;
 
-      const paymentData = await prisma.$queryRawUnsafe(paymentQuery, ...queryParams);
+      // Get ALL successful payments for customers (not just current year)
+      // This includes payments from all time to calculate actual LTV
+      const allPayments = await prisma.paymentWebhook.findMany({
+        where: {
+          status: 'success',
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
+          customerId: {
+            in: allCustomers.map(c => c.id)
+          }
+        },
+        select: {
+          customerId: true,
+          total: true,
+          paymentDate: true
+        },
+        orderBy: {
+          paymentDate: 'asc'
+        }
+      });
+
+      // Group payments by customer and calculate total LTV (all-time revenue) and monthly cumulative
+      const customerRevenueMap = new Map();
+      
+      // Initialize customer revenue map
+      allCustomers.forEach(customer => {
+        customerRevenueMap.set(customer.id, {
+          customerId: customer.id,
+          customerName: customer.customerFullName,
+          monthlyRevenue: new Array(12).fill(0), // Cumulative revenue up to end of each month
+          totalLTV: 0, // Total LTV (all-time revenue) for this customer
+          paymentCount: 0,
+          payments: [] // Store all payments for this customer
+        });
+      });
+
+      // Calculate total LTV per customer and monthly revenue (only for payments made IN that month)
+      allPayments.forEach(payment => {
+        const paymentDate = new Date(payment.paymentDate);
+        const paymentMonth = paymentDate.getMonth(); // 0-11
+        const paymentYear = paymentDate.getFullYear();
+        const amount = Number(payment.total) || 0;
+        
+        if (customerRevenueMap.has(payment.customerId)) {
+          const customerData = customerRevenueMap.get(payment.customerId);
+          
+          // Add to total LTV (all-time revenue) - this is the actual LTV
+          customerData.totalLTV += amount;
+          customerData.paymentCount++;
+          customerData.payments.push({
+            total: amount,
+            paymentDate: paymentDate
+          });
+          
+          // Only add revenue to the specific month where payment was made (not cumulative)
+          // This ensures months with no payments show 0
+          if (paymentYear === currentYear) {
+            // Only add to the month where payment was made
+            customerData.monthlyRevenue[paymentMonth] += amount;
+          } else if (paymentYear < currentYear) {
+            // For payments from previous years, don't add to current year months
+            // These are already included in totalLTV but not shown in monthly breakdown
+          }
+          // For future year payments, don't add to current year months
+        }
+      });
 
       // Process data by month
       const monthlyLTVData = [];
@@ -974,42 +1087,87 @@ class AdminDashboardController {
         const totalDaysInMonth = monthEnd.getDate();
         const monthNumber = monthIndex + 1;
 
-        // Filter payments for this month
-        const monthPayments = paymentData.filter(p => Number(p.month) === monthNumber);
+        // Calculate total revenue and average LTV for this month
+        let totalRevenueForMonth = 0;
+        let customersWithPayments = 0;
+        const customerDetails = [];
+
+        // Calculate revenue for payments made IN this specific month (not cumulative)
+        const monthStartDate = new Date(currentYear, monthIndex, 1, 0, 0, 0);
+        const monthEndDate = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59);
         
-        let monthlyCustomerLTVCounts = [];
-        let totalLTVCount = 0;
-
-        for (const payment of monthPayments) {
-          const paymentCount = Number(payment.paymentCount);
-          if (paymentCount > 0) {
-            // Calculate LTV Count: Total Days in Month / Payment Count
-            const customerLTVCount = totalDaysInMonth / paymentCount;
-            totalLTVCount += customerLTVCount;
-
-            monthlyCustomerLTVCounts.push({
-              customerId: payment.customerId,
-              customerName: payment.customerFullName,
-              totalDaysInMonth: totalDaysInMonth,
-              paymentCount: paymentCount,
-              ltvCount: Math.round(customerLTVCount * 100) / 100
+        customerRevenueMap.forEach((customerData, customerId) => {
+          // monthlyRevenue[monthIndex] contains revenue from payments made IN this month only
+          const customerLTVThisMonth = customerData.monthlyRevenue[monthIndex];
+          
+          // Count payments made IN this specific month
+          const paymentsInThisMonth = customerData.payments.filter(p => {
+            return p.paymentDate >= monthStartDate && p.paymentDate <= monthEndDate;
+          }).length;
+          
+          // Only include customers who made payments in this month
+          if (customerLTVThisMonth > 0) {
+            totalRevenueForMonth += customerLTVThisMonth;
+            customersWithPayments++;
+            
+            customerDetails.push({
+              customerId: customerData.customerId,
+              customerName: customerData.customerName,
+              ltvCount: Math.round(customerLTVThisMonth * 100) / 100, // LTV (revenue) for this customer IN this month
+              totalRevenue: Math.round(customerLTVThisMonth * 100) / 100,
+              paymentCount: paymentsInThisMonth,
+              totalDaysInMonth: totalDaysInMonth
             });
           }
-        }
+        });
 
-        // Calculate average LTV Count for this month
-        const averageLTVCount = monthlyCustomerLTVCounts.length > 0 
-          ? totalLTVCount / monthlyCustomerLTVCounts.length 
+        // Calculate average LTV for this month
+        // Formula: (Total revenue from payments made IN this month) ÷ (Total number of customers)
+        // If no payments in this month, averageLTV will be 0
+        const averageLTV = totalCustomers > 0 
+          ? totalRevenueForMonth / totalCustomers 
           : 0;
+
+        // Debug logging for monthly calculation
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`📊 [Monthly LTV] ${targetDate.toLocaleString('default', { month: 'short' })} ${currentYear}:`, {
+            totalRevenueForMonth: Math.round(totalRevenueForMonth * 100) / 100,
+            totalCustomers,
+            customersWithPayments,
+            averageLTV: Math.round(averageLTV * 100) / 100,
+            formula: `(${Math.round(totalRevenueForMonth * 100) / 100} ÷ ${totalCustomers}) = ${Math.round(averageLTV * 100) / 100}`
+          });
+        }
 
         monthlyLTVData.push({
           month: targetDate.toLocaleString('default', { month: 'short' }),
           monthNumber: monthNumber,
           year: currentYear,
           totalDaysInMonth: totalDaysInMonth,
-          customersWithPayments: monthlyCustomerLTVCounts.length,
-          averageLTVCount: Math.round(averageLTVCount * 100) / 100,
-          customerDetails: monthlyCustomerLTVCounts
+          customersWithPayments: customersWithPayments,
+          averageLTVCount: Math.round(averageLTV * 100) / 100, // Average LTV in currency
+          customerDetails: customerDetails
+        });
+      }
+
+      // Calculate overall average LTV (total revenue from all customers ÷ total customers)
+      // This is the true average LTV based on all-time revenue
+      let totalRevenueAllCustomers = 0;
+      customerRevenueMap.forEach((customerData) => {
+        totalRevenueAllCustomers += customerData.totalLTV;
+      });
+      
+      const overallAverageLTV = totalCustomers > 0 
+        ? Math.round((totalRevenueAllCustomers / totalCustomers) * 100) / 100
+        : 0;
+
+      // Debug logging for overall average calculation
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`📊 [Overall Average LTV] Year ${currentYear}:`, {
+          totalRevenueAllCustomers: Math.round(totalRevenueAllCustomers * 100) / 100,
+          totalCustomers,
+          overallAverageLTV: Math.round(overallAverageLTV * 100) / 100,
+          formula: `(${Math.round(totalRevenueAllCustomers * 100) / 100} ÷ ${totalCustomers}) = ${Math.round(overallAverageLTV * 100) / 100}`
         });
       }
 
@@ -1020,9 +1178,8 @@ class AdminDashboardController {
           monthlyLTVData: monthlyLTVData,
           summary: {
             totalMonths: monthlyLTVData.length,
-            overallAverageLTV: monthlyLTVData.length > 0 
-              ? Math.round((monthlyLTVData.reduce((sum, month) => sum + month.averageLTVCount, 0) / monthlyLTVData.length) * 100) / 100
-              : 0
+            overallAverageLTV: overallAverageLTV,
+            totalCustomers: totalCustomers
           }
         }
       });
