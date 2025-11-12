@@ -24,10 +24,10 @@ const verifyCronSecret = (req, res, next) => {
 };
 
 /**
- * @route   POST /api/cron-jobs/trigger
- * @desc    Manually trigger customer status update (for testing)
+ * @route   /api/cron-jobs/trigger
+ * @desc    Trigger customer status update (cron or manual)
  * @access  Protected via CRON_SECRET
  */
-router.post('/trigger', verifyCronSecret, cronJobController.triggerStatusUpdate);
+router.all('/trigger', verifyCronSecret, cronJobController.triggerStatusUpdate);
 
 module.exports = router;

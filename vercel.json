@@ -19,8 +19,7 @@
     "crons": [
       {
         "path": "/api/cron-jobs/trigger",
-        "schedule": "*/1 * * * *",
-        "method": "POST"
+        "schedule": "*/1 * * * *"
       }
     ]
   }
