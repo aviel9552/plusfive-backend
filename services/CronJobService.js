@@ -22,10 +22,10 @@ class CronJobService {
         monthlyUsage: '0 0 1 * *'  // Monthly on 1st at midnight (00:00)
       },
       test: {
-        job1: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
-        job2: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
-        job3: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
-        job4: '*/70 * * * * *', // Every 70 seconds (1 minute 10 seconds)
+        job1: '*/60 * * * * *', // Every 60 seconds (1 minute)
+        job2: '*/60 * * * * *', // Every 60 seconds (1 minute)
+        job3: '*/60 * * * * *', // Every 60 seconds (1 minute)
+        job4: '*/60 * * * * *', // Every 60 seconds (1 minute)
         monthlyUsage: '*/120 * * * * *'  // Every 2 minutes for testing
       }
     };
