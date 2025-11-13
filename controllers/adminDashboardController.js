@@ -500,28 +500,28 @@ class AdminDashboardController {
       // Calculate average: Total services ÷ Total customers
       const averageLTV = totalCustomers > 0 ? totalServicesReceived / totalCustomers : 0;
 
-      // Get revenue from payments with revenuePaymentStatus = 'lost'
-      const lostPayments = await prisma.paymentWebhook.findMany({
-        where: {
-          status: 'success',
-          revenuePaymentStatus: 'lost',
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-        },
-        select: {
-          total: true,
-          customerId: true,
-          paymentDate: true
-        }
-      });
-      
-      // Calculate total lost revenue
-      const totalLostRevenue = lostPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
+      // Calculate Lost Revenue according to formula:
+      // For each Lost customer:
+      // 1. Calculate customer_visits (appointments or payments)
+      // 2. Calculate customer_revenue (sum of all payments)
+      // 3. Customer Average Transaction Value = customer_revenue ÷ customer_visits
+      // 4. Potential Value = Customer Average Transaction Value × CLV (averageLTV)
+      // Then: Average Potential Lost Revenue = Sum of all Potential Values ÷ Number of Lost Customers
 
-      // Get lost customer details for additional metrics
       const lostCustomerDetails = [];
+      let totalPotentialLostRevenue = 0;
+
       for (const lostCustomer of lostCustomers) {
         const customerId = lostCustomer.customer.id;
         const latestChangeDate = lostCustomer.changedAt;
+
+        // Get appointments count for this customer (customer_visits)
+        const appointmentCount = await prisma.appointment.count({
+          where: {
+            customerId: customerId,
+            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          }
+        });
 
         // Get payments for this customer
         const customerPayments = await prisma.paymentWebhook.findMany({
@@ -536,31 +536,39 @@ class AdminDashboardController {
           }
         });
 
-        if (customerPayments.length > 0) {
-          const totalSpent = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
-          const averageTransaction = totalSpent / customerPayments.length;
+        // Calculate customer_visits (use appointments if available, otherwise use payment count)
+        const customerVisits = appointmentCount > 0 ? appointmentCount : customerPayments.length;
+        
+        // Calculate customer_revenue (sum of all payments)
+        const customerRevenue = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
+        
+        // Calculate Customer Average Transaction Value
+        const customerAverageTransaction = customerVisits > 0 ? customerRevenue / customerVisits : 0;
+        
+        // Calculate Potential Value for this customer = Customer Average Transaction Value × CLV
+        const potentialValue = customerAverageTransaction * averageLTV;
+        
+        // Add to total potential lost revenue
+        totalPotentialLostRevenue += potentialValue;
 
-          lostCustomerDetails.push({
-            customerId: customerId,
-            customerName: lostCustomer.customer.customerFullName,
-            latestStatusChangeDate: latestChangeDate,
-            totalPayments: customerPayments.length,
-            totalSpent: totalSpent,
-            averageTransaction: Math.round(averageTransaction * 100) / 100,
-            ltv: Math.round(averageLTV * 100) / 100
-          });
-        } else {
-          lostCustomerDetails.push({
-            customerId: customerId,
-            customerName: lostCustomer.customer.customerFullName,
-            latestStatusChangeDate: latestChangeDate,
-            totalPayments: 0,
-            totalSpent: 0,
-            averageTransaction: 0,
-            ltv: Math.round(averageLTV * 100) / 100
-          });
-        }
+        lostCustomerDetails.push({
+          customerId: customerId,
+          customerName: lostCustomer.customer.customerFullName,
+          latestStatusChangeDate: latestChangeDate,
+          totalPayments: customerPayments.length,
+          totalAppointments: appointmentCount,
+          customerVisits: customerVisits,
+          totalSpent: customerRevenue,
+          averageTransaction: Math.round(customerAverageTransaction * 100) / 100,
+          potentialValue: Math.round(potentialValue * 100) / 100,
+          ltv: Math.round(averageLTV * 100) / 100
+        });
       }
+      
+      // Calculate Average Potential Lost Revenue = Total Potential Value ÷ Number of Lost Customers
+      const totalLostRevenue = lostCustomers.length > 0 
+        ? totalPotentialLostRevenue / lostCustomers.length 
+        : 0;
       
       return res.json({
         success: true,
