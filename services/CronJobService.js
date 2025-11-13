@@ -22,10 +22,10 @@ class CronJobService {
         monthlyUsage: '0 0 1 * *'  // Monthly on 1st at midnight (00:00)
       },
       test: {
-        job1: '*/60 * * * * *', // Every 60 seconds (1 minute)
-        job2: '*/60 * * * * *', // Every 60 seconds (1 minute)
-        job3: '*/60 * * * * *', // Every 60 seconds (1 minute)
-        job4: '*/60 * * * * *', // Every 60 seconds (1 minute)
+        job1: '*/60 * * * * *', // Every 60 seconds (1 minute) - Status Sync
+        job2: '*/120 * * * * *', // Every 120 seconds (2 minutes) - At Risk Check
+        job3: '*/300 * * * * *', // Every 300 seconds (5 minutes) - Lost Check
+        job4: '*/60 * * * * *', // Every 60 seconds (1 minute) - Heartbeat
         monthlyUsage: '*/120 * * * * *'  // Every 2 minutes for testing
       }
     };
@@ -34,14 +34,26 @@ class CronJobService {
   // Start all cron jobs - Only scheduling, no actual processing
   startAllJobs() {
     const currentSchedules = this.isTestMode ? this.schedules.test : this.schedules.production;
-    const mode = this.isTestMode ? 'TEST MODE (10 seconds)' : 'PRODUCTION MODE';
+    const mode = this.isTestMode ? 'TEST MODE' : 'PRODUCTION MODE';
+    
+    if (this.isTestMode) {
+      console.log(`🕒 Starting cron jobs in ${mode}`);
+      console.log(`   - Status Sync: Every 1 minute`);
+      console.log(`   - At Risk Check: Every 2 minutes`);
+      console.log(`   - Lost Check: Every 5 minutes`);
+    } else {
+      console.log(`🕒 Starting cron jobs in ${mode} - Production schedule`);
+    }
 
     // Cron job 1
     this.scheduleJob('cron-job-1', currentSchedules.job1, async () => {
-      console.log('⏱️ [cron-job-1] Status sync started');
+      const startTime = new Date();
+      console.log(`⏱️ [cron-job-1] Status sync started at ${startTime.toISOString()}`);
       try {
         const results = await this.customerStatusService.processAllCustomerStatuses();
-        console.log('✅ [cron-job-1] Status sync completed', {
+        const endTime = new Date();
+        const duration = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`✅ [cron-job-1] Status sync completed in ${duration}s at ${endTime.toISOString()}`, {
           processed: results.processed,
           updated: results.updated,
           counts: {
@@ -60,12 +72,13 @@ class CronJobService {
 
     // Cron job 2 - At Risk
     this.scheduleJob('cron-job-2', currentSchedules.job2, async () => {
+      const startTime = new Date();
       try {
         // Get current at_risk customers before status update
         const currentAtRiskCustomers = await this.customerStatusService.getCustomersByStatus('at_risk');
         const beforeCount = currentAtRiskCustomers.length;
 
-        console.log('⏱️ [cron-job-2] At-risk status update started');
+        console.log(`⏱️ [cron-job-2] At-risk status update started at ${startTime.toISOString()}`);
         const results = await this.customerStatusService.processAllCustomerStatuses();
 
         // Get at_risk customers after status update
@@ -90,7 +103,9 @@ class CronJobService {
           }
         }
 
-        console.log('✅ [cron-job-2] At-risk status update completed', {
+        const endTime = new Date();
+        const duration = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`✅ [cron-job-2] At-risk status update completed in ${duration}s at ${endTime.toISOString()}`, {
           processed: results.processed,
           updated: results.updated,
           counts: {
@@ -110,11 +125,13 @@ class CronJobService {
 
     // Cron job 3 - Lost customers
     this.scheduleJob('cron-job-3', currentSchedules.job3, async () => {
+      const startTime = new Date();
       try {
         // Get current lost customers before status update
         const currentLostCustomers = await this.customerStatusService.getCustomersByStatus('lost');
         const beforeCount = currentLostCustomers.length;
 
+        console.log(`⏱️ [cron-job-3] Lost status update started at ${startTime.toISOString()}`);
         // Call status update API for Lost processing
         const results = await this.customerStatusService.processAllCustomerStatuses();
 
@@ -140,7 +157,9 @@ class CronJobService {
           }
         }
 
-        console.log('✅ [cron-job-3] Lost status update completed', {
+        const endTime = new Date();
+        const duration = ((endTime - startTime) / 1000).toFixed(2);
+        console.log(`✅ [cron-job-3] Lost status update completed in ${duration}s at ${endTime.toISOString()}`, {
           processed: results.processed,
           updated: results.updated,
           counts: {
@@ -171,6 +190,23 @@ class CronJobService {
         console.error('❌ Monthly usage reporting error:', error.message);
       }
     });
+
+    // Summary log
+    console.log(`\n✅ All cron jobs scheduled successfully in ${mode}`);
+    if (this.isTestMode) {
+      console.log(`📊 Test Mode Configuration:`);
+      console.log(`   - Job 1 (Status Sync): Every 60 seconds (1 minute)`);
+      console.log(`   - Job 2 (At Risk Check): Every 120 seconds (2 minutes)`);
+      console.log(`   - Job 3 (Lost Check): Every 300 seconds (5 minutes)`);
+      console.log(`   - Job 4 (Heartbeat): Every 60 seconds (1 minute)`);
+      console.log(`   - Monthly Usage: Every 120 seconds (2 minutes)`);
+      console.log(`   - Risk Threshold: ${process.env.AT_RISK_TEST_MINUTES || 2} minutes`);
+      console.log(`   - Lost Threshold: ${process.env.LOST_TEST_MINUTES || 5} minutes`);
+      console.log(`\n⏰ Test Mode Schedule:`);
+      console.log(`   - Status Sync runs every 1 minute`);
+      console.log(`   - At Risk check runs every 2 minutes`);
+      console.log(`   - Lost check runs every 5 minutes\n`);
+    }
   }
 
   // Schedule individual job
@@ -185,6 +221,26 @@ class CronJobService {
     });
 
     this.jobs.set(name, job);
+    
+    // Log schedule info for verification
+    if (this.isTestMode) {
+      let scheduleDesc = '';
+      if (name === 'cron-job-1') {
+        scheduleDesc = 'Every 60 seconds (1 minute)';
+      } else if (name === 'cron-job-2') {
+        scheduleDesc = 'Every 120 seconds (2 minutes)';
+      } else if (name === 'cron-job-3') {
+        scheduleDesc = 'Every 300 seconds (5 minutes)';
+      } else if (name === 'cron-job-4') {
+        scheduleDesc = 'Every 60 seconds (1 minute)';
+      } else {
+        scheduleDesc = 'Test Mode';
+      }
+      console.log(`📅 Scheduled ${name} with schedule: ${schedule} (${scheduleDesc})`);
+    } else {
+      console.log(`📅 Scheduled ${name} with schedule: ${schedule} (Production Mode)`);
+    }
+    
     return job;
   }
 

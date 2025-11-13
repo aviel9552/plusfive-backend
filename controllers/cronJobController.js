@@ -1,8 +1,8 @@
-const CustomerStatusCronService = require('../services/CustomerStatusCronService');
+const CustomerStatusService = require('../services/CustomerStatusService');
 
 class CronJobController {
     constructor() {
-        this.cronService = new CustomerStatusCronService();
+        this.customerStatusService = new CustomerStatusService();
     }
 
     // Manual trigger for all users
@@ -10,9 +10,8 @@ class CronJobController {
         try {
             const authenticatedUser = req.user;
 
-            
             // Process all users - no userId filter
-            const result = await this.cronService.triggerStatusUpdate(null);
+            const result = await this.customerStatusService.processAllCustomerStatuses(null);
             
             return res.json({
                 success: true,
@@ -32,8 +31,7 @@ class CronJobController {
                             recovered: result.recovered
                         },
                         errors: result.errors
-                    },
-                    details: result.details.filter(d => d.changed) // Only show changed statuses
+                    }
                 }
             });
         } catch (error) {

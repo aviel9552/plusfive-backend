@@ -19,11 +19,11 @@ class CustomerStatusService {
         this.statusThresholds = this.isTestMode ? {
             // Testing thresholds - minute-based
             atRisk: {
-                defaultDays: parseNumber(process.env.AT_RISK_TEST_MINUTES, 1),
+                defaultDays: parseNumber(process.env.AT_RISK_TEST_MINUTES, 2),
                 bufferDays: 0
             },
             lost: {
-                defaultDays: parseNumber(process.env.LOST_TEST_MINUTES, 2),
+                defaultDays: parseNumber(process.env.LOST_TEST_MINUTES, 5),
                 bufferDays: 0
             }
         } : {
@@ -157,31 +157,46 @@ class CustomerStatusService {
         }
     }
 
-    // Get last appointment updatedAt for customer with detailed comparison
-    async getLastVisitDate(customerId) {
+    // Get last visit date (payment date priority over appointment date)
+    async getLastVisitDate(customerId, userId = null) {
         try {
-            const lastAppointment = await prisma.appointment.findFirst({
-                where: { customerId },
-                orderBy: { updatedAt: 'desc' }, // Get the most recently updated appointment
-                select: { updatedAt: true, startDate: true }
-            });
-
-            if (lastAppointment) {
-                const lastUpdatedAt = new Date(lastAppointment.updatedAt);
-                const currentTime = new Date();
-
-                // Calculate time difference
-                const timeDifference = currentTime - lastUpdatedAt;
-                const daysDifference = Math.floor(timeDifference / (1000 * 60 * 60 * 24));
-                const hoursDifference = Math.floor((timeDifference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                const minutesDifference = Math.floor((timeDifference % (1000 * 60 * 60)) / (1000 * 60));
-
-                
-
-                return lastUpdatedAt;
+            // Priority: Payment date over appointment date
+            // Get last successful payment for this customer
+            const paymentWhere = {
+                customerId: customerId,
+                status: 'success'
+            };
+            if (userId) {
+                paymentWhere.userId = userId;
             }
 
-      
+            const lastPayment = await prisma.paymentWebhook.findFirst({
+                where: paymentWhere,
+                orderBy: { paymentDate: 'desc' },
+                select: { paymentDate: true }
+            });
+
+            // Get last appointment for this customer (fallback if no payment)
+            const appointmentWhere = {
+                customerId: customerId
+            };
+            if (userId) {
+                appointmentWhere.userId = userId;
+            }
+
+            const lastAppointment = await prisma.appointment.findFirst({
+                where: appointmentWhere,
+                orderBy: { updatedAt: 'desc' },
+                select: { updatedAt: true }
+            });
+
+            // Priority: Payment date over appointment date
+            if (lastPayment) {
+                return new Date(lastPayment.paymentDate);
+            } else if (lastAppointment) {
+                return new Date(lastAppointment.updatedAt);
+            }
+
             return null;
         } catch (error) {
             console.error('Error getting last visit date:', error);
@@ -214,9 +229,16 @@ class CustomerStatusService {
 
             const currentStatus = customerUser?.status || 'new';
 
-            const lastVisitDate = await this.getLastVisitDate(customerId);
+            // Skip "new" status customers - don't process them at all
+            // "new" status customers should remain "new" until payment is made
+            // Payment webhook will update them to "active" after first payment
+            if (currentStatus === 'new') {
+                return 'new'; // Keep as new, don't update
+            }
+
+            const lastVisitDate = await this.getLastVisitDate(customerId, userId);
             if (!lastVisitDate) {
-                return 'new'; // No appointments yet
+                return 'new'; // No payment or appointments yet
             }
 
                   const daysSinceLastVisit = this.calculateDaysBetween(lastVisitDate, new Date());
@@ -246,21 +268,42 @@ class CustomerStatusService {
 
 
             // Determine status based on days since last visit
-            if (daysSinceLastVisit >= lostThreshold) {
-                return 'lost';
-            } else if (daysSinceLastVisit >= atRiskThreshold) {
-                return 'at_risk';
-            } else {
-                // Customer is active (visited recently)
-                // If they were previously lost/at_risk and now visited, they become recovered
-                // If they are already recovered, they stay recovered
-                // If they are already active, they stay active
+            // Important: Active/Recovered customers must go through "at_risk" first before "lost"
+            // Status progression: active/recovered → at_risk → lost
+            
+            // Customer has recent activity (less than risk threshold)
+            if (daysSinceLastVisit < atRiskThreshold) {
+                // Recent activity - customer is active or recovered
                 if (currentStatus === 'lost' || currentStatus === 'at_risk') {
-                    return 'recovered';
+                    return 'recovered'; // Customer returned after being lost/at risk
                 } else if (currentStatus === 'recovered') {
                     return 'recovered'; // Recovered customers stay recovered
                 } else {
                     return 'active'; // Active customers stay active
+                }
+            }
+            // Customer crossed risk threshold but not lost threshold
+            else if (daysSinceLastVisit >= atRiskThreshold && daysSinceLastVisit < lostThreshold) {
+                // Active/Recovered customers must transition to at_risk first
+                if (currentStatus === 'active' || currentStatus === 'recovered') {
+                    return 'at_risk'; // Transition to at_risk
+                } else if (currentStatus === 'at_risk') {
+                    return 'at_risk'; // Stay at_risk until lost threshold
+                } else {
+                    return currentStatus; // lost stays lost
+                }
+            }
+            // Customer crossed lost threshold
+            else {
+                // Active/Recovered customers must go through at_risk first
+                // Only transition to lost if already at_risk
+                if (currentStatus === 'active' || currentStatus === 'recovered') {
+                    // Should have been at_risk first, but if somehow missed, go to at_risk now
+                    return 'at_risk';
+                } else if (currentStatus === 'at_risk') {
+                    return 'lost'; // Transition from at_risk to lost
+                } else {
+                    return 'lost'; // Already lost, stay lost
                 }
             }
 
@@ -299,6 +342,13 @@ class CustomerStatusService {
             });
 
             const currentStatus = currentCustomerUser?.status || 'new';
+
+            // Skip "new" status customers - don't update them at all
+            // "new" status customers should remain "new" until payment is made
+            // Payment webhook will update them to "active" after first payment
+            if (currentStatus === 'new') {
+                return { ...customer, currentStatus: 'new', statusChanged: false };
+            }
 
             // Only update if status is actually changing
             if (currentStatus === newStatus) {
@@ -426,12 +476,12 @@ class CustomerStatusService {
 
             for (const customer of customers) {
                 try {
-                    const newStatus = await this.determineCustomerStatus(customer.id);
+                    const newStatus = await this.determineCustomerStatus(customer.id, customer.userId);
                     results.processed++;
 
                     if (newStatus) {
                         // Get additional context for better logging
-                        const lastVisitDate = await this.getLastVisitDate(customer.id);
+                        const lastVisitDate = await this.getLastVisitDate(customer.id, customer.userId);
                         const daysSinceLastVisit = lastVisitDate ? 
                             this.calculateDaysBetween(lastVisitDate, new Date()) : 0;
                         

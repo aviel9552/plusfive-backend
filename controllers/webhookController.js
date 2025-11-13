@@ -174,93 +174,9 @@ const handleAppointmentWebhook = async (req, res) => {
     let customerUserId;
 
     if (existingCustomerUser) {
-      // Check previous status before updating
-      const previousStatus = existingCustomerUser.status;
-
-      if (previousStatus === 'lost' || previousStatus === 'risk') {
-        // Update to recovered if customer was lost or at risk
-        const updatedCustomerUser = await prisma.customerUser.update({
-          where: {
-            id: existingCustomerUser.id
-          },
-          data: {
-            status: 'recovered'
-          }
-        });
-        customerUserId = updatedCustomerUser.id;
-
-        // Create CustomerStatusLog for Lost/Risk to Recovered transition
-        await prisma.customerStatusLog.create({
-          data: {
-            customerId: customerId,
-            userId: userId,
-            oldStatus: previousStatus === 'lost' ? 'Lost' : 'Risk',
-            newStatus: 'Recovered',
-            reason: 'New appointment after being lost/at risk'
-          }
-        });
-
-        // Send recovered customer notification to business owner via n8n
-        const businessOwner = await prisma.user.findUnique({
-          where: { id: userId },
-          select: { phoneNumber: true, businessName: true, businessType: true, whatsappNumber: true }
-        });
-
-        if (businessOwner && (businessOwner.phoneNumber || businessOwner.whatsappNumber)) {
-          try {
-            const n8nService = new N8nMessageService();
-
-            const webhookParams = {
-              customerName: webhookData.CustomerFullName,
-              customerPhone: formattedPhoneForAppointment,
-              businessName: businessOwner.businessName || webhookData.BusinessName,
-              businessType: businessOwner.businessType || 'general',
-              customerService: webhookData.SelectedServices || '',
-              businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
-              lastVisitDate: new Date().toISOString().split('T')[0],
-              whatsappPhone: formattedPhoneForAppointment,
-              futureAppointment: webhookData.StartDate,
-              previousStatus: previousStatus
-            };
-
-            await n8nService.triggerRecoveredCustomerNotification(webhookParams);
-            console.log(`✅ N8n recovered customer notification triggered for: ${webhookData.CustomerFullName} (${previousStatus} → recovered)`);
-
-          } catch (webhookError) {
-            console.error('❌ Error triggering n8n recovered customer notification:', webhookError);
-            // Fallback to old WhatsApp service if n8n fails
-            try {
-              const WhatsAppService = require('../services/WhatsAppService');
-              const whatsappService = new WhatsAppService();
-
-              await whatsappService.sendRecoveredCustomerTemplate(
-                businessOwner.businessName || webhookData.BusinessName,
-                webhookData.CustomerFullName,
-                formattedPhoneForAppointment,
-                webhookData.StartDate,
-                webhookData.SelectedServices,
-                businessOwner.phoneNumber || businessOwner.whatsappNumber
-              );
-            } catch (fallbackError) {
-              console.error('Failed to send recovered customer notification (fallback):', fallbackError.message);
-            }
-          }
-        } else {
-          console.warn('No phone number found for business owner to send recovered customer notification');
-        }
-      } else if (previousStatus === 'new') {
-        // Keep status as 'new' - will be updated to 'active' after payment
-        customerUserId = existingCustomerUser.id;
-      } else if (previousStatus === 'recovered') {
-        // Recovered customers stay recovered - no status change
-        customerUserId = existingCustomerUser.id;
-      } else if (previousStatus === 'active') {
-        // Active customers stay active - no status change
-        customerUserId = existingCustomerUser.id;
-      } else {
-        // Keep existing status for any other status
-        customerUserId = existingCustomerUser.id;
-      }
+      // Keep existing status - no status update on appointment webhook
+      // Status updates (lost/risk to recovered, new to active) happen only on payment checkout webhook
+      customerUserId = existingCustomerUser.id;
     } else {
       // Check if customerId exists but with different userId
       const customerWithDifferentUser = await prisma.customerUser.findFirst({
@@ -526,12 +442,35 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     }
 
 
-    // 2. Find customer by CustomerFullName first, then by BusinessId AND EmployeeId
+    // 2. Find customer by CustomerPhone first (most reliable), then CustomerFullName, then BusinessId AND EmployeeId
     let userId = null;
     let customerId = null;
 
-    // First try to find by CustomerFullName (exact match)
-    if (actualData.CustomerFullName) {
+    // First try to find by CustomerPhone (most reliable - unique identifier)
+    if (actualData.CustomerPhone) {
+      const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
+      const existingCustomerByPhone = await prisma.customers.findFirst({
+        where: {
+          customerPhone: formattedPhone
+        },
+        select: {
+          id: true,
+          businessId: true,
+          employeeId: true,
+          userId: true,
+          customerFullName: true,
+          customerPhone: true
+        }
+      });
+
+      if (existingCustomerByPhone) {
+        customerId = existingCustomerByPhone.id;
+        userId = existingCustomerByPhone.userId;
+      }
+    }
+
+    // If not found by phone, try by CustomerFullName (exact match)
+    if (!customerId && actualData.CustomerFullName) {
       const existingCustomerByName = await prisma.customers.findFirst({
         where: {
           customerFullName: actualData.CustomerFullName
@@ -614,7 +553,8 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     });
 
 
-    // Update CustomerUser status from 'new' to 'active' after payment
+    // Update CustomerUser status after payment
+    // Handles: 'new' to 'active', 'lost'/'at_risk' to 'recovered'
     if (customerId && userId) {
       try {
         // Check if CustomerUser record exists
@@ -629,29 +569,84 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           }
         });
 
-        // If customer status is 'new', update to 'active' after payment
-        if (existingCustomerUser && existingCustomerUser.status === 'new') {
-          await prisma.customerUser.update({
-            where: {
-              id: existingCustomerUser.id
-            },
-            data: {
-              status: 'active'
-            }
-          });
+        if (existingCustomerUser) {
+          const previousStatus = existingCustomerUser.status;
+          let newStatus = null;
+          let statusChangeReason = null;
 
-          // Create CustomerStatusLog for New to Active transition
-          await prisma.customerStatusLog.create({
-            data: {
-              customerId: customerId,
-              userId: userId,
-              oldStatus: 'New',
-              newStatus: 'Active',
-              reason: 'First payment received'
-            }
-          });
+          // Handle lost/at_risk to recovered
+          if (previousStatus === 'lost' || previousStatus === 'at_risk' || previousStatus === 'risk') {
+            newStatus = 'recovered';
+            statusChangeReason = `Payment received after being ${previousStatus === 'lost' ? 'lost' : 'at risk'}`;
+          }
+          // Handle new to active
+          else if (previousStatus === 'new') {
+            newStatus = 'active';
+            statusChangeReason = 'First payment received';
+          }
 
-          console.log(`✅ Customer status updated from 'new' to 'active' after payment - Customer ID: ${customerId}`);
+          // Update status if there's a change
+          if (newStatus) {
+            await prisma.customerUser.update({
+              where: {
+                id: existingCustomerUser.id
+              },
+              data: {
+                status: newStatus
+              }
+            });
+
+            // Create CustomerStatusLog for status transition
+            await prisma.customerStatusLog.create({
+              data: {
+                customerId: customerId,
+                userId: userId,
+                oldStatus: previousStatus === 'lost' ? 'Lost' : (previousStatus === 'at_risk' || previousStatus === 'risk' ? 'Risk' : 'New'),
+                newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
+                reason: statusChangeReason
+              }
+            });
+
+            console.log(`✅ Customer status updated from '${previousStatus}' to '${newStatus}' after payment - Customer ID: ${customerId}`);
+
+            // Send recovered customer notification if status changed to recovered
+            if (newStatus === 'recovered') {
+              try {
+                const businessOwner = await prisma.user.findUnique({
+                  where: { id: userId },
+                  select: { phoneNumber: true, businessName: true, businessType: true, whatsappNumber: true }
+                });
+
+                if (businessOwner && (businessOwner.phoneNumber || businessOwner.whatsappNumber)) {
+                  const customer = await prisma.customers.findUnique({
+                    where: { id: customerId },
+                    select: { customerFullName: true, customerPhone: true, selectedServices: true }
+                  });
+
+                  if (customer) {
+                    const n8nService = new N8nMessageService();
+                    const webhookParams = {
+                      customerName: customer.customerFullName,
+                      customerPhone: customer.customerPhone,
+                      businessName: businessOwner.businessName || 'Business',
+                      businessType: businessOwner.businessType || 'general',
+                      customerService: customer.selectedServices || '',
+                      businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
+                      lastVisitDate: new Date().toISOString().split('T')[0],
+                      whatsappPhone: customer.customerPhone,
+                      previousStatus: previousStatus
+                    };
+
+                    await n8nService.triggerRecoveredCustomerNotification(webhookParams);
+                    console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${previousStatus} → recovered)`);
+                  }
+                }
+              } catch (notificationError) {
+                console.error('❌ Error triggering n8n recovered customer notification:', notificationError);
+                // Don't fail the webhook if notification fails
+              }
+            }
+          }
         }
       } catch (statusUpdateError) {
         console.error('❌ Error updating customer status after payment:', statusUpdateError);
