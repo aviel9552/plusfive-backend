@@ -369,8 +369,8 @@ class AdminDashboardController {
         where.userId = authenticatedUser.userId;
       }
 
-      // Get customers who have ever been recovered (lifetime count) from customer_status_logs table
-      const recoveredCustomersLogs = await prisma.customerStatusLog.findMany({
+      // Get all Recovered status logs to find unique customers
+      const allRecoveredLogs = await prisma.customerStatusLog.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
           newStatus: 'Recovered'
@@ -378,29 +378,69 @@ class AdminDashboardController {
         select: {
           customerId: true,
           changedAt: true
-        },
-        distinct: ['customerId'] // Get unique customers who have ever been recovered
-      });
-
-      // Get revenue from payments with revenuePaymentStatus = 'recovered'
-      const recoveredPayments = await prisma.paymentWebhook.findMany({
-        where: {
-          status: 'success',
-          revenuePaymentStatus: 'recovered',
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-        },
-        select: {
-          total: true,
-          customerId: true,
-          paymentDate: true
         }
       });
-      
-      // Calculate total recovered revenue
-      const totalRecoveredRevenue = recoveredPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
 
-      // Count unique customers who have ever been recovered (lifetime count)
-      const recoveredCustomersCount = recoveredCustomersLogs.length;
+      // Calculate Recovered Revenue according to formula:
+      // 1. Find the FIRST time each customer became Recovered (permanent starting point)
+      // 2. Count ALL payments made AFTER that first Recovered timestamp - FOREVER
+      // 3. Even if customer becomes Lost again, still count all payments after first Recovered
+      // 4. Even if they become Recovered again, don't reset, continue from first Recovered moment
+      
+      let totalRecoveredRevenue = 0;
+      
+      // Get unique customer IDs who have ever been recovered (dynamic data)
+      const uniqueRecoveredCustomerIds = [...new Set(allRecoveredLogs.map(log => log.customerId))];
+      
+      // For each recovered customer, find their FIRST Recovered timestamp
+      // Requirement: Only count when status changes from Lost → Recovered (first time)
+      for (const customerId of uniqueRecoveredCustomerIds) {
+        // Get the FIRST time this customer became Recovered from Lost status (earliest timestamp)
+        const firstRecoveredLog = await prisma.customerStatusLog.findFirst({
+          where: {
+            customerId: customerId,
+            newStatus: 'Recovered',
+            oldStatus: 'Lost', // Only count Lost → Recovered transitions (as per requirement)
+            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          },
+          orderBy: {
+            changedAt: 'asc' // Get the earliest (first) Lost → Recovered status change
+          },
+          select: {
+            changedAt: true // This is the permanent starting point
+          }
+        });
+        
+        if (firstRecoveredLog) {
+          // Get ALL payments made AFTER the first Recovered timestamp (forever)
+          // This includes payments even if customer status changes to Lost or Recovered again
+          const paymentsAfterFirstRecovery = await prisma.paymentWebhook.findMany({
+            where: {
+              customerId: customerId,
+              status: 'success',
+              paymentDate: {
+                gte: firstRecoveredLog.changedAt // All payments after first Recovered moment
+              },
+              ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            },
+            select: {
+              total: true,
+              paymentDate: true
+            }
+          });
+          
+          // Sum all payments after first Recovered timestamp (dynamic calculation)
+          const customerRecoveredRevenue = paymentsAfterFirstRecovery.reduce(
+            (sum, payment) => sum + (payment.total || 0), 
+            0
+          );
+          
+          totalRecoveredRevenue += customerRecoveredRevenue;
+        }
+      }
+
+      // Count unique customers who have ever been recovered (lifetime count - dynamic)
+      const recoveredCustomersCount = uniqueRecoveredCustomerIds.length;
 
       // Get customers who are currently in Lost status
       const lostCustomers = await prisma.customerStatusLog.findMany({
