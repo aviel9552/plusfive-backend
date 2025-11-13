@@ -369,16 +369,17 @@ class AdminDashboardController {
         where.userId = authenticatedUser.userId;
       }
 
-      // Get customers who are currently in Recovered status from CustomerUser table
-      const recoveredCustomers = await prisma.customerUser.findMany({
+      // Get customers who have ever been recovered (lifetime count) from customer_status_logs table
+      const recoveredCustomersLogs = await prisma.customerStatusLog.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
-          status: 'recovered'
+          newStatus: 'Recovered'
         },
         select: {
           customerId: true,
-          updatedAt: true
-        }
+          changedAt: true
+        },
+        distinct: ['customerId'] // Get unique customers who have ever been recovered
       });
 
       // Get revenue from payments with revenuePaymentStatus = 'recovered'
@@ -398,7 +399,8 @@ class AdminDashboardController {
       // Calculate total recovered revenue
       const totalRecoveredRevenue = recoveredPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
 
-      const recoveredCustomersCount = recoveredCustomers.length;
+      // Count unique customers who have ever been recovered (lifetime count)
+      const recoveredCustomersCount = recoveredCustomersLogs.length;
 
       // Get customers who are currently in Lost status
       const lostCustomers = await prisma.customerStatusLog.findMany({

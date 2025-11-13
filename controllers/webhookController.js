@@ -515,7 +515,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     }
 
     // 4. Get customer status from CustomerUser table before creating PaymentWebhook
+    // Determine revenuePaymentStatus based on current status and what it will become after payment
     let revenuePaymentStatus = null;
+    let previousStatus = null;
     if (customerId) {
       const customerUser = await prisma.customerUser.findFirst({
         where: {
@@ -527,12 +529,18 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       });
 
       if (customerUser && customerUser.status) {
-        // Map customer status to revenue payment status
+        previousStatus = customerUser.status;
+        
+        // If customer is already recovered, payment is from recovered customer
         if (customerUser.status === 'recovered') {
           revenuePaymentStatus = 'recovered';
-        } else if (customerUser.status === 'lost') {
-          revenuePaymentStatus = 'lost';
         }
+        // If customer is lost/at_risk/risk, this payment will RECOVER them
+        // So set revenuePaymentStatus = 'recovered' (this payment is recovery revenue)
+        else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
+          revenuePaymentStatus = 'recovered'; // This payment recovers the customer
+        }
+        // For other statuses (new, active), leave as null
       }
     }
 
@@ -570,17 +578,18 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         });
 
         if (existingCustomerUser) {
-          const previousStatus = existingCustomerUser.status;
+          // Use previousStatus from earlier query, or get from existingCustomerUser if not set
+          const currentPreviousStatus = previousStatus || existingCustomerUser.status;
           let newStatus = null;
           let statusChangeReason = null;
 
           // Handle lost/at_risk to recovered
-          if (previousStatus === 'lost' || previousStatus === 'at_risk' || previousStatus === 'risk') {
+          if (currentPreviousStatus === 'lost' || currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk') {
             newStatus = 'recovered';
-            statusChangeReason = `Payment received after being ${previousStatus === 'lost' ? 'lost' : 'at risk'}`;
+            statusChangeReason = `Payment received after being ${currentPreviousStatus === 'lost' ? 'lost' : 'at risk'}`;
           }
           // Handle new to active
-          else if (previousStatus === 'new') {
+          else if (currentPreviousStatus === 'new') {
             newStatus = 'active';
             statusChangeReason = 'First payment received';
           }
@@ -601,13 +610,13 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               data: {
                 customerId: customerId,
                 userId: userId,
-                oldStatus: previousStatus === 'lost' ? 'Lost' : (previousStatus === 'at_risk' || previousStatus === 'risk' ? 'Risk' : 'New'),
+                oldStatus: currentPreviousStatus === 'lost' ? 'Lost' : (currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk' ? 'Risk' : 'New'),
                 newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
                 reason: statusChangeReason
               }
             });
 
-            console.log(`✅ Customer status updated from '${previousStatus}' to '${newStatus}' after payment - Customer ID: ${customerId}`);
+            console.log(`✅ Customer status updated from '${currentPreviousStatus}' to '${newStatus}' after payment - Customer ID: ${customerId}`);
 
             // Send recovered customer notification if status changed to recovered
             if (newStatus === 'recovered') {
@@ -634,11 +643,11 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                       businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
                       lastVisitDate: new Date().toISOString().split('T')[0],
                       whatsappPhone: customer.customerPhone,
-                      previousStatus: previousStatus
+                      previousStatus: currentPreviousStatus
                     };
 
                     await n8nService.triggerRecoveredCustomerNotification(webhookParams);
-                    console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${previousStatus} → recovered)`);
+                    console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${currentPreviousStatus} → recovered)`);
                   }
                 }
               } catch (notificationError) {
