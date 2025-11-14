@@ -1212,6 +1212,11 @@ class AdminDashboardController {
         }
       });
 
+      // Determine how many customers have EVER paid at least once
+      const customersWhoPaidCount = Array.from(customerRevenueMap.values()).filter(
+        customerData => customerData.totalLTV > 0
+      ).length;
+
       // Process data by month
       const monthlyLTVData = [];
       
@@ -1256,10 +1261,10 @@ class AdminDashboardController {
         });
 
         // Calculate average LTV for this month
-        // Formula: (Total revenue from payments made IN this month) ÷ (Total number of customers)
+        // Formula: (Total revenue from payments made IN this month) ÷ (Customers who have paid at least once)
         // If no payments in this month, averageLTV will be 0
-        const averageLTV = totalCustomers > 0 
-          ? totalRevenueForMonth / totalCustomers 
+        const averageLTV = customersWhoPaidCount > 0 
+          ? totalRevenueForMonth / customersWhoPaidCount 
           : 0;
 
         // Debug logging for monthly calculation
@@ -1267,9 +1272,10 @@ class AdminDashboardController {
           console.log(`📊 [Monthly LTV] ${targetDate.toLocaleString('default', { month: 'short' })} ${currentYear}:`, {
             totalRevenueForMonth: Math.round(totalRevenueForMonth * 100) / 100,
             totalCustomers,
+            customersWhoPaidCount,
             customersWithPayments,
             averageLTV: Math.round(averageLTV * 100) / 100,
-            formula: `(${Math.round(totalRevenueForMonth * 100) / 100} ÷ ${totalCustomers}) = ${Math.round(averageLTV * 100) / 100}`
+            formula: `(${Math.round(totalRevenueForMonth * 100) / 100} ÷ ${customersWhoPaidCount || 0}) = ${Math.round(averageLTV * 100) / 100}`
           });
         }
 
@@ -1291,8 +1297,8 @@ class AdminDashboardController {
         totalRevenueAllCustomers += customerData.totalLTV;
       });
       
-      const overallAverageLTV = totalCustomers > 0 
-        ? Math.round((totalRevenueAllCustomers / totalCustomers) * 100) / 100
+      const overallAverageLTV = customersWhoPaidCount > 0 
+        ? Math.round((totalRevenueAllCustomers / customersWhoPaidCount) * 100) / 100
         : 0;
 
       // Debug logging for overall average calculation
@@ -1313,7 +1319,8 @@ class AdminDashboardController {
           summary: {
             totalMonths: monthlyLTVData.length,
             overallAverageLTV: overallAverageLTV,
-            totalCustomers: totalCustomers
+            totalCustomers: totalCustomers,
+            customersWhoPaid: customersWhoPaidCount
           }
         }
       });
