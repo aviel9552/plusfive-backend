@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getAllPayments, createPayment } = require('../controllers/paymentController');
+// const { getAllPayments, createPayment } = require('../controllers/paymentController'); // Removed - Payment/Order models no longer exist
 const { 
   createCheckoutSession,
   getPrices,
@@ -15,12 +15,12 @@ const {
   handleWebhook
 } = require('../controllers/stripeController');
 const { authenticateToken } = require('../middleware/auth');
-const { validateRequest } = require('../middleware/validation');
-const { paymentCreateSchema } = require('../lib/validations');
+// const { validateRequest } = require('../middleware/validation');
+// const { paymentCreateSchema } = require('../lib/validations'); // Removed - Payment model no longer exists
 
-// General payment routes
-router.get('/', authenticateToken, getAllPayments);
-router.post('/', authenticateToken, validateRequest(paymentCreateSchema), createPayment);
+// General payment routes (Removed - Payment/Order models no longer exist, using PaymentWebhook instead)
+// router.get('/', authenticateToken, getAllPayments);
+// router.post('/', authenticateToken, validateRequest(paymentCreateSchema), createPayment);
 
 // Stripe subscription routes
 router.post('/checkout', authenticateToken, createCheckoutSession);

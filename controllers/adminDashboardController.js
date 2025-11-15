@@ -76,106 +76,99 @@ class AdminDashboardController {
         }
       });
 
-      // Recovered Revenue (payments from users who have recovered customers)
-      const recoveredRevenue = await prisma.payment.aggregate({
+      // Build where clause based on user role
+      let where = {
+        status: 'success' // Only count successful payments
+      };
+      
+      if (authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
+
+      // Recovered Revenue (payments with revenuePaymentStatus = 'recovered')
+      const recoveredRevenue = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: startDate,
             lte: endDate
           },
-          user: {
-            customerUsers: {
-              some: {
-                status: 'recovered'
-              }
-            }
-          }
+          revenuePaymentStatus: 'recovered'
         },
         _sum: {
-          amount: true
+          total: true
         }
       });
 
-      const prevRecoveredRevenue = await prisma.payment.aggregate({
+      const prevRecoveredRevenue = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: prevStartDate,
             lte: prevEndDate
           },
-          user: {
-            customerUsers: {
-              some: {
-                status: 'recovered'
-              }
-            }
-          }
+          revenuePaymentStatus: 'recovered'
         },
         _sum: {
-          amount: true
+          total: true
         }
       });
 
-      // Lost Revenue (payments from users who have lost customers)
-      const lostRevenue = await prisma.payment.aggregate({
+      // Lost Revenue - Calculate based on lost customers (using getRevenueCounts logic)
+      // For now, we'll use the same logic as recovered revenue but for lost status
+      // Note: Lost revenue calculation might need custom logic based on your requirements
+      const lostRevenue = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: startDate,
             lte: endDate
           },
-          user: {
-            customerUsers: {
-              some: {
-                status: 'lost'
-              }
-            }
-          }
+          revenuePaymentStatus: 'lost'
         },
         _sum: {
-          amount: true
+          total: true
         }
       });
 
-      const prevLostRevenue = await prisma.payment.aggregate({
+      const prevLostRevenue = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: prevStartDate,
             lte: prevEndDate
           },
-          user: {
-            customerUsers: {
-              some: {
-                status: 'lost'
-              }
-            }
-          }
+          revenuePaymentStatus: 'lost'
         },
         _sum: {
-          amount: true
+          total: true
         }
       });
 
-      // Customer LTV (average monthly value)
-      const customerLTV = await prisma.payment.aggregate({
+      // Customer LTV (average monthly value) - Average of all successful payments
+      const customerLTV = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: startDate,
             lte: endDate
           }
         },
         _avg: {
-          amount: true
+          total: true
         }
       });
 
-      const prevCustomerLTV = await prisma.payment.aggregate({
+      const prevCustomerLTV = await prisma.paymentWebhook.aggregate({
         where: {
-          createdAt: {
+          ...where,
+          paymentDate: {
             gte: prevStartDate,
             lte: prevEndDate
           }
         },
         _avg: {
-          amount: true
+          total: true
         }
       });
 
@@ -195,29 +188,29 @@ class AdminDashboardController {
             trend: recoveredCustomers >= prevRecoveredCustomers ? 'up' : 'down'
           },
           recoveredRevenue: {
-            value: Math.round(recoveredRevenue._sum.amount) || 0,
+            value: Math.round(recoveredRevenue._sum.total) || 0,
             change: calculatePercentageChange(
-              Math.round(recoveredRevenue._sum.amount) || 0,
-              Math.round(prevRecoveredRevenue._sum.amount) || 0
+              Math.round(recoveredRevenue._sum.total) || 0,
+              Math.round(prevRecoveredRevenue._sum.total) || 0
             ),
-            trend: (Math.round(recoveredRevenue._sum.amount) || 0) >= (Math.round(prevRecoveredRevenue._sum.amount) || 0) ? 'up' : 'down'
+            trend: (Math.round(recoveredRevenue._sum.total) || 0) >= (Math.round(prevRecoveredRevenue._sum.total) || 0) ? 'up' : 'down'
           },
           lostRevenue: {
-            value:  Math.round(lostRevenue._sum.amount) || 0,
+            value:  Math.round(lostRevenue._sum.total) || 0,
             count: statusCounts.lost || 0,
             change: calculatePercentageChange(
-              lostRevenue._sum.amount || 0,
-              prevLostRevenue._sum.amount || 0
+              lostRevenue._sum.total || 0,
+              prevLostRevenue._sum.total || 0
             ),
-            trend: (lostRevenue._sum.amount || 0) >= (prevLostRevenue._sum.amount || 0) ? 'up' : 'down'
+            trend: (lostRevenue._sum.total || 0) >= (prevLostRevenue._sum.total || 0) ? 'up' : 'down'
           },
           customerLTV: {
-            value: Math.round(customerLTV._avg.amount || 0),
+            value: Math.round(customerLTV._avg.total || 0),
             change: calculatePercentageChange(
-              customerLTV._avg.amount || 0,
-              prevCustomerLTV._avg.amount || 0
+              customerLTV._avg.total || 0,
+              prevCustomerLTV._avg.total || 0
             ),
-            trend: (customerLTV._avg.amount || 0) >= (prevCustomerLTV._avg.amount || 0) ? 'up' : 'down'
+            trend: (customerLTV._avg.total || 0) >= (prevCustomerLTV._avg.total || 0) ? 'up' : 'down'
           }
         }
       };
@@ -237,29 +230,40 @@ class AdminDashboardController {
   getRevenueImpact = async (req, res) => {
     try {
       const { months = 7 } = req.query;
+      const authenticatedUser = req.user;
       const currentDate = new Date();
       const revenueData = [];
+
+      // Build where clause based on user role
+      let where = {
+        status: 'success' // Only count successful payments
+      };
+      
+      if (authenticatedUser && authenticatedUser.role === 'user') {
+        where.userId = authenticatedUser.userId;
+      }
 
       for (let i = months - 1; i >= 0; i--) {
         const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
         const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
         const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
 
-        const monthRevenue = await prisma.payment.aggregate({
+        const monthRevenue = await prisma.paymentWebhook.aggregate({
           where: {
-            createdAt: {
+            ...where,
+            paymentDate: {
               gte: startDate,
               lte: endDate
             }
           },
           _sum: {
-            amount: true
+            total: true
           }
         });
 
         revenueData.push({
           month: targetDate.toLocaleString('default', { month: 'long' }),
-          revenue: monthRevenue._sum.amount || 0,
+          revenue: monthRevenue._sum.total || 0,
           year: targetDate.getFullYear()
         });
       }
@@ -391,13 +395,31 @@ class AdminDashboardController {
         recoveredPayments.map(payment => payment.customerId)
       ).size;
 
-      // Get customers who are currently in Lost status
-      const lostCustomers = await prisma.customerStatusLog.findMany({
+      // Get customers who are currently in Lost or AtRisk status from CustomerUser table
+      // IMPORTANT: Only calculate Lost Revenue for customers with CURRENT status: 'lost', 'at_risk', or 'risk'
+      // DO NOT count customers with status: 'recovered', 'active', or 'new' in Lost Revenue calculation
+      // 
+      // Status filtering:
+      // ✅ INCLUDED in Lost Revenue: 'lost', 'at_risk', 'risk'
+      // ❌ EXCLUDED from Lost Revenue: 'recovered', 'active', 'new'
+      //
+      // When a customer's status changes from 'lost'/'at_risk'/'risk' to 'recovered' (after payment),
+      // their CustomerUser status is updated to 'recovered', and they will NOT be included in this query.
+      // This ensures that only customers who are CURRENTLY at_risk/lost are counted in Lost Revenue.
+      const atRiskAndLostCustomers = await prisma.customerUser.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
-          newStatus: 'Lost'
+          status: {
+            in: ['lost', 'at_risk', 'risk'] // ONLY these statuses are included in Lost Revenue
+            // EXCLUDED: 'recovered', 'active', 'new' - these customers are NOT in Lost Revenue calculation
+          },
+          isDeleted: false // Only active customer-user relationships
         },
-        include: {
+        select: {
+          customerId: true,
+          userId: true,
+          status: true,
+          updatedAt: true,
           customer: {
             select: {
               id: true,
@@ -407,12 +429,12 @@ class AdminDashboardController {
           }
         },
         orderBy: {
-          changedAt: 'desc'
-        },
-        distinct: ['customerId'] // Get the latest status for each customer
+          updatedAt: 'desc' // Get latest status (most recent update first)
+        }
       });
 
       // Get all customers for calculating average LTV (Average Lifetime Visits)
+      // NOTE: For averageLTV calculation, we use ALL customers (active, new, recovered, lost, at_risk, risk)
       const allCustomers = await prisma.customers.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
@@ -423,7 +445,16 @@ class AdminDashboardController {
         }
       });
 
-      const totalCustomers = allCustomers.length;
+      // For Lost Revenue calculation, we ONLY count customers with status 'lost', 'at_risk', or 'risk'
+      // IMPORTANT: Ignore active, new, and recovered status customers in Lost Revenue calculation
+      // This ensures that totalCustomers only includes lost/at_risk/risk customers for the formula: customerLostRevenue = ATV ÷ totalCustomers
+      const totalCustomersForLostRevenue = atRiskAndLostCustomers.length; // Only lost/at_risk/risk customers
+      
+      // For averageLTV calculation, use ALL customers
+      const totalCustomersForLTV = allCustomers.length; // All customers (active, new, recovered, lost, at_risk, risk)
+      
+      // Use totalCustomersForLostRevenue for Lost Revenue calculation
+      const totalCustomers = totalCustomersForLostRevenue; // Only lost/at_risk/risk customers
 
       // Calculate average LTV (Average Lifetime Visits) using optimized aggregation queries
       // Formula: (Total number of services received by all customers) ÷ (Total number of customers)
@@ -487,75 +518,236 @@ class AdminDashboardController {
       }
       
       // Calculate average: Total services ÷ Total customers
-      const averageLTV = totalCustomers > 0 ? totalServicesReceived / totalCustomers : 0;
+      // NOTE: Use totalCustomersForLTV (ALL customers) for averageLTV calculation, not just lost/at_risk/risk customers
+      const averageLTV = totalCustomersForLTV > 0 ? totalServicesReceived / totalCustomersForLTV : 0;
 
       // Calculate Lost Revenue according to formula:
-      // For each Lost customer:
-      // 1. Calculate customer_visits (appointments or payments)
-      // 2. Calculate customer_revenue (sum of all payments)
-      // 3. Customer Average Transaction Value = customer_revenue ÷ customer_visits
-      // 4. Potential Value = Customer Average Transaction Value × CLV (averageLTV)
+      // For each customer with status at_risk or lost:
+      // 1. Find when they first became at_risk or lost (from customer_status_logs)
+      // 2. Get customer_visits (appointments or payments) BEFORE becoming at_risk/lost
+      // 3. Get customer_revenue (sum of all payments) BEFORE becoming at_risk/lost
+      // 4. Customer Average Transaction Value = customer_revenue ÷ customer_visits
+      // 5. Potential Value = Customer Average Transaction Value × CLV (averageLTV)
       // Then: Total Lost Revenue = Sum of all Potential Values (no division - total revenue "left on the table")
 
       const lostCustomerDetails = [];
       let totalPotentialLostRevenue = 0;
 
-      for (const lostCustomer of lostCustomers) {
-        const customerId = lostCustomer.customer.id;
-        const latestChangeDate = lostCustomer.changedAt;
+      console.log(`\n📊 Lost Revenue Calculation - Processing ${atRiskAndLostCustomers.length} at_risk/lost customers`);
+      console.log(`📊 NOTE: Only customers with status 'lost', 'at_risk', or 'risk' are included in Lost Revenue`);
+      console.log(`📊 NOTE: Customers with status 'recovered', 'active', or 'new' are EXCLUDED from Lost Revenue`);
 
-        // Get appointments count for this customer (customer_visits)
-        const appointmentCount = await prisma.appointment.count({
+      for (const customerUser of atRiskAndLostCustomers) {
+        const customerId = customerUser.customer.id;
+        const currentStatus = customerUser.status; // at_risk, risk, or lost
+        const customerName = customerUser.customer.customerFullName || customerId;
+
+        console.log(`\n👤 Processing Customer: ${customerName} (ID: ${customerId})`);
+        console.log(`   Status: ${currentStatus} (✅ Included in Lost Revenue)`);
+        console.log(`   ⚠️  IMPORTANT: If this customer's status changes to 'recovered', 'active', or 'new', they will NO LONGER be counted in Lost Revenue`);
+
+        // Find the FIRST time this customer became at_risk or lost
+        // This is the timestamp before which we should count visits and revenue
+        const firstAtRiskOrLostLog = await prisma.customerStatusLog.findFirst({
           where: {
             customerId: customerId,
+            newStatus: {
+              in: ['Risk', 'Lost'] // Match both Risk and Lost status changes
+            },
             ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          },
+          orderBy: {
+            changedAt: 'asc' // Get the earliest (first) at_risk or lost status change
+          },
+          select: {
+            changedAt: true,
+            newStatus: true
           }
         });
 
-        // Get payments for this customer
+        // If we found when they became at_risk/lost, only count visits and revenue BEFORE that date
+        // Otherwise, count all visits and revenue (they were always at_risk/lost)
+        const statusChangeDate = firstAtRiskOrLostLog?.changedAt || null;
+
+        if (statusChangeDate) {
+          console.log(`   📅 First became ${firstAtRiskOrLostLog.newStatus} at: ${statusChangeDate.toISOString()}`);
+        } else {
+          console.log(`   ⚠️  No status change log found - counting all visits/revenue`);
+        }
+
+        // Get ALL appointments count for this customer (customer_visits)
+        // Formula: customer_visits = total appointments count (not filtered by status change date)
+        // Use customerUser.userId if available, otherwise use authenticatedUser.userId
+        const customerUserId = customerUser.userId || authenticatedUser.userId;
+        
+        // Build appointment where clause
+        // For user role: filter by customerUserId (the customer's userId from CustomerUser table)
+        // This ensures we count all appointments for this customer that belong to this user
+        const appointmentWhere = {
+          customerId: customerId
+        };
+        
+        // Only filter by userId if user role and customerUserId is available
+        if (authenticatedUser.role === 'user' && customerUserId) {
+          appointmentWhere.userId = customerUserId;
+        }
+        
+        // Also check total appointments WITHOUT userId filter for debugging
+        const appointmentCountWithoutUserId = await prisma.appointment.count({
+          where: {
+            customerId: customerId
+          }
+        });
+        
+        const appointmentCount = await prisma.appointment.count({
+          where: appointmentWhere
+        });
+        
+        // Also fetch appointments to verify the count and debug
+        const appointmentsList = await prisma.appointment.findMany({
+          where: appointmentWhere,
+          select: {
+            id: true,
+            customerId: true,
+            userId: true,
+            createDate: true,
+            createdAt: true
+          },
+          orderBy: {
+            createdAt: 'asc'
+          }
+        });
+        
+        // Fetch ALL appointments for this customer (without userId filter) for debugging
+        const allAppointmentsList = await prisma.appointment.findMany({
+          where: {
+            customerId: customerId
+          },
+          select: {
+            id: true,
+            customerId: true,
+            userId: true,
+            createDate: true,
+            createdAt: true
+          },
+          orderBy: {
+            createdAt: 'asc'
+          }
+        });
+        
+        console.log(`   🔍 Customer UserId from CustomerUser: ${customerUserId}`);
+        console.log(`   🔍 Authenticated UserId: ${authenticatedUser.userId}`);
+        console.log(`   🔍 Authenticated User Role: ${authenticatedUser.role}`);
+        console.log(`   🔍 Appointment Query Where (with userId filter):`, JSON.stringify(appointmentWhere, null, 2));
+        console.log(`   📋 Total Appointments Found (with userId filter): ${appointmentCount}`);
+        console.log(`   📋 Total Appointments Found (without userId filter): ${appointmentCountWithoutUserId}`);
+        console.log(`   📋 Appointments List (with userId filter):`, appointmentsList.map(apt => ({
+          id: apt.id,
+          customerId: apt.customerId,
+          userId: apt.userId,
+          createDate: apt.createDate,
+          createdAt: apt.createdAt
+        })));
+        console.log(`   📋 All Appointments List (without userId filter):`, allAppointmentsList.map(apt => ({
+          id: apt.id,
+          customerId: apt.customerId,
+          userId: apt.userId,
+          createDate: apt.createDate,
+          createdAt: apt.createdAt
+        })));
+
+        // Get ALL payments for this customer (customer_revenue)
+        // Formula: customer_revenue = sum of all payments (not filtered by status change date)
         const customerPayments = await prisma.paymentWebhook.findMany({
           where: {
             customerId: customerId,
             status: 'success',
             ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            // NO FILTER BY statusChangeDate - count ALL payments
           },
           select: {
             total: true,
             paymentDate: true
+          },
+          orderBy: {
+            paymentDate: 'desc'
           }
         });
 
-        // Calculate customer_visits (use appointments if available, otherwise use payment count)
-        const customerVisits = appointmentCount > 0 ? appointmentCount : customerPayments.length;
+        // Calculate customer_visits - USE APPOINTMENTS COUNT (all appointments, without userId filter)
+        // Formula: customer_visits = appointments count (ALL appointments for this customer)
+        // Use appointmentCountWithoutUserId to count ALL appointments, regardless of userId
+        // This ensures we count all 3 appointments if they exist in the database
+        const customerVisits = appointmentCountWithoutUserId; // Use count without userId filter
         
         // Calculate customer_revenue (sum of all payments)
+        // Formula: customer_revenue = sum of all payments
         const customerRevenue = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
         
-        // Calculate Customer Average Transaction Value
+        console.log(`   📋 Customer Visits (appointments - ALL): ${customerVisits}`);
+        console.log(`   📋 Customer Visits (appointments - with userId filter): ${appointmentCount}`);
+        console.log(`   💳 Total Payments: ${customerPayments.length}`);
+        console.log(`   💰 Total Payment Amount: ₪${customerRevenue}`);
+        
+        if (customerPayments.length > 0) {
+          console.log(`   💳 Payment Details:`);
+          customerPayments.forEach((payment, idx) => {
+            console.log(`      Payment ${idx + 1}: ₪${payment.total} on ${payment.paymentDate.toISOString()}`);
+          });
+        }
+        
+        // Skip calculation if customer has no visits or revenue before becoming at_risk/lost
+        if (customerVisits === 0 || customerRevenue === 0) {
+          console.log(`   ⚠️  Skipping - No visits (${customerVisits}) or revenue (${customerRevenue}) before becoming at_risk/lost`);
+          continue; // Skip this customer - no data before becoming at_risk/lost
+        }
+        
+        // Calculate Customer Average Transaction Value (ATV)
+        // Formula: ATV = customer_revenue ÷ customer_visits
         const customerAverageTransaction = customerVisits > 0 ? customerRevenue / customerVisits : 0;
         
-        // Calculate Potential Value for this customer = Customer Average Transaction Value × CLV
-        const potentialValue = customerAverageTransaction * averageLTV;
+        console.log(`   📊 Customer Visits Used (appointments): ${customerVisits}`);
+        console.log(`   💵 Customer Revenue: ₪${customerRevenue}`);
+        console.log(`   📈 Average Transaction Value (ATV): ₪${customerAverageTransaction.toFixed(2)} (${customerRevenue} ÷ ${customerVisits})`);
+        console.log(`   📊 Total Customers (for Lost Revenue - only lost/at_risk/risk): ${totalCustomers}`);
+        console.log(`   📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
+        console.log(`   ⚠️  IMPORTANT: totalCustomers only includes lost/at_risk/risk customers, NOT active/new/recovered`);
         
-        // Add to total potential lost revenue
-        totalPotentialLostRevenue += potentialValue;
+        // Calculate Lost Revenue for this customer = ATV ÷ total_lost_customers_count
+        // Formula: customer_lost_revenue = ATV ÷ total_lost_customers_count
+        // IMPORTANT: totalCustomers only includes lost/at_risk/risk customers, NOT active/new/recovered customers
+        const customerLostRevenue = totalCustomers > 0 ? customerAverageTransaction / totalCustomers : 0;
+        
+        console.log(`   💰 Customer Lost Revenue: ₪${customerLostRevenue.toFixed(2)} (${customerAverageTransaction.toFixed(2)} ÷ ${totalCustomers} [only lost/at_risk/risk customers, NOT active/new/recovered])`);
+        
+        // Add to total lost revenue
+        totalPotentialLostRevenue += customerLostRevenue;
+
+        console.log(`   ✅ Added to total - Running total: ₪${totalPotentialLostRevenue.toFixed(2)}`);
 
         lostCustomerDetails.push({
           customerId: customerId,
-          customerName: lostCustomer.customer.customerFullName,
-          latestStatusChangeDate: latestChangeDate,
+          customerName: customerUser.customer.customerFullName,
+          currentStatus: currentStatus,
+          firstStatusChangeDate: statusChangeDate,
           totalPayments: customerPayments.length,
           totalAppointments: appointmentCount,
           customerVisits: customerVisits,
           totalSpent: customerRevenue,
           averageTransaction: Math.round(customerAverageTransaction * 100) / 100,
-          potentialValue: Math.round(potentialValue * 100) / 100,
-          ltv: Math.round(averageLTV * 100) / 100
+          customerLostRevenue: Math.round(customerLostRevenue * 100) / 100, // ATV ÷ total_customers_count
+          totalCustomers: totalCustomers
         });
       }
+
+      console.log(`\n💰 Total Lost Revenue: ₪${totalPotentialLostRevenue.toFixed(2)}`);
+      console.log(`📊 Total Lost Customers Processed: ${lostCustomerDetails.length}`);
+      console.log(`📊 Total Customers (for Lost Revenue - only lost/at_risk/risk): ${totalCustomers}`);
+      console.log(`📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
+      console.log(`⚠️  IMPORTANT: totalCustomers for Lost Revenue calculation only includes lost/at_risk/risk customers`);
+      console.log(`⚠️  IMPORTANT: active, new, and recovered status customers are EXCLUDED from totalCustomers for Lost Revenue\n`);
       
-      // Calculate Total Potential Lost Revenue = Sum of all Potential Values (no division)
-      // This is the total revenue "left on the table" from all Lost customers
+      // Calculate Total Lost Revenue = Sum of (ATV ÷ total_customers_count) for each lost customer
       const totalLostRevenue = totalPotentialLostRevenue;
       
       return res.json({
@@ -568,7 +760,7 @@ class AdminDashboardController {
           // Lost revenue data
           totalLostRevenue: Math.round(totalLostRevenue * 100) / 100,
           averageLTV: Math.round(averageLTV * 100) / 100,
-          lostCustomersCount: lostCustomers.length,
+          lostCustomersCount: atRiskAndLostCustomers.length,
           lostCustomerDetails: lostCustomerDetails,
           
           // Additional metrics
@@ -1324,9 +1516,12 @@ class AdminDashboardController {
 
       const totalCustomers = await prisma.customers.count();
 
-      const totalRevenue = await prisma.payment.aggregate({
+      const totalRevenue = await prisma.paymentWebhook.aggregate({
+        where: {
+          status: 'success' // Only count successful payments
+        },
         _sum: {
-          amount: true
+          total: true
         }
       });
 
@@ -1336,7 +1531,7 @@ class AdminDashboardController {
           totalAdmins,
           totalBusinessOwners,
           totalCustomers,
-          totalRevenue: totalRevenue._sum.amount || 0,
+          totalRevenue: totalRevenue._sum.total || 0,
           summary: [
             {
               label: 'Admins',
@@ -1406,6 +1601,7 @@ class AdminDashboardController {
 
   // Helper methods for dashboard overview
   async getMonthlyPerformanceData(req) {
+    const authenticatedUser = req.user;
     const { month, year } = req.query;
     const currentDate = new Date();
     const targetMonth = month || currentDate.getMonth() + 1;
@@ -1416,71 +1612,76 @@ class AdminDashboardController {
     const prevStartDate = new Date(targetYear, targetMonth - 2, 1);
     const prevEndDate = new Date(targetYear, targetMonth - 1, 0, 23, 59, 59);
 
+    // Build where clause based on user role
+    let where = {
+      status: 'success' // Only count successful payments
+    };
+    
+    if (authenticatedUser && authenticatedUser.role === 'user') {
+      where.userId = authenticatedUser.userId;
+    }
+
     const [recoveredCustomers, prevRecoveredCustomers, recoveredRevenue, prevRecoveredRevenue,
       lostRevenue, prevLostRevenue, customerLTV, prevCustomerLTV] = await Promise.all([
         prisma.customerUser.count({
           where: {
             status: 'recovered',
-            updatedAt: { gte: startDate, lte: endDate }
+            updatedAt: { gte: startDate, lte: endDate },
+            ...(authenticatedUser && authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
           }
         }),
         prisma.customerUser.count({
           where: {
             status: 'recovered',
-            updatedAt: { gte: prevStartDate, lte: prevEndDate }
+            updatedAt: { gte: prevStartDate, lte: prevEndDate },
+            ...(authenticatedUser && authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
           }
         }),
-        prisma.payment.aggregate({
+        prisma.paymentWebhook.aggregate({
           where: {
-            createdAt: { gte: startDate, lte: endDate },
-            user: {
-              customerUsers: {
-                some: { status: 'recovered' }
-              }
-            }
+            ...where,
+            paymentDate: { gte: startDate, lte: endDate },
+            revenuePaymentStatus: 'recovered'
           },
-          _sum: { amount: true }
+          _sum: { total: true }
         }),
-        prisma.payment.aggregate({
+        prisma.paymentWebhook.aggregate({
           where: {
-            createdAt: { gte: prevStartDate, lte: prevEndDate },
-            user: {
-              customerUsers: {
-                some: { status: 'recovered' }
-              }
-            }
+            ...where,
+            paymentDate: { gte: prevStartDate, lte: prevEndDate },
+            revenuePaymentStatus: 'recovered'
           },
-          _sum: { amount: true }
+          _sum: { total: true }
         }),
-        prisma.payment.aggregate({
+        prisma.paymentWebhook.aggregate({
           where: {
-            createdAt: { gte: startDate, lte: endDate },
-            user: {
-              customerUsers: {
-                some: { status: 'lost' }
-              }
-            }
+            ...where,
+            paymentDate: { gte: startDate, lte: endDate },
+            revenuePaymentStatus: 'lost'
           },
-          _sum: { amount: true }
+          _sum: { total: true }
         }),
-        prisma.payment.aggregate({
+        prisma.paymentWebhook.aggregate({
           where: {
-            createdAt: { gte: prevStartDate, lte: prevEndDate },
-            user: {
-              customerUsers: {
-                some: { status: 'lost' }
-              }
-            }
+            ...where,
+            paymentDate: { gte: prevStartDate, lte: prevEndDate },
+            revenuePaymentStatus: 'lost'
           },
-          _sum: { amount: true }
+          _sum: { total: true }
         }),
-        prisma.payment.aggregate({
-          where: { createdAt: { gte: startDate, lte: endDate } },
-          _avg: { amount: true }
+        prisma.paymentWebhook.aggregate({
+          where: {
+            ...where,
+            paymentDate: { gte: startDate, lte: endDate }
+          },
+          _avg: { total: true }
         }),
-        prisma.payment.aggregate({
-          where: { createdAt: { gte: prevStartDate, lte: prevEndDate } },
-          _avg: { amount: true }
+        prisma.paymentWebhook.aggregate({
+          where: {
+            ...where,
+            paymentDate: { gte: prevStartDate, lte: prevEndDate }
+          },
+          _avg: { total: true }
         })
       ]);
 
@@ -1496,28 +1697,28 @@ class AdminDashboardController {
         trend: recoveredCustomers >= prevRecoveredCustomers ? 'up' : 'down'
       },
       recoveredRevenue: {
-        value: recoveredRevenue._sum.amount || 0,
+        value: recoveredRevenue._sum.total || 0,
         change: calculatePercentageChange(
-          recoveredRevenue._sum.amount || 0,
-          prevRecoveredRevenue._sum.amount || 0
+          recoveredRevenue._sum.total || 0,
+          prevRecoveredRevenue._sum.total || 0
         ),
-        trend: (recoveredRevenue._sum.amount || 0) >= (prevRecoveredRevenue._sum.amount || 0) ? 'up' : 'down'
+        trend: (recoveredRevenue._sum.total || 0) >= (prevRecoveredRevenue._sum.total || 0) ? 'up' : 'down'
       },
       lostRevenue: {
-        value: lostRevenue._sum.amount || 0,
+        value: lostRevenue._sum.total || 0,
         change: calculatePercentageChange(
-          lostRevenue._sum.amount || 0,
-          prevLostRevenue._sum.amount || 0
+          lostRevenue._sum.total || 0,
+          prevLostRevenue._sum.total || 0
         ),
-        trend: (lostRevenue._sum.amount || 0) >= (prevLostRevenue._sum.amount || 0) ? 'up' : 'down'
+        trend: (lostRevenue._sum.total || 0) >= (prevLostRevenue._sum.total || 0) ? 'up' : 'down'
       },
       customerLTV: {
-        value: (customerLTV._avg.amount || 0).toFixed(1),
+        value: (customerLTV._avg.total || 0).toFixed(1),
         change: calculatePercentageChange(
-          customerLTV._avg.amount || 0,
-          prevCustomerLTV._avg.amount || 0
+          customerLTV._avg.total || 0,
+          prevCustomerLTV._avg.total || 0
         ),
-        trend: (customerLTV._avg.amount || 0) >= (prevCustomerLTV._avg.amount || 0) ? 'up' : 'down'
+        trend: (customerLTV._avg.total || 0) >= (prevCustomerLTV._avg.total || 0) ? 'up' : 'down'
       }
     };
   }
@@ -1639,18 +1840,36 @@ class AdminDashboardController {
   }
 
   async getAdminSummaryData(req) {
+    const authenticatedUser = req.user;
+    
+    // Build where clause based on user role
+    let where = {
+      status: 'success' // Only count successful payments
+    };
+    
+    if (authenticatedUser && authenticatedUser.role === 'user') {
+      where.userId = authenticatedUser.userId;
+    }
+
     const [totalAdmins, totalBusinessOwners, totalCustomers, totalRevenue] = await Promise.all([
       prisma.user.count({ where: { role: 'admin' } }),
       prisma.user.count({ where: { role: 'user' } }),
-      prisma.customers.count(),
-      prisma.payment.aggregate({ _sum: { amount: true } })
+      prisma.customers.count({
+        where: authenticatedUser && authenticatedUser.role === 'user' 
+          ? { userId: authenticatedUser.userId }
+          : {}
+      }),
+      prisma.paymentWebhook.aggregate({
+        where: where,
+        _sum: { total: true }
+      })
     ]);
 
     return {
       totalAdmins,
       totalBusinessOwners,
       totalCustomers,
-      totalRevenue: totalRevenue._sum.amount || 0,
+      totalRevenue: totalRevenue._sum.total || 0,
       summary: [
         {
           label: 'Admins',

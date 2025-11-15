@@ -13,7 +13,6 @@ const config = getConfig();
 
 // Import routes
 const authRoutes = require('./routes/auth');
-const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payments');
 const qrRoutes = require('./routes/qr');
 const supportRoutes = require('./routes/support');
@@ -86,7 +85,6 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/auth', loginLimiter, authRoutes);
-app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/support', supportRoutes);

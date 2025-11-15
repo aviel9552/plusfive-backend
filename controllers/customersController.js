@@ -69,14 +69,19 @@ const getAllCustomers = async (req, res) => {
       ) appointment_counts ON c.id = appointment_counts."customerId"
       LEFT JOIN (
         SELECT 
-          "customerId",
-          SUM(total) as total_paid,
-          MAX(total) as last_payment_amount,
-          MAX("paymentDate") as last_payment_date,
+          pw."customerId",
+          SUM(pw.total) as total_paid,
+          (SELECT pw2.total 
+           FROM "payment_webhooks" pw2 
+           WHERE pw2."customerId" = pw."customerId" 
+           AND pw2.status = 'success'
+           ORDER BY pw2."paymentDate" DESC, pw2."createdAt" DESC
+           LIMIT 1) as last_payment_amount,
+          MAX(pw."paymentDate") as last_payment_date,
           COUNT(*) as payment_count
-        FROM "payment_webhooks" 
-        WHERE status = 'success'
-        GROUP BY "customerId"
+        FROM "payment_webhooks" pw
+        WHERE pw.status = 'success'
+        GROUP BY pw."customerId"
       ) payment_data ON c.id = payment_data."customerId"
       LEFT JOIN (
         SELECT 
@@ -217,14 +222,19 @@ const getTenCustomers = async (req, res) => {
       ) appointment_counts ON c.id = appointment_counts."customerId"
       LEFT JOIN (
         SELECT 
-          "customerId",
-          SUM(total) as total_paid,
-          MAX(total) as last_payment_amount,
-          MAX("paymentDate") as last_payment_date,
+          pw."customerId",
+          SUM(pw.total) as total_paid,
+          (SELECT pw2.total 
+           FROM "payment_webhooks" pw2 
+           WHERE pw2."customerId" = pw."customerId" 
+           AND pw2.status = 'success'
+           ORDER BY pw2."paymentDate" DESC, pw2."createdAt" DESC
+           LIMIT 1) as last_payment_amount,
+          MAX(pw."paymentDate") as last_payment_date,
           COUNT(*) as payment_count
-        FROM "payment_webhooks" 
-        WHERE status = 'success'
-        GROUP BY "customerId"
+        FROM "payment_webhooks" pw
+        WHERE pw.status = 'success'
+        GROUP BY pw."customerId"
       ) payment_data ON c.id = payment_data."customerId"
       LEFT JOIN (
         SELECT 

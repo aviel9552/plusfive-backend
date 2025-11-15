@@ -47,8 +47,6 @@ model User {
   updatedAt         DateTime  @updatedAt
 
   // Relations
-  orders            Order[]
-  payments          Payment[]
   qrCodes           QRCode[]
   qrCodeScans       QRCodeScan[] // QR code scan history
   supportTickets    SupportTicket[]
@@ -100,42 +98,6 @@ model PasswordReset {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("password_resets")
-}
-
-model Order {
-  id          String   @id @default(cuid())
-  userId      String
-  amount      Float
-  currency    String   @default("USD")
-  status      String   @default("pending") // pending, completed, failed, cancelled
-  description String?
-  metadata    Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payments Payment[]
-
-  @@map("orders")
-}
-
-model Payment {
-  id            String   @id @default(cuid())
-  userId        String
-  orderId       String
-  amount        Float
-  currency      String   @default("USD")
-  status        String   @default("pending") // pending, completed, failed, cancelled
-  paymentMethod String?
-  transactionId String?
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  @@map("payments")
 }
 
 model QRCode {
@@ -393,6 +355,7 @@ model PaymentWebhook {
   // Additional fields
   paymentDate       DateTime @default(now())
   status            String   @default("success") // success, failed, pending
+  customerOldStatus String?  // Previous customer status before payment (lost, at_risk, risk, new, active, etc.)
   revenuePaymentStatus String? // recovered, lost
   
   // Webhook data

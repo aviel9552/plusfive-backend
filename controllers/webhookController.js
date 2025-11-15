@@ -556,6 +556,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         userId: userId, // Reference to User table
         paymentDate: new Date(),
         status: 'success',
+        customerOldStatus: previousStatus || null, // Previous customer status before payment
         revenuePaymentStatus: revenuePaymentStatus // Set based on CustomerUser status
       }
     });
