@@ -526,18 +526,20 @@ class AdminDashboardController {
       // 1. Get customer_visits (appointments count)
       // 2. Get customer_revenue (sum of all payments)
       // 3. Calculate ATV = customer_revenue ÷ customer_visits
-      // 4. Calculate Potential Value = ATV × customer_visits
-      // 5. Final Lost Revenue = Average of all customers' potential values
-      //    = (Sum of all Potential Values) ÷ (Number of lost customers)
+      // 4. Calculate Potential Value (Personal Lost Revenue) = ATV × customer_visits
+      // 5. Final Lost Revenue = Sum of all customers' potential values (NOT average)
+      //    = Sum of all Potential Values
       //
       // Example:
       // Customer A: customer_visits = 10, customer_revenue = ₹1,200
       //   ATV = ₹1,200 ÷ 10 = ₹120
       //   Potential Value = ₹120 × 10 = ₹1,200
+      //   ✅ Lost Revenue for Customer A = ₹1,200
       // Customer B: customer_visits = 2, customer_revenue = ₹600
       //   ATV = ₹600 ÷ 2 = ₹300
       //   Potential Value = ₹300 × 2 = ₹600
-      // Final Lost Revenue = (₹1,200 + ₹600) ÷ 2 = ₹900
+      //   ✅ Lost Revenue for Customer B = ₹600
+      // Final Lost Revenue = ₹1,200 + ₹600 = ₹1,800 (SUM, NOT average)
 
       const lostCustomerDetails = [];
       let totalPotentialLostRevenue = 0;
@@ -750,17 +752,15 @@ class AdminDashboardController {
       console.log(`\n💰 Sum of All Potential Values: ₪${totalPotentialLostRevenue.toFixed(2)}`);
       console.log(`📊 Total Lost Customers Processed: ${lostCustomerDetails.length}`);
       
-      // Calculate Final Lost Revenue = Average of all customers' potential values
-      // Formula: Final Lost Revenue = (Sum of all Potential Values) ÷ (Number of lost customers)
-      // Example: Customer A Potential = ₹1,200, Customer B Potential = ₹3,000
-      // Final Lost Revenue = (₹1,200 + ₹3,000) ÷ 2 = ₹2,100
-      const totalLostRevenue = lostCustomerDetails.length > 0 
-        ? totalPotentialLostRevenue / lostCustomerDetails.length 
-        : 0;
+      // Calculate Final Lost Revenue = Sum of all customers' potential values (NOT average)
+      // Formula: Final Lost Revenue = Sum of all Potential Values
+      // Example: Customer A Potential = ₹1,200, Customer B Potential = ₹600
+      // Final Lost Revenue = ₹1,200 + ₹600 = ₹1,800 (NOT average)
+      const totalLostRevenue = totalPotentialLostRevenue;
       
-      console.log(`💰 Final Lost Revenue (Average): ₪${totalLostRevenue.toFixed(2)} (${totalPotentialLostRevenue.toFixed(2)} ÷ ${lostCustomerDetails.length})`);
+      console.log(`💰 Final Lost Revenue (Sum): ₪${totalLostRevenue.toFixed(2)} (Sum of all potential values, NOT average)`);
       console.log(`📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
-      console.log(`⚠️  IMPORTANT: Lost Revenue is calculated as average of potential values for lost/at_risk/risk customers only\n`);
+      console.log(`⚠️  IMPORTANT: Lost Revenue is calculated as SUM of potential values for lost/at_risk/risk customers (NOT average)\n`);
       
       return res.json({
         success: true,
