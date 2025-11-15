@@ -597,6 +597,67 @@ const handleWebhook = async (req, res) => {
         const invoice = event.data.object;
         const subscriptionId = invoice.subscription;
         
+        console.log(`💰 [invoice.paid] Invoice paid webhook received - Invoice ID: ${invoice.id}, Amount: ${invoice.amount_paid / 100} ${invoice.currency}`);
+        
+        // Find user by Stripe customer ID
+        let user = null;
+        if (invoice.customer) {
+          try {
+            // Try to find user by stripeCustomerId
+            user = await prisma.user.findFirst({
+              where: { stripeCustomerId: invoice.customer }
+            });
+            
+            // If not found, try to get customer from Stripe and find by email
+            if (!user) {
+              const stripeCustomer = await stripe.customers.retrieve(invoice.customer);
+              if (stripeCustomer.email) {
+                user = await prisma.user.findFirst({
+                  where: { email: stripeCustomer.email }
+                });
+              }
+            }
+          } catch (err) {
+            console.error('❌ Error finding user for invoice.paid:', err.message);
+          }
+        }
+        
+        // Create PaymentHistory record for this invoice payment
+        if (user && invoice.amount_paid > 0) {
+          try {
+            await trackPayment({
+              userId: user.id,
+              paymentType: 'subscription',
+              amount: invoice.amount_paid / 100, // Convert from cents
+              currency: invoice.currency,
+              description: invoice.description || `Subscription payment - Invoice ${invoice.id}`,
+              stripeSessionId: null,
+              stripePaymentId: invoice.payment_intent || null,
+              stripeSubscriptionId: subscriptionId,
+              stripeCustomerId: invoice.customer,
+              status: 'succeeded', // Invoice is paid
+              paymentMethod: invoice.payment_method_types?.[0] || 'card',
+              source: 'stripe_webhook_invoice_paid',
+              metadata: {
+                invoiceId: invoice.id,
+                invoiceNumber: invoice.number,
+                invoiceStatus: invoice.status,
+                invoiceCreated: invoice.created,
+                invoicePeriodStart: invoice.period_start,
+                invoicePeriodEnd: invoice.period_end,
+                invoiceHostedUrl: invoice.hosted_invoice_url,
+                invoicePdf: invoice.invoice_pdf,
+                subscriptionId: subscriptionId,
+                billingReason: invoice.billing_reason,
+                isAutomaticPayment: true // This is automatic payment from monthly usage
+              }
+            });
+            console.log(`✅ [invoice.paid] PaymentHistory record created for user ${user.email} - Amount: ${invoice.amount_paid / 100} ${invoice.currency}`);
+          } catch (paymentError) {
+            console.error('❌ Error creating PaymentHistory for invoice.paid:', paymentError.message);
+          }
+        }
+        
         // Process affiliate commission if promotion code was used
         try {
           const commissionData = await calculateCommissionFromInvoice(invoice.id);
