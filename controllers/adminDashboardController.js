@@ -523,12 +523,21 @@ class AdminDashboardController {
 
       // Calculate Lost Revenue according to formula:
       // For each customer with status at_risk or lost:
-      // 1. Find when they first became at_risk or lost (from customer_status_logs)
-      // 2. Get customer_visits (appointments or payments) BEFORE becoming at_risk/lost
-      // 3. Get customer_revenue (sum of all payments) BEFORE becoming at_risk/lost
-      // 4. Customer Average Transaction Value = customer_revenue ÷ customer_visits
-      // 5. Potential Value = Customer Average Transaction Value × CLV (averageLTV)
-      // Then: Total Lost Revenue = Sum of all Potential Values (no division - total revenue "left on the table")
+      // 1. Get customer_visits (appointments count)
+      // 2. Get customer_revenue (sum of all payments)
+      // 3. Calculate ATV = customer_revenue ÷ customer_visits
+      // 4. Calculate Potential Value = ATV × customer_visits
+      // 5. Final Lost Revenue = Average of all customers' potential values
+      //    = (Sum of all Potential Values) ÷ (Number of lost customers)
+      //
+      // Example:
+      // Customer A: customer_visits = 10, customer_revenue = ₹1,200
+      //   ATV = ₹1,200 ÷ 10 = ₹120
+      //   Potential Value = ₹120 × 10 = ₹1,200
+      // Customer B: customer_visits = 2, customer_revenue = ₹600
+      //   ATV = ₹600 ÷ 2 = ₹300
+      //   Potential Value = ₹300 × 2 = ₹600
+      // Final Lost Revenue = (₹1,200 + ₹600) ÷ 2 = ₹900
 
       const lostCustomerDetails = [];
       let totalPotentialLostRevenue = 0;
@@ -709,19 +718,17 @@ class AdminDashboardController {
         console.log(`   📊 Customer Visits Used (appointments): ${customerVisits}`);
         console.log(`   💵 Customer Revenue: ₪${customerRevenue}`);
         console.log(`   📈 Average Transaction Value (ATV): ₪${customerAverageTransaction.toFixed(2)} (${customerRevenue} ÷ ${customerVisits})`);
-        console.log(`   📊 Total Customers (for Lost Revenue - only lost/at_risk/risk): ${totalCustomers}`);
-        console.log(`   📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
-        console.log(`   ⚠️  IMPORTANT: totalCustomers only includes lost/at_risk/risk customers, NOT active/new/recovered`);
         
-        // Calculate Lost Revenue for this customer = ATV ÷ total_lost_customers_count
-        // Formula: customer_lost_revenue = ATV ÷ total_lost_customers_count
-        // IMPORTANT: totalCustomers only includes lost/at_risk/risk customers, NOT active/new/recovered customers
-        const customerLostRevenue = totalCustomers > 0 ? customerAverageTransaction / totalCustomers : 0;
+        // Calculate Potential Value for this customer
+        // Formula: Potential Value = ATV × customer_visits
+        // Example: ATV = ₹120, customer_visits = 10 → Potential Value = ₹120 × 10 = ₹1,200
+        const potentialValue = customerAverageTransaction * customerVisits;
         
-        console.log(`   💰 Customer Lost Revenue: ₪${customerLostRevenue.toFixed(2)} (${customerAverageTransaction.toFixed(2)} ÷ ${totalCustomers} [only lost/at_risk/risk customers, NOT active/new/recovered])`);
+        console.log(`   💰 Potential Value: ₪${potentialValue.toFixed(2)} (${customerAverageTransaction.toFixed(2)} × ${customerVisits})`);
+        console.log(`   ✅ Lost Revenue for this customer = ₪${potentialValue.toFixed(2)}`);
         
-        // Add to total lost revenue
-        totalPotentialLostRevenue += customerLostRevenue;
+        // Add to total potential lost revenue (will be averaged later)
+        totalPotentialLostRevenue += potentialValue;
 
         console.log(`   ✅ Added to total - Running total: ₪${totalPotentialLostRevenue.toFixed(2)}`);
 
@@ -735,20 +742,25 @@ class AdminDashboardController {
           customerVisits: customerVisits,
           totalSpent: customerRevenue,
           averageTransaction: Math.round(customerAverageTransaction * 100) / 100,
-          customerLostRevenue: Math.round(customerLostRevenue * 100) / 100, // ATV ÷ total_customers_count
-          totalCustomers: totalCustomers
+          potentialValue: Math.round(potentialValue * 100) / 100, // ATV × customer_visits
+          customerLostRevenue: Math.round(potentialValue * 100) / 100 // Same as potentialValue for this customer
         });
       }
 
-      console.log(`\n💰 Total Lost Revenue: ₪${totalPotentialLostRevenue.toFixed(2)}`);
+      console.log(`\n💰 Sum of All Potential Values: ₪${totalPotentialLostRevenue.toFixed(2)}`);
       console.log(`📊 Total Lost Customers Processed: ${lostCustomerDetails.length}`);
-      console.log(`📊 Total Customers (for Lost Revenue - only lost/at_risk/risk): ${totalCustomers}`);
-      console.log(`📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
-      console.log(`⚠️  IMPORTANT: totalCustomers for Lost Revenue calculation only includes lost/at_risk/risk customers`);
-      console.log(`⚠️  IMPORTANT: active, new, and recovered status customers are EXCLUDED from totalCustomers for Lost Revenue\n`);
       
-      // Calculate Total Lost Revenue = Sum of (ATV ÷ total_customers_count) for each lost customer
-      const totalLostRevenue = totalPotentialLostRevenue;
+      // Calculate Final Lost Revenue = Average of all customers' potential values
+      // Formula: Final Lost Revenue = (Sum of all Potential Values) ÷ (Number of lost customers)
+      // Example: Customer A Potential = ₹1,200, Customer B Potential = ₹3,000
+      // Final Lost Revenue = (₹1,200 + ₹3,000) ÷ 2 = ₹2,100
+      const totalLostRevenue = lostCustomerDetails.length > 0 
+        ? totalPotentialLostRevenue / lostCustomerDetails.length 
+        : 0;
+      
+      console.log(`💰 Final Lost Revenue (Average): ₪${totalLostRevenue.toFixed(2)} (${totalPotentialLostRevenue.toFixed(2)} ÷ ${lostCustomerDetails.length})`);
+      console.log(`📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
+      console.log(`⚠️  IMPORTANT: Lost Revenue is calculated as average of potential values for lost/at_risk/risk customers only\n`);
       
       return res.json({
         success: true,
