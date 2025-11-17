@@ -472,9 +472,10 @@ class AdminDashboardController {
       const totalCustomers = totalCustomersForLostRevenue; // Only lost/at_risk/risk customers
 
       // Calculate average LTV (Average Lifetime Visits) using optimized aggregation queries
-      // Formula: (Total number of services received by all customers) ÷ (Total number of customers)
-      // Services = Appointments (services received) OR Successful Payments (transactions/purchases)
-      // We use appointments as primary metric (services received), payments as fallback
+      // Formula: (Total number of successful payments by all customers) ÷ (Total number of customers)
+      // IMPORTANT: Count ONLY successful payments, NOT appointments
+      // Only count when customer arrives and pays (payment exists)
+      // Example: Customer has 10 appointments but only 5 payments → count = 5
       // IMPORTANT: EXCLUDE customers with status 'new' from services count
       
       // Build where conditions for user role filtering
@@ -528,7 +529,9 @@ class AdminDashboardController {
       const servicesResults = await prisma.$queryRawUnsafe(servicesQuery);
       
       // Calculate total services received (only for non-'new' customers)
-      // Use appointments as primary metric, payments as fallback if no appointments
+      // IMPORTANT: Count ONLY successful payments, NOT appointments
+      // Scenario: If customer has 10 appointments but only 5 payments, count = 5
+      // Only count when customer arrives and pays (payment exists)
       let totalServicesReceived = 0;
       for (const result of servicesResults) {
         // Double check: exclude 'new' status customers (in case SQL query didn't filter properly)
@@ -536,17 +539,15 @@ class AdminDashboardController {
           continue;
         }
         
-        const appointmentCount = Number(result.appointmentCount) || 0;
+        // Count ONLY payments (successful payments)
+        // Don't count appointments - only count when customer arrives and pays
         const paymentCount = Number(result.paymentCount) || 0;
-        
-        // Use appointments if available, otherwise use payments
-        // This represents services received (appointments) or transactions (payments)
-        const customerServices = appointmentCount > 0 ? appointmentCount : paymentCount;
-        totalServicesReceived += customerServices;
+        totalServicesReceived += paymentCount;
       }
       
-      // Calculate average: Total services ÷ Total customers (excluding 'new' status)
+      // Calculate average: Total services (payments only) ÷ Total customers (excluding 'new' status)
       // NOTE: Use totalCustomersForLTV (customers EXCEPT 'new' status) for averageLTV calculation
+      // Formula: averageLTV = totalSuccessfulPayments / totalCustomers (excluding 'new')
       const averageLTV = totalCustomersForLTV > 0 ? totalServicesReceived / totalCustomersForLTV : 0;
 
       // Calculate Lost Revenue - Optimized with batch queries
