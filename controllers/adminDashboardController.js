@@ -433,7 +433,8 @@ class AdminDashboardController {
       });
 
       // Get all customers for calculating average LTV (Average Lifetime Visits)
-      // NOTE: For averageLTV calculation, we use ALL customers (active, new, recovered, lost, at_risk, risk)
+      // NOTE: For averageLTV calculation, we EXCLUDE customers with status 'new'
+      // Only include: active, recovered, lost, at_risk, risk customers
       const allCustomers = await prisma.customers.findMany({
         where: {
           ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
@@ -444,13 +445,28 @@ class AdminDashboardController {
         }
       });
 
+      // Get customers with status 'new' to exclude them from LTV calculation
+      const newStatusCustomers = await prisma.customerUser.findMany({
+        where: {
+          status: 'new',
+          isDeleted: false,
+          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+        },
+        select: {
+          customerId: true
+        }
+      });
+      const newStatusCustomerIds = new Set(newStatusCustomers.map(cu => cu.customerId));
+
+      // Filter out customers with status 'new' for LTV calculation
+      const customersForLTV = allCustomers.filter(c => !newStatusCustomerIds.has(c.id));
+
       // For Lost Revenue calculation, we ONLY count customers with status 'lost', 'at_risk', or 'risk'
       // IMPORTANT: Ignore active, new, and recovered status customers in Lost Revenue calculation
-      // This ensures that totalCustomers only includes lost/at_risk/risk customers for the formula: customerLostRevenue = ATV ÷ totalCustomers
       const totalCustomersForLostRevenue = atRiskAndLostCustomers.length; // Only lost/at_risk/risk customers
       
-      // For averageLTV calculation, use ALL customers
-      const totalCustomersForLTV = allCustomers.length; // All customers (active, new, recovered, lost, at_risk, risk)
+      // For averageLTV calculation, EXCLUDE customers with status 'new'
+      const totalCustomersForLTV = customersForLTV.length; // All customers EXCEPT 'new' status
       
       // Use totalCustomersForLostRevenue for Lost Revenue calculation
       const totalCustomers = totalCustomersForLostRevenue; // Only lost/at_risk/risk customers
@@ -459,6 +475,7 @@ class AdminDashboardController {
       // Formula: (Total number of services received by all customers) ÷ (Total number of customers)
       // Services = Appointments (services received) OR Successful Payments (transactions/purchases)
       // We use appointments as primary metric (services received), payments as fallback
+      // IMPORTANT: EXCLUDE customers with status 'new' from services count
       
       // Build where conditions for user role filtering
       const userId = authenticatedUser.userId;
@@ -468,12 +485,19 @@ class AdminDashboardController {
       const paymentUserWhereCondition = authenticatedUser.role === 'user' 
         ? `AND pw."userId" = '${userId}'` 
         : '';
-      const customerUserWhereCondition = authenticatedUser.role === 'user' 
-        ? `WHERE c."userId" = '${userId}'` 
+      
+      // Build condition to exclude 'new' status customers
+      const excludeNewStatusCondition = newStatusCustomerIds.size > 0
+        ? `AND c.id NOT IN (${Array.from(newStatusCustomerIds).map(id => `'${id}'`).join(', ')})`
         : '';
+      
+      const customerUserWhereCondition = authenticatedUser.role === 'user' 
+        ? `WHERE c."userId" = '${userId}' ${excludeNewStatusCondition}`
+        : excludeNewStatusCondition ? `WHERE ${excludeNewStatusCondition.replace('AND ', '')}` : '';
 
       // Optimized SQL query to get service counts per customer
       // Count appointments (primary) and payments (fallback) for each customer
+      // EXCLUDE customers with status 'new'
       const servicesQuery = `
         SELECT 
           c.id as "customerId",
@@ -503,10 +527,15 @@ class AdminDashboardController {
       // Execute the query
       const servicesResults = await prisma.$queryRawUnsafe(servicesQuery);
       
-      // Calculate total services received
+      // Calculate total services received (only for non-'new' customers)
       // Use appointments as primary metric, payments as fallback if no appointments
       let totalServicesReceived = 0;
       for (const result of servicesResults) {
+        // Double check: exclude 'new' status customers (in case SQL query didn't filter properly)
+        if (newStatusCustomerIds.has(result.customerId)) {
+          continue;
+        }
+        
         const appointmentCount = Number(result.appointmentCount) || 0;
         const paymentCount = Number(result.paymentCount) || 0;
         
@@ -516,8 +545,8 @@ class AdminDashboardController {
         totalServicesReceived += customerServices;
       }
       
-      // Calculate average: Total services ÷ Total customers
-      // NOTE: Use totalCustomersForLTV (ALL customers) for averageLTV calculation, not just lost/at_risk/risk customers
+      // Calculate average: Total services ÷ Total customers (excluding 'new' status)
+      // NOTE: Use totalCustomersForLTV (customers EXCEPT 'new' status) for averageLTV calculation
       const averageLTV = totalCustomersForLTV > 0 ? totalServicesReceived / totalCustomersForLTV : 0;
 
       // Calculate Lost Revenue - Optimized with batch queries
