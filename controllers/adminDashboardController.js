@@ -391,9 +391,8 @@ class AdminDashboardController {
         0
       );
 
-      const recoveredCustomersCount = new Set(
-        recoveredPayments.map(payment => payment.customerId)
-      ).size;
+      // Total count of recovered payments (not unique customers)
+      const recoveredCustomersCount = recoveredPayments.length;
 
       // Get customers who are currently in Lost or AtRisk status from CustomerUser table
       // IMPORTANT: Only calculate Lost Revenue for customers with CURRENT status: 'lost', 'at_risk', or 'risk'
@@ -521,246 +520,85 @@ class AdminDashboardController {
       // NOTE: Use totalCustomersForLTV (ALL customers) for averageLTV calculation, not just lost/at_risk/risk customers
       const averageLTV = totalCustomersForLTV > 0 ? totalServicesReceived / totalCustomersForLTV : 0;
 
-      // Calculate Lost Revenue according to formula:
-      // For each customer with status at_risk or lost:
-      // 1. Get customer_visits (appointments count)
-      // 2. Get customer_revenue (sum of all payments)
-      // 3. Calculate ATV = customer_revenue ÷ customer_visits
-      // 4. Calculate Potential Value (Personal Lost Revenue) = ATV × customer_visits
-      // 5. Final Lost Revenue = Sum of all customers' potential values (NOT average)
-      //    = Sum of all Potential Values
-      //
-      // Example:
-      // Customer A: customer_visits = 10, customer_revenue = ₹1,200
-      //   ATV = ₹1,200 ÷ 10 = ₹120
-      //   Potential Value = ₹120 × 10 = ₹1,200
-      //   ✅ Lost Revenue for Customer A = ₹1,200
-      // Customer B: customer_visits = 2, customer_revenue = ₹600
-      //   ATV = ₹600 ÷ 2 = ₹300
-      //   Potential Value = ₹300 × 2 = ₹600
-      //   ✅ Lost Revenue for Customer B = ₹600
-      // Final Lost Revenue = ₹1,200 + ₹600 = ₹1,800 (SUM, NOT average)
+      // Calculate Lost Revenue - Optimized with batch queries
+      // Formula: For each customer: ATV = revenue ÷ visits, Potential Value = ATV × visits
+      // Final Lost Revenue = Sum of all potential values
 
       const lostCustomerDetails = [];
       let totalPotentialLostRevenue = 0;
 
-      console.log(`\n📊 Lost Revenue Calculation - Processing ${atRiskAndLostCustomers.length} at_risk/lost customers`);
-      console.log(`📊 NOTE: Only customers with status 'lost', 'at_risk', or 'risk' are included in Lost Revenue`);
-      console.log(`📊 NOTE: Customers with status 'recovered', 'active', or 'new' are EXCLUDED from Lost Revenue`);
-
-      for (const customerUser of atRiskAndLostCustomers) {
-        const customerId = customerUser.customer.id;
-        const currentStatus = customerUser.status; // at_risk, risk, or lost
-        const customerName = customerUser.customer.customerFullName || customerId;
-
-        console.log(`\n👤 Processing Customer: ${customerName} (ID: ${customerId})`);
-        console.log(`   Status: ${currentStatus} (✅ Included in Lost Revenue)`);
-        console.log(`   ⚠️  IMPORTANT: If this customer's status changes to 'recovered', 'active', or 'new', they will NO LONGER be counted in Lost Revenue`);
-
-        // Find the FIRST time this customer became at_risk or lost
-        // This is the timestamp before which we should count visits and revenue
-        const firstAtRiskOrLostLog = await prisma.customerStatusLog.findFirst({
+      if (atRiskAndLostCustomers.length > 0) {
+        // Get all customer IDs for batch queries
+        const customerIds = atRiskAndLostCustomers.map(cu => cu.customer.id);
+        
+        // Batch query: Get appointment counts for all customers at once
+        const appointmentCounts = await prisma.appointment.groupBy({
+          by: ['customerId'],
           where: {
-            customerId: customerId,
-            newStatus: {
-              in: ['Risk', 'Lost'] // Match both Risk and Lost status changes
-            },
-            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            customerId: { in: customerIds }
           },
-          orderBy: {
-            changedAt: 'asc' // Get the earliest (first) at_risk or lost status change
-          },
-          select: {
-            changedAt: true,
-            newStatus: true
+          _count: {
+            id: true
           }
         });
+        const appointmentCountMap = new Map(
+          appointmentCounts.map(ac => [ac.customerId, ac._count.id])
+        );
 
-        // If we found when they became at_risk/lost, only count visits and revenue BEFORE that date
-        // Otherwise, count all visits and revenue (they were always at_risk/lost)
-        const statusChangeDate = firstAtRiskOrLostLog?.changedAt || null;
-
-        if (statusChangeDate) {
-          console.log(`   📅 First became ${firstAtRiskOrLostLog.newStatus} at: ${statusChangeDate.toISOString()}`);
-        } else {
-          console.log(`   ⚠️  No status change log found - counting all visits/revenue`);
-        }
-
-        // Get ALL appointments count for this customer (customer_visits)
-        // Formula: customer_visits = total appointments count (not filtered by status change date)
-        // Use customerUser.userId if available, otherwise use authenticatedUser.userId
-        const customerUserId = customerUser.userId || authenticatedUser.userId;
-        
-        // Build appointment where clause
-        // For user role: filter by customerUserId (the customer's userId from CustomerUser table)
-        // This ensures we count all appointments for this customer that belong to this user
-        const appointmentWhere = {
-          customerId: customerId
-        };
-        
-        // Only filter by userId if user role and customerUserId is available
-        if (authenticatedUser.role === 'user' && customerUserId) {
-          appointmentWhere.userId = customerUserId;
-        }
-        
-        // Also check total appointments WITHOUT userId filter for debugging
-        const appointmentCountWithoutUserId = await prisma.appointment.count({
+        // Batch query: Get payment totals for all customers at once
+        const paymentTotals = await prisma.paymentWebhook.groupBy({
+          by: ['customerId'],
           where: {
-            customerId: customerId
-          }
-        });
-        
-        const appointmentCount = await prisma.appointment.count({
-          where: appointmentWhere
-        });
-        
-        // Also fetch appointments to verify the count and debug
-        const appointmentsList = await prisma.appointment.findMany({
-          where: appointmentWhere,
-          select: {
-            id: true,
-            customerId: true,
-            userId: true,
-            createDate: true,
-            createdAt: true
-          },
-          orderBy: {
-            createdAt: 'asc'
-          }
-        });
-        
-        // Fetch ALL appointments for this customer (without userId filter) for debugging
-        const allAppointmentsList = await prisma.appointment.findMany({
-          where: {
-            customerId: customerId
-          },
-          select: {
-            id: true,
-            customerId: true,
-            userId: true,
-            createDate: true,
-            createdAt: true
-          },
-          orderBy: {
-            createdAt: 'asc'
-          }
-        });
-        
-        console.log(`   🔍 Customer UserId from CustomerUser: ${customerUserId}`);
-        console.log(`   🔍 Authenticated UserId: ${authenticatedUser.userId}`);
-        console.log(`   🔍 Authenticated User Role: ${authenticatedUser.role}`);
-        console.log(`   🔍 Appointment Query Where (with userId filter):`, JSON.stringify(appointmentWhere, null, 2));
-        console.log(`   📋 Total Appointments Found (with userId filter): ${appointmentCount}`);
-        console.log(`   📋 Total Appointments Found (without userId filter): ${appointmentCountWithoutUserId}`);
-        console.log(`   📋 Appointments List (with userId filter):`, appointmentsList.map(apt => ({
-          id: apt.id,
-          customerId: apt.customerId,
-          userId: apt.userId,
-          createDate: apt.createDate,
-          createdAt: apt.createdAt
-        })));
-        console.log(`   📋 All Appointments List (without userId filter):`, allAppointmentsList.map(apt => ({
-          id: apt.id,
-          customerId: apt.customerId,
-          userId: apt.userId,
-          createDate: apt.createDate,
-          createdAt: apt.createdAt
-        })));
-
-        // Get ALL payments for this customer (customer_revenue)
-        // Formula: customer_revenue = sum of all payments (not filtered by status change date)
-        const customerPayments = await prisma.paymentWebhook.findMany({
-          where: {
-            customerId: customerId,
+            customerId: { in: customerIds },
             status: 'success',
             ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
-            // NO FILTER BY statusChangeDate - count ALL payments
           },
-          select: {
-            total: true,
-            paymentDate: true
+          _sum: {
+            total: true
           },
-          orderBy: {
-            paymentDate: 'desc'
+          _count: {
+            id: true
           }
         });
+        const paymentTotalMap = new Map(
+          paymentTotals.map(pt => [pt.customerId, { total: pt._sum.total || 0, count: pt._count.id }])
+        );
 
-        // Calculate customer_visits - USE APPOINTMENTS COUNT (all appointments, without userId filter)
-        // Formula: customer_visits = appointments count (ALL appointments for this customer)
-        // Use appointmentCountWithoutUserId to count ALL appointments, regardless of userId
-        // This ensures we count all 3 appointments if they exist in the database
-        const customerVisits = appointmentCountWithoutUserId; // Use count without userId filter
-        
-        // Calculate customer_revenue (sum of all payments)
-        // Formula: customer_revenue = sum of all payments
-        const customerRevenue = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
-        
-        console.log(`   📋 Customer Visits (appointments - ALL): ${customerVisits}`);
-        console.log(`   📋 Customer Visits (appointments - with userId filter): ${appointmentCount}`);
-        console.log(`   💳 Total Payments: ${customerPayments.length}`);
-        console.log(`   💰 Total Payment Amount: ₪${customerRevenue}`);
-        
-        if (customerPayments.length > 0) {
-          console.log(`   💳 Payment Details:`);
-          customerPayments.forEach((payment, idx) => {
-            console.log(`      Payment ${idx + 1}: ₪${payment.total} on ${payment.paymentDate.toISOString()}`);
+        // Process each customer
+        for (const customerUser of atRiskAndLostCustomers) {
+          const customerId = customerUser.customer.id;
+          const customerVisits = appointmentCountMap.get(customerId) || 0;
+          const paymentData = paymentTotalMap.get(customerId) || { total: 0, count: 0 };
+          const customerRevenue = paymentData.total;
+
+          // Skip if no visits or revenue
+          if (customerVisits === 0 || customerRevenue === 0) {
+            continue;
+          }
+
+          // Calculate ATV and Potential Value
+          const customerAverageTransaction = customerRevenue / customerVisits;
+          const potentialValue = customerAverageTransaction * customerVisits;
+
+          totalPotentialLostRevenue += potentialValue;
+
+          lostCustomerDetails.push({
+            customerId: customerId,
+            customerName: customerUser.customer.customerFullName,
+            currentStatus: customerUser.status,
+            firstStatusChangeDate: null,
+            totalPayments: paymentData.count,
+            totalAppointments: customerVisits,
+            customerVisits: customerVisits,
+            totalSpent: customerRevenue,
+            averageTransaction: Math.round(customerAverageTransaction * 100) / 100,
+            potentialValue: Math.round(potentialValue * 100) / 100,
+            customerLostRevenue: Math.round(potentialValue * 100) / 100
           });
         }
-        
-        // Skip calculation if customer has no visits or revenue before becoming at_risk/lost
-        if (customerVisits === 0 || customerRevenue === 0) {
-          console.log(`   ⚠️  Skipping - No visits (${customerVisits}) or revenue (${customerRevenue}) before becoming at_risk/lost`);
-          continue; // Skip this customer - no data before becoming at_risk/lost
-        }
-        
-        // Calculate Customer Average Transaction Value (ATV)
-        // Formula: ATV = customer_revenue ÷ customer_visits
-        const customerAverageTransaction = customerVisits > 0 ? customerRevenue / customerVisits : 0;
-        
-        console.log(`   📊 Customer Visits Used (appointments): ${customerVisits}`);
-        console.log(`   💵 Customer Revenue: ₪${customerRevenue}`);
-        console.log(`   📈 Average Transaction Value (ATV): ₪${customerAverageTransaction.toFixed(2)} (${customerRevenue} ÷ ${customerVisits})`);
-        
-        // Calculate Potential Value for this customer
-        // Formula: Potential Value = ATV × customer_visits
-        // Example: ATV = ₹120, customer_visits = 10 → Potential Value = ₹120 × 10 = ₹1,200
-        const potentialValue = customerAverageTransaction * customerVisits;
-        
-        console.log(`   💰 Potential Value: ₪${potentialValue.toFixed(2)} (${customerAverageTransaction.toFixed(2)} × ${customerVisits})`);
-        console.log(`   ✅ Lost Revenue for this customer = ₪${potentialValue.toFixed(2)}`);
-        
-        // Add to total potential lost revenue (will be averaged later)
-        totalPotentialLostRevenue += potentialValue;
-
-        console.log(`   ✅ Added to total - Running total: ₪${totalPotentialLostRevenue.toFixed(2)}`);
-
-        lostCustomerDetails.push({
-          customerId: customerId,
-          customerName: customerUser.customer.customerFullName,
-          currentStatus: currentStatus,
-          firstStatusChangeDate: statusChangeDate,
-          totalPayments: customerPayments.length,
-          totalAppointments: appointmentCount,
-          customerVisits: customerVisits,
-          totalSpent: customerRevenue,
-          averageTransaction: Math.round(customerAverageTransaction * 100) / 100,
-          potentialValue: Math.round(potentialValue * 100) / 100, // ATV × customer_visits
-          customerLostRevenue: Math.round(potentialValue * 100) / 100 // Same as potentialValue for this customer
-        });
       }
 
-      console.log(`\n💰 Sum of All Potential Values: ₪${totalPotentialLostRevenue.toFixed(2)}`);
-      console.log(`📊 Total Lost Customers Processed: ${lostCustomerDetails.length}`);
-      
-      // Calculate Final Lost Revenue = Sum of all customers' potential values (NOT average)
-      // Formula: Final Lost Revenue = Sum of all Potential Values
-      // Example: Customer A Potential = ₹1,200, Customer B Potential = ₹600
-      // Final Lost Revenue = ₹1,200 + ₹600 = ₹1,800 (NOT average)
       const totalLostRevenue = totalPotentialLostRevenue;
-      
-      console.log(`💰 Final Lost Revenue (Sum): ₪${totalLostRevenue.toFixed(2)} (Sum of all potential values, NOT average)`);
-      console.log(`📊 Total Customers (for LTV - all customers): ${totalCustomersForLTV}`);
-      console.log(`⚠️  IMPORTANT: Lost Revenue is calculated as SUM of potential values for lost/at_risk/risk customers (NOT average)\n`);
       
       return res.json({
         success: true,
@@ -896,17 +734,13 @@ class AdminDashboardController {
     try {
       const authenticatedUser = req.user;
 
-      // Build where clause based on user role
-      let where = {};
-      if (authenticatedUser.role === 'user') {
-        where.userId = authenticatedUser.userId;
-      }
-
-      // Get data for different periods (same as backup code - calls getRevenuePeriodData)
-      const monthlyData = await this.getRevenuePeriodData('monthly', authenticatedUser);
-      const weeklyData = await this.getRevenuePeriodData('weekly', authenticatedUser);
-      const lastMonthData = await this.getRevenuePeriodData('last-month', authenticatedUser);
-      const yearlyData = await this.getRevenuePeriodData('yearly', authenticatedUser);
+      // Get data for different periods in parallel for better performance
+      const [monthlyData, weeklyData, lastMonthData, yearlyData] = await Promise.all([
+        this.getRevenuePeriodData('monthly', authenticatedUser),
+        this.getRevenuePeriodData('weekly', authenticatedUser),
+        this.getRevenuePeriodData('last-month', authenticatedUser),
+        this.getRevenuePeriodData('yearly', authenticatedUser)
+      ]);
 
       return res.json({
         success: true,
@@ -996,67 +830,72 @@ class AdminDashboardController {
           break;
           
         case 'weekly':
-          // Get current month's weekly data - Calendar weeks (Sunday to Saturday) - same as backup
+          // Get current month's weekly data - Optimized with single query  
           const currentMonthStart = new Date(currentYear, currentDate.getMonth(), 1);
           const currentMonthEnd = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
           
+          // Get all payments for the month in one query
+          const weeklyPayments = await prisma.paymentWebhook.findMany({
+            where: {
+              ...where,
+              paymentDate: { gte: currentMonthStart, lte: currentMonthEnd },
+              status: 'success',
+              revenuePaymentStatus: 'recovered'
+            },
+            select: {
+              total: true,
+              totalWithoutVAT: true,
+              totalVAT: true,
+              paymentDate: true
+            }
+          });
+          
+          // Calculate weeks and group payments by week
           const weeksInCurrentMonth = [];
           let currentWeekNumber = 1;
           
           // Find the first Sunday of the month or before the month starts
           let currentWeekStartDate = new Date(currentMonthStart);
-          const currentFirstDayOfWeek = currentMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+          const currentFirstDayOfWeek = currentMonthStart.getDay();
           
-          // If month doesn't start on Sunday, go back to previous Sunday
           if (currentFirstDayOfWeek !== 0) {
             currentWeekStartDate.setDate(currentMonthStart.getDate() - currentFirstDayOfWeek);
           }
           
           while (currentWeekStartDate <= currentMonthEnd) {
-            // Week runs from Sunday to Saturday
             let currentWeekEndDate = new Date(currentWeekStartDate);
             currentWeekEndDate.setDate(currentWeekStartDate.getDate() + 6);
             currentWeekEndDate.setHours(23, 59, 59, 999);
             
-            // Only count weeks that have at least one day in the target month
             const weekHasDaysInMonth = (currentWeekStartDate <= currentMonthEnd) && 
                                      (currentWeekEndDate >= currentMonthStart);
             
             if (weekHasDaysInMonth) {
-              // Limit dates to within the month for data query
               const queryStartDate = currentWeekStartDate < currentMonthStart ? currentMonthStart : currentWeekStartDate;
               const queryEndDate = currentWeekEndDate > currentMonthEnd ? currentMonthEnd : currentWeekEndDate;
               
-              const revenueData = await prisma.paymentWebhook.aggregate({
-                where: {
-                  ...where,
-                  paymentDate: { gte: queryStartDate, lte: queryEndDate },
-                  status: 'success',
-                  revenuePaymentStatus: 'recovered'  // Only recovered customers
-                },
-                _sum: {
-                  total: true,
-                  totalWithoutVAT: true,
-                  totalVAT: true
-                },
-                _count: {
-                  id: true
-                }
+              // Filter payments for this week
+              const weekPayments = weeklyPayments.filter(p => {
+                const paymentDate = new Date(p.paymentDate);
+                return paymentDate >= queryStartDate && paymentDate <= queryEndDate;
               });
+              
+              const weekRevenue = weekPayments.reduce((sum, p) => sum + (p.total || 0), 0);
+              const weekRevenueWithoutVAT = weekPayments.reduce((sum, p) => sum + (p.totalWithoutVAT || 0), 0);
+              const weekVAT = weekPayments.reduce((sum, p) => sum + (p.totalVAT || 0), 0);
               
               weeksInCurrentMonth.push({
                 label: `Week ${currentWeekNumber}`,
-                revenue: revenueData._sum.total || 0,
-                revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
-                vat: revenueData._sum.totalVAT || 0,
-                transactionCount: revenueData._count.id || 0,
+                revenue: weekRevenue,
+                revenueWithoutVAT: weekRevenueWithoutVAT,
+                vat: weekVAT,
+                transactionCount: weekPayments.length,
                 week: currentWeekNumber
               });
               
               currentWeekNumber++;
             }
             
-            // Move to next Sunday
             currentWeekStartDate = new Date(currentWeekEndDate);
             currentWeekStartDate.setDate(currentWeekEndDate.getDate() + 1);
             currentWeekStartDate.setHours(0, 0, 0, 0);
@@ -1066,67 +905,72 @@ class AdminDashboardController {
           break;
           
         case 'last-month':
-          // Last month's weekly data - Calendar weeks (Sunday to Saturday) - same as backup
+          // Last month's weekly data - Optimized with single query
           const lastMonthStart = new Date(currentYear, currentDate.getMonth() - 1, 1);
           const lastMonthEnd = new Date(currentYear, currentDate.getMonth(), 0, 23, 59, 59);
           
+          // Get all payments for last month in one query
+          const lastMonthPayments = await prisma.paymentWebhook.findMany({
+            where: {
+              ...where,
+              paymentDate: { gte: lastMonthStart, lte: lastMonthEnd },
+              status: 'success',
+              revenuePaymentStatus: 'recovered'
+            },
+            select: {
+              total: true,
+              totalWithoutVAT: true,
+              totalVAT: true,
+              paymentDate: true
+            }
+          });
+          
+          // Calculate weeks and group payments by week
           const weeksInLastMonth = [];
           let lastMonthWeekNumber = 1;
           
           // Find the first Sunday of the month or before the month starts
           let lastMonthWeekStartDate = new Date(lastMonthStart);
-          const lastMonthFirstDayOfWeek = lastMonthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+          const lastMonthFirstDayOfWeek = lastMonthStart.getDay();
           
-          // If month doesn't start on Sunday, go back to previous Sunday
           if (lastMonthFirstDayOfWeek !== 0) {
             lastMonthWeekStartDate.setDate(lastMonthStart.getDate() - lastMonthFirstDayOfWeek);
           }
           
           while (lastMonthWeekStartDate <= lastMonthEnd) {
-            // Week runs from Sunday to Saturday
             let lastMonthWeekEndDate = new Date(lastMonthWeekStartDate);
             lastMonthWeekEndDate.setDate(lastMonthWeekStartDate.getDate() + 6);
             lastMonthWeekEndDate.setHours(23, 59, 59, 999);
             
-            // Only count weeks that have at least one day in the target month
             const weekHasDaysInMonth = (lastMonthWeekStartDate <= lastMonthEnd) && 
                                      (lastMonthWeekEndDate >= lastMonthStart);
             
             if (weekHasDaysInMonth) {
-              // Limit dates to within the month for data query
               const queryStartDate = lastMonthWeekStartDate < lastMonthStart ? lastMonthStart : lastMonthWeekStartDate;
               const queryEndDate = lastMonthWeekEndDate > lastMonthEnd ? lastMonthEnd : lastMonthWeekEndDate;
               
-              const revenueData = await prisma.paymentWebhook.aggregate({
-                where: {
-                  ...where,
-                  paymentDate: { gte: queryStartDate, lte: queryEndDate },
-                  status: 'success',
-                  revenuePaymentStatus: 'recovered'  // Only recovered customers
-                },
-                _sum: {
-                  total: true,
-                  totalWithoutVAT: true,
-                  totalVAT: true
-                },
-                _count: {
-                  id: true
-                }
+              // Filter payments for this week
+              const weekPayments = lastMonthPayments.filter(p => {
+                const paymentDate = new Date(p.paymentDate);
+                return paymentDate >= queryStartDate && paymentDate <= queryEndDate;
               });
+              
+              const weekRevenue = weekPayments.reduce((sum, p) => sum + (p.total || 0), 0);
+              const weekRevenueWithoutVAT = weekPayments.reduce((sum, p) => sum + (p.totalWithoutVAT || 0), 0);
+              const weekVAT = weekPayments.reduce((sum, p) => sum + (p.totalVAT || 0), 0);
               
               weeksInLastMonth.push({
                 label: `Week ${lastMonthWeekNumber}`,
-                revenue: revenueData._sum.total || 0,
-                revenueWithoutVAT: revenueData._sum.totalWithoutVAT || 0,
-                vat: revenueData._sum.totalVAT || 0,
-                transactionCount: revenueData._count.id || 0,
+                revenue: weekRevenue,
+                revenueWithoutVAT: weekRevenueWithoutVAT,
+                vat: weekVAT,
+                transactionCount: weekPayments.length,
                 week: lastMonthWeekNumber
               });
               
               lastMonthWeekNumber++;
             }
             
-            // Move to next Sunday
             lastMonthWeekStartDate = new Date(lastMonthWeekEndDate);
             lastMonthWeekStartDate.setDate(lastMonthWeekEndDate.getDate() + 1);
             lastMonthWeekStartDate.setHours(0, 0, 0, 0);
