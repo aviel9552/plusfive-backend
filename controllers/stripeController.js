@@ -1737,108 +1737,76 @@ const updatePaymentStatus = async (req, res) => {
 
 
 /**
- * Get user payment history
+ * Get user payment history - Fetch directly from Stripe invoices only
+ * This endpoint returns only invoices, not payment intents or charges
+ * Invoices are fetched from Stripe using customer email or customer ID
  */
 const getPaymentHistory = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { page = 1, limit = 10, type } = req.query;
 
-    const skip = (page - 1) * limit;
-    const where = { userId };
-
-    if (type) {
-      where.paymentType = type;
-    }
-
-    const [payments, total] = await Promise.all([
-      prisma.paymentHistory.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: parseInt(skip),
-        take: parseInt(limit),
-        select: {
-          id: true,
-          paymentType: true,
-          amount: true,
-          currency: true,
-          description: true,
-          status: true,
-          paymentMethod: true,
-          source: true,
-          stripeSessionId: true,
-          stripePaymentId: true,
-          stripeSubscriptionId: true,
-          createdAt: true,
-          metadata: true
-        }
-      }),
-      prisma.paymentHistory.count({ where })
-    ]);
-
-    // Modular Stripe enrichment
-    const enrichWithStripe = async ({ stripeSessionId, stripePaymentId }) => {
-      try {
-        let paymentIntentId;
-    
-        if (stripeSessionId) {
-          const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
-          paymentIntentId = session.payment_intent;
-        } else if (stripePaymentId) {
-          paymentIntentId = stripePaymentId;
-        }
-    
-        if (!paymentIntentId) return { receiptUrl: null, invoiceUrl: null };
-    
-        const charges = await stripe.charges.list({
-          payment_intent: paymentIntentId,
-          limit: 1
-        });
-    
-        const charge = charges.data[0];
-        if (!charge) return { receiptUrl: null, invoiceUrl: null };
-    
-        const receiptUrl = charge.receipt_url || null;
-        const invoiceUrl = charge.invoice
-          ? (await stripe.invoices.retrieve(charge.invoice)).hosted_invoice_url
-          : null;
-    
-        return { receiptUrl, invoiceUrl };
-      } catch (err) {
-        return { receiptUrl: null, invoiceUrl: null };
-      }
-    };
-
-    const paymentsWithReceipt = await Promise.all(
-      payments.map(async (payment) => {
-        const { receiptUrl, invoiceUrl } = await enrichWithStripe({
-          stripeSessionId: payment.stripeSessionId,
-          stripePaymentId: payment.stripePaymentId
-        });
-
-        return {
-          ...payment,
-          receiptUrl,
-          invoiceUrl
-        };
-      })
-    );
-
-    return successResponse(res, {
-      payments: paymentsWithReceipt,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit)
-      }
+    // 1. Get user email from DB
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true }
     });
 
-  } catch (error) {
-    console.error('Get payment history error:', error);
-    return errorResponse(res, 'Failed to fetch payment history', 500);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const email = user.email;
+
+    // 2. Find all customers in Stripe by email (could be multiple)
+    const customers = await stripe.customers.list({
+      email,
+      limit: 10
+    });
+
+    if (customers.data.length === 0) {
+      return res.json({ invoices: [] });
+    }
+
+    let allInvoices = [];
+
+    // 3. Fetch invoices of all customers having same email
+    for (const cust of customers.data) {
+      const customerInvoices = await stripe.invoices.list({
+        customer: cust.id,
+        limit: 100
+      });
+
+      const mapped = customerInvoices.data
+        .map(inv => ({
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          amount: inv.amount_paid / 100, // Use amount_paid instead of amount_due
+          currency: inv.currency,
+          status: inv.status,
+          hostedInvoiceUrl: inv.hosted_invoice_url,
+          pdfUrl: inv.invoice_pdf,
+          created: inv.created,
+          dueDate: inv.due_date,
+          subscriptionId: inv.subscription,
+          customerEmail: inv.customer_email,
+          customerName: inv.customer_name,
+        }))
+        .filter(inv => inv.amount > 0); // Filter out invoices with amount 0
+
+      allInvoices.push(...mapped);
+    }
+
+    // 4. Sort invoices by latest first
+    allInvoices = allInvoices.sort((a, b) => b.created - a.created);
+
+    return res.json({ invoices: allInvoices });
+
+  } catch (err) {
+    console.error("Invoice Fetch Error:", err);
+    return res.status(500).json({ message: "Failed to fetch invoices" });
   }
 };
+
 
 module.exports = {
   createCheckoutSession,
@@ -1860,3 +1828,4 @@ module.exports = {
   updatePaymentStatus,
   getPaymentHistory
 };
+
