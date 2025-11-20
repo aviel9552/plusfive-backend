@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const CustomerStatusService = require('./CustomerStatusService');
 const WhatsAppService = require('./WhatsAppService');
-const { reportUsageForMonth } = require('../lib/stripe');
+// Note: reportUsageForMonth removed - now using real-time reporting when WhatsApp messages are sent
 
 class CronJobService {
   constructor() {
@@ -18,15 +18,15 @@ class CronJobService {
         job1: '0 */6 * * *',  // Every 6 hours
         job2: '0 9 * * *',    // Daily 9:00 AM
         job3: '0 10 * * *',   // Daily 10:00 AM
-        job4: '0 11 * * *',   // Daily 11:00 AM
-        monthlyUsage: '0 0 1 * *'  // Monthly on 1st at midnight (00:00)
+        job4: '0 11 * * *'    // Daily 11:00 AM
+        // Note: Monthly usage reporting removed - now using real-time reporting
       },
       test: {
         job1: '*/60 * * * * *', // Every 60 seconds (1 minute) - Status Sync
         job2: '*/120 * * * * *', // Every 120 seconds (2 minutes) - At Risk Check
         job3: '*/300 * * * * *', // Every 300 seconds (5 minutes) - Lost Check
-        job4: '*/60 * * * * *', // Every 60 seconds (1 minute) - Heartbeat
-        monthlyUsage: '*/120 * * * * *'  // Every 2 minutes for testing
+        job4: '*/60 * * * * *' // Every 60 seconds (1 minute) - Heartbeat
+        // Note: Monthly usage reporting removed - now using real-time reporting
       }
     };
   }
@@ -182,14 +182,11 @@ class CronJobService {
       console.log('⏱️ [cron-job-4] Heartbeat triggered');
     });
 
-    // Monthly usage reporting job
-    this.scheduleJob('monthly-usage', currentSchedules.monthlyUsage, async () => {
-      try {
-        await reportUsageForMonth();
-      } catch (error) {
-        console.error('❌ Monthly usage reporting error:', error.message);
-      }
-    });
+    // Note: Monthly usage reporting job removed
+    // Usage is now reported in real-time when WhatsApp messages are sent:
+    // - createWhatsappMessageWithValidation (webhookController.js)
+    // - handlePaymentCheckoutWebhook (webhookController.js)
+    // - updateCustomerStatus (CustomerStatusService.js) - when status changes to at_risk/lost/recovered
 
     // Summary log
     console.log(`\n✅ All cron jobs scheduled successfully in ${mode}`);
@@ -199,7 +196,7 @@ class CronJobService {
       console.log(`   - Job 2 (At Risk Check): Every 120 seconds (2 minutes)`);
       console.log(`   - Job 3 (Lost Check): Every 300 seconds (5 minutes)`);
       console.log(`   - Job 4 (Heartbeat): Every 60 seconds (1 minute)`);
-      console.log(`   - Monthly Usage: Every 120 seconds (2 minutes)`);
+      console.log(`   - Monthly Usage: REMOVED (now using real-time reporting)`);
       console.log(`   - Risk Threshold: ${process.env.AT_RISK_TEST_MINUTES || 2} minutes`);
       console.log(`   - Lost Threshold: ${process.env.LOST_TEST_MINUTES || 5} minutes`);
       console.log(`\n⏰ Test Mode Schedule:`);
@@ -293,8 +290,8 @@ class CronJobService {
         return { customersFound: customers.length, notificationsSent: 0 };
       },
       'report-usage': async () => {
-        await reportUsageForMonth();
-        return { message: 'Monthly usage reporting completed manually' };
+        // Note: This job is disabled - usage is now reported in real-time
+        return { message: 'Usage reporting is now done in real-time when WhatsApp messages are sent. This manual trigger is disabled.' };
       }
     };
 

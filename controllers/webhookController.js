@@ -736,6 +736,94 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               userId
             );
             
+            // Report usage to Stripe meter (real-time reporting when payment received)
+            // Using same logic as reportUsageForMonth cron job
+            try {
+              if (userId) {
+                const userWithStripe = await prisma.user.findUnique({
+                  where: { id: userId },
+                  select: { 
+                    id: true, 
+                    email: true, 
+                    stripeSubscriptionId: true
+                  }
+                });
+
+                if (userWithStripe && userWithStripe.stripeSubscriptionId) {
+                  // Get subscription with expanded price and product (same as cron job)
+                  const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId, {
+                    expand: ['items.data.price.product']
+                  });
+                  
+                  // Find the metered subscription item (WhatsApp messages)
+                  const meteredItem = subscription.items.data.find(item => 
+                    item.price?.recurring?.usage_type === 'metered'
+                  );
+
+                  if (!meteredItem) {
+                    console.log(`⚠️  No metered subscription item found for user ${userWithStripe.email} - skipping`);
+                  } else {
+                    // Get event name dynamically from price metadata, product metadata, or use default
+                    // Priority: price.metadata.event_name > product.metadata.event_name > default "whatsapp_message"
+                    let eventName = "whatsapp_message"; // Default fallback
+                    
+                    // Try to get event name from price metadata
+                    if (meteredItem.price?.metadata?.event_name) {
+                      eventName = meteredItem.price.metadata.event_name;
+                      console.log(`📋 Event name from price metadata: ${eventName}`);
+                    } 
+                    // Try to get event name from product metadata
+                    else if (meteredItem.price?.product) {
+                      let product = meteredItem.price.product;
+                      if (typeof product === 'string') {
+                        try {
+                          product = await stripe.products.retrieve(product);
+                        } catch (error) {
+                          console.error(`❌ Error fetching product for event name:`, error.message);
+                        }
+                      }
+                      if (product && typeof product === 'object' && product.metadata?.event_name) {
+                        eventName = product.metadata.event_name;
+                        console.log(`📋 Event name from product metadata: ${eventName}`);
+                      }
+                    }
+                    
+                    console.log(`📋 Using event name: ${eventName}`);
+
+                    // Get Stripe customer ID from subscription (same as cron job)
+                    const stripeCustomerId = subscription.customer;
+                    if (!stripeCustomerId) {
+                      console.error(`❌ No customer ID found in subscription for user ${userWithStripe.email}`);
+                    } else {
+                      // Extract customer ID if it's an object
+                      const customerId = typeof stripeCustomerId === 'string' 
+                        ? stripeCustomerId 
+                        : stripeCustomerId?.id;
+                      
+                      console.log(`📋 Stripe Customer ID: ${customerId}`);
+
+                      // Create meter event for real-time usage tracking (same as cron job)
+                      const usageEvent = await stripe.billing.meterEvents.create({
+                        event_name: eventName,
+                        payload: {
+                          stripe_customer_id: customerId,
+                          subscription_item: meteredItem.id,
+                          value: 1, // One unit per message
+                          timestamp: Math.floor(Date.now() / 1000) // Current timestamp
+                        }
+                      });
+
+                      console.log(`✅ Real-time usage reported to Stripe meter: ${eventName} for user ${userWithStripe.email} (payment webhook)`);
+                      console.log(`📋 Event ID: ${usageEvent.id}`);
+                    }
+                  }
+                }
+              }
+            } catch (stripeError) {
+              console.error('❌ Error reporting usage to Stripe (payment webhook):', stripeError.message);
+              // Don't fail the webhook if Stripe reporting fails
+            }
+            
             // Trigger N8N with review_id - N8N will handle WhatsApp messaging
             await n8nService.triggerReviewRequest({
               ...webhookParams,
@@ -743,7 +831,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               payment_webhook_id: paymentWebhook.id // Also pass payment webhook ID
             });
             
-            console.log(`✅ Review record, whatsappMessage record created and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
+            console.log(`✅ Review record, whatsappMessage record created, Stripe usage reported and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
           } catch (reviewError) {
             console.error('❌ Error creating review record or triggering N8N:', reviewError);
             // Don't fail webhook if review record creation or N8N fails
@@ -1528,32 +1616,85 @@ const createWhatsappMessageWithValidation = async (req, res) => {
       }
     });
 
-    // Report usage to Stripe
+    // Report usage to Stripe using meterEvents API (real-time reporting)
+    // Using same logic as reportUsageForMonth cron job
     try {
       const userWithStripe = await prisma.user.findUnique({
         where: { id: user_id },
         select: { 
           id: true, 
           email: true, 
-          stripeSubscriptionId: true 
+          stripeSubscriptionId: true
         }
       });
 
       if (userWithStripe && userWithStripe.stripeSubscriptionId) {
-        const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId);
+        // Get subscription with expanded price and product (same as cron job)
+        const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId, {
+          expand: ['items.data.price.product']
+        });
+        
+        // Find the metered subscription item (WhatsApp messages)
         const meteredItem = subscription.items.data.find(item => 
           item.price?.recurring?.usage_type === 'metered'
         );
 
-        if (meteredItem) {
-          await stripe.subscriptionItems.createUsageRecord(
-            meteredItem.id,
-            {
-              quantity: 1,
-              timestamp: Math.floor(Date.now() / 1000),
-              action: 'increment'
+        if (!meteredItem) {
+          console.log(`⚠️  No metered subscription item found for user ${userWithStripe.email} - skipping`);
+        } else {
+          // Get event name dynamically from price metadata, product metadata, or use default
+          // Priority: price.metadata.event_name > product.metadata.event_name > default "whatsapp_message"
+          let eventName = "whatsapp_message"; // Default fallback
+          
+          // Try to get event name from price metadata
+          if (meteredItem.price?.metadata?.event_name) {
+            eventName = meteredItem.price.metadata.event_name;
+            console.log(`📋 Event name from price metadata: ${eventName}`);
+          } 
+          // Try to get event name from product metadata
+          else if (meteredItem.price?.product) {
+            let product = meteredItem.price.product;
+            if (typeof product === 'string') {
+              try {
+                product = await stripe.products.retrieve(product);
+              } catch (error) {
+                console.error(`❌ Error fetching product for event name:`, error.message);
+              }
             }
-          );
+            if (product && typeof product === 'object' && product.metadata?.event_name) {
+              eventName = product.metadata.event_name;
+              console.log(`📋 Event name from product metadata: ${eventName}`);
+            }
+          }
+          
+          console.log(`📋 Using event name: ${eventName}`);
+
+          // Get Stripe customer ID from subscription (same as cron job)
+          const stripeCustomerId = subscription.customer;
+          if (!stripeCustomerId) {
+            console.error(`❌ No customer ID found in subscription for user ${userWithStripe.email}`);
+          } else {
+            // Extract customer ID if it's an object
+            const customerId = typeof stripeCustomerId === 'string' 
+              ? stripeCustomerId 
+              : stripeCustomerId?.id;
+            
+            console.log(`📋 Stripe Customer ID: ${customerId}`);
+
+            // Create meter event for real-time usage tracking (same as cron job)
+            const usageEvent = await stripe.billing.meterEvents.create({
+              event_name: eventName,
+              payload: {
+                stripe_customer_id: customerId,
+                subscription_item: meteredItem.id,
+                value: 1, // One unit per message
+                timestamp: Math.floor(Date.now() / 1000) // Current timestamp
+              }
+            });
+
+            console.log(`✅ Real-time usage reported to Stripe meter: ${eventName} for user ${userWithStripe.email}`);
+            console.log(`📋 Event ID: ${usageEvent.id}`);
+          }
         }
       }
     } catch (stripeError) {
