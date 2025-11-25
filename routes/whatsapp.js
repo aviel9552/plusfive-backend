@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
+const { checkSubscription } = require('../middleware/subscription');
 const { successResponse, errorResponse } = require('../lib/utils');
 const WhatsAppService = require('../services/WhatsAppService');
 
@@ -88,8 +89,8 @@ router.post('/check-number', async (req, res) => {
   }
 });
 
-// Send custom message (for general testing)
-router.post('/send-custom', async (req, res) => {
+// Send custom message (for general testing) - requires subscription
+router.post('/send-custom', checkSubscription, async (req, res) => {
   try {
     const { phoneNumber, message, messageType = 'custom' } = req.body;
     

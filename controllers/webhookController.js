@@ -52,6 +52,39 @@ const handleAppointmentWebhook = async (req, res) => {
       return errorResponse(res, `Business '${webhookData.BusinessName}' not found. Please create user first.`, 400);
     }
 
+    // Check if user has active subscription - block data entry if subscription is not active
+    const user = await prisma.user.findUnique({
+      where: { id: existingUser.id },
+      select: {
+        id: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true
+      }
+    });
+
+    if (user && user.role !== 'admin') {
+      const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription.`, 403);
+      }
+
+      // Check expiration date
+      if (user.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(user.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Please renew to continue.`, 403);
+        }
+      }
+    }
+
     // Only store webhook log if user exists
     const webhookLog = await prisma.webhookLog.create({
       data: {
@@ -384,6 +417,41 @@ const handleRatingWebhook = async (req, res) => {
       return errorResponse(res, errorMsg, 404);
     }
 
+    // Check if user has active subscription - block rating processing if subscription is not active
+    if (userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          subscriptionStatus: true,
+          subscriptionExpirationDate: true,
+          role: true
+        }
+      });
+
+      if (user && user.role !== 'admin') {
+        const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+        
+        // Block if subscription is not active
+        if (!subscriptionStatus || 
+            subscriptionStatus === 'pending' || 
+            subscriptionStatus === 'canceled' || 
+            subscriptionStatus === 'inactive' ||
+            subscriptionStatus === 'expired') {
+          return errorResponse(res, 'Active subscription required. Rating cannot be processed without an active subscription.', 403);
+        }
+
+        // Check expiration date
+        if (user.subscriptionExpirationDate) {
+          const now = new Date();
+          const expirationDate = new Date(user.subscriptionExpirationDate);
+          if (expirationDate < now) {
+            return errorResponse(res, 'Subscription expired. Rating cannot be processed. Please renew subscription to continue.', 403);
+          }
+        }
+      }
+    }
+
     // 4. Store rating data in Review table (UPDATE existing review)
     if (actualData.Rating && reviewId) {
       console.log('Inside', customerId, actualData.Rating, 'Updating review ID:', reviewId);
@@ -511,6 +579,41 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         // Customer found - both customerId and userId available from Customers table
         customerId = existingCustomer.id;
         userId = existingCustomer.userId; // userId field is present in Customers table
+      }
+    }
+
+    // Check if user has active subscription - block payment processing if subscription is not active
+    if (userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          subscriptionStatus: true,
+          subscriptionExpirationDate: true,
+          role: true
+        }
+      });
+
+      if (user && user.role !== 'admin') {
+        const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+        
+        // Block if subscription is not active
+        if (!subscriptionStatus || 
+            subscriptionStatus === 'pending' || 
+            subscriptionStatus === 'canceled' || 
+            subscriptionStatus === 'inactive' ||
+            subscriptionStatus === 'expired') {
+          return errorResponse(res, 'Active subscription required. Payment cannot be processed without an active subscription.', 403);
+        }
+
+        // Check expiration date
+        if (user.subscriptionExpirationDate) {
+          const now = new Date();
+          const expirationDate = new Date(user.subscriptionExpirationDate);
+          if (expirationDate < now) {
+            return errorResponse(res, 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.', 403);
+          }
+        }
       }
     }
 
@@ -709,6 +812,52 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             whatsapp_phone: customer.customerPhone,
             customer_status: customerStatus
           };
+
+          // Check if user has active subscription before sending review request WhatsApp message
+          if (userId) {
+            const user = await prisma.user.findUnique({
+              where: { id: userId },
+              select: {
+                id: true,
+                subscriptionStatus: true,
+                subscriptionExpirationDate: true,
+                role: true
+              }
+            });
+
+            if (user && user.role !== 'admin') {
+              const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+              
+              // Block if subscription is not active
+              if (!subscriptionStatus || 
+                  subscriptionStatus === 'pending' || 
+                  subscriptionStatus === 'canceled' || 
+                  subscriptionStatus === 'inactive' ||
+                  subscriptionStatus === 'expired') {
+                console.error(`❌ Subscription check failed for user ${userId} - Status: ${subscriptionStatus} - Review request WhatsApp message NOT sent`);
+                // Don't create review record or send message if subscription is not active
+                return successResponse(res, {
+                  webhookId: paymentLog.id,
+                  paymentId: paymentWebhook.id,
+                  message: 'Payment processed successfully, but review request not sent due to inactive subscription'
+                }, 'Payment processed, but review request blocked due to inactive subscription', 200);
+              }
+
+              // Check expiration date
+              if (user.subscriptionExpirationDate) {
+                const now = new Date();
+                const expirationDate = new Date(user.subscriptionExpirationDate);
+                if (expirationDate < now) {
+                  console.error(`❌ Subscription expired for user ${userId} - Review request WhatsApp message NOT sent`);
+                  return successResponse(res, {
+                    webhookId: paymentLog.id,
+                    paymentId: paymentWebhook.id,
+                    message: 'Payment processed successfully, but review request not sent due to expired subscription'
+                  }, 'Payment processed, but review request blocked due to expired subscription', 200);
+                }
+              }
+            }
+          }
 
           // Create review record first, then trigger N8N with review_id
           // Note: WhatsApp messaging is handled by N8N only
@@ -1581,12 +1730,38 @@ const createWhatsappMessageWithValidation = async (req, res) => {
       where: { id: user_id },
       select: {
         id: true,
-        businessName: true
+        businessName: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true
       }
     });
 
     if (!user) {
       return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check if user has active subscription before creating WhatsApp message record
+    if (user.role !== 'admin') {
+      const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, 'Active subscription required. WhatsApp message cannot be created without an active subscription.', 403);
+      }
+
+      // Check expiration date
+      if (user.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(user.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, 'Subscription expired. WhatsApp message cannot be created. Please renew subscription to continue.', 403);
+        }
+      }
     }
 
     // Create whatsappMessage record

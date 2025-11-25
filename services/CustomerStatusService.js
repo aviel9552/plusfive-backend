@@ -389,6 +389,60 @@ class CustomerStatusService {
                 // Trigger n8n webhook for status changes (at_risk, lost, recovered)
                 if (newStatus === 'at_risk' || newStatus === 'lost' || newStatus === 'recovered') {
                     try {
+                        const businessUserId = userId || customer.userId;
+                        
+                        // Check if user has active subscription before sending WhatsApp messages
+                        if (businessUserId) {
+                            const prisma = require('../lib/prisma');
+                            const user = await prisma.user.findUnique({
+                                where: { id: businessUserId },
+                                select: {
+                                    id: true,
+                                    subscriptionStatus: true,
+                                    subscriptionExpirationDate: true,
+                                    role: true
+                                }
+                            });
+
+                            if (user && user.role !== 'admin') {
+                                const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+                                
+                                // Block if subscription is not active
+                                if (!subscriptionStatus || 
+                                    subscriptionStatus === 'pending' || 
+                                    subscriptionStatus === 'canceled' || 
+                                    subscriptionStatus === 'inactive' ||
+                                    subscriptionStatus === 'expired') {
+                                    console.error(`❌ Subscription check failed for user ${businessUserId} - Status: ${subscriptionStatus} - WhatsApp message NOT sent`);
+                                    return { 
+                                        ...customer, 
+                                        currentStatus: newStatus, 
+                                        statusChanged: true,
+                                        previousStatus: currentStatus,
+                                        messageBlocked: true,
+                                        reason: 'Subscription not active'
+                                    };
+                                }
+
+                                // Check expiration date
+                                if (user.subscriptionExpirationDate) {
+                                    const now = new Date();
+                                    const expirationDate = new Date(user.subscriptionExpirationDate);
+                                    if (expirationDate < now) {
+                                        console.error(`❌ Subscription expired for user ${businessUserId} - WhatsApp message NOT sent`);
+                                        return { 
+                                            ...customer, 
+                                            currentStatus: newStatus, 
+                                            statusChanged: true,
+                                            previousStatus: currentStatus,
+                                            messageBlocked: true,
+                                            reason: 'Subscription expired'
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
                         const offsetMs = this.isTestMode
                             ? (daysSinceLastVisit * 60 * 1000)
                             : (daysSinceLastVisit * 24 * 60 * 60 * 1000);

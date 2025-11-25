@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getAllQRCodes, createQRCode, generateQRCodeWithUserInfo, generateWhatsAppQRCode, getQRCodeById, getQRCodeByCode, deleteQRCode, serveQRCodeImage, incrementShareCount, incrementScanCount, getUserOwnQRCodes, getQRAnalytics, getQRPerformance, getQRCodesWithAnalytics, scanQRCode, shareQRCode } = require('../controllers/qrController');
 const { authenticateToken } = require('../middleware/auth');
+const { checkSubscription } = require('../middleware/subscription');
 const { validateRequest } = require('../middleware/validation');
 const { qrCodeCreateSchema } = require('../lib/validations');
 const prisma = require('../lib/prisma');
@@ -90,14 +91,14 @@ router.get('/analytics', authenticateToken, getQRCodesWithAnalytics);
 // GET /api/qr/performance - Get overall QR performance summary
 router.get('/performance', authenticateToken, getQRPerformance);
 
-// POST /api/qr - Create new QR code (with optional direct generation)
-router.post('/', authenticateToken, validateRequest(qrCodeCreateSchema), createQRCode);
+// POST /api/qr - Create new QR code (with optional direct generation) - requires subscription
+router.post('/', authenticateToken, checkSubscription, validateRequest(qrCodeCreateSchema), createQRCode);
 
-// POST /api/qr/generate-with-user-info - Generate QR code with user's information
-router.post('/generate-with-user-info', authenticateToken, generateQRCodeWithUserInfo);
+// POST /api/qr/generate-with-user-info - Generate QR code with user's information - requires subscription
+router.post('/generate-with-user-info', authenticateToken, checkSubscription, generateQRCodeWithUserInfo);
 
-// POST /api/qr/generate-whatsapp - Generate WhatsApp QR codes with short links (Client's requirement)
-router.post('/generate-whatsapp', authenticateToken, generateWhatsAppQRCode);
+// POST /api/qr/generate-whatsapp - Generate WhatsApp QR codes with short links (Client's requirement) - requires subscription
+router.post('/generate-whatsapp', authenticateToken, checkSubscription, generateWhatsAppQRCode);
 
 // GET /api/qr/qr-code/:code - Get QR code by Code (View Only - No Scan Tracking)
 router.get('/qr-code/:code', getQRCodeByCode);

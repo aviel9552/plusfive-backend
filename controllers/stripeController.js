@@ -833,16 +833,19 @@ const handleSubscriptionChange = async (customerId, subscription) => {
     let subscriptionExpirationDate = periodEnd;
 
     // Update user in database
+    // When subscription becomes active, activate the user account
     await prisma.user.update({
       where: { id: user.id },
       data: {
         // role: status === 'active' ? 'subscriber' : 'user', // Commented out - role update disabled
         subscriptionPlan: planName,
         // subscriptionStatus: status === 'active' ? 'active' : 'inactive',
-        subscriptionStatus: 'active',
+        subscriptionStatus: status === 'active' ? 'active' : subscription.status, // Activate account when payment succeeds
         subscriptionStartDate: periodStart,
         subscriptionExpirationDate: subscriptionExpirationDate,
-        stripeSubscriptionId: subscription.id
+        stripeSubscriptionId: subscription.id,
+        // If email is not verified yet, auto-verify on first payment (optional - you may want to keep email verification separate)
+        // emailVerified: user.emailVerified || (status === 'active' ? new Date() : user.emailVerified)
       }
     });
 

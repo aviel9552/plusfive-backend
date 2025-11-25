@@ -28,6 +28,47 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
             return null;
         }
 
+        // Check if user has active subscription before sending messages
+        const user = await prisma.user.findUnique({
+            where: { id: businessUserId },
+            select: {
+                id: true,
+                subscriptionStatus: true,
+                subscriptionExpirationDate: true,
+                role: true
+            }
+        });
+
+        if (!user) {
+            console.error(`❌ User ${businessUserId} not found - cannot send message`);
+            return null;
+        }
+
+        // Allow admin users to bypass subscription check
+        if (user.role !== 'admin') {
+            const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+            
+            // Block if subscription is not active
+            if (!subscriptionStatus || 
+                subscriptionStatus === 'pending' || 
+                subscriptionStatus === 'canceled' || 
+                subscriptionStatus === 'inactive' ||
+                subscriptionStatus === 'expired') {
+                console.error(`❌ Subscription check failed for user ${businessUserId} - Status: ${subscriptionStatus} - Message not sent`);
+                return null;
+            }
+
+            // Check expiration date
+            if (user.subscriptionExpirationDate) {
+                const now = new Date();
+                const expirationDate = new Date(user.subscriptionExpirationDate);
+                if (expirationDate < now) {
+                    console.error(`❌ Subscription expired for user ${businessUserId} - Message not sent`);
+                    return null;
+                }
+            }
+        }
+
         // First, update customer status in CustomerUser table (only for at_risk, lost, recovered)
         let customerStatusUpdate = null;
         if (messageType === 'at_risk' || messageType === 'lost' || messageType === 'recovered') {

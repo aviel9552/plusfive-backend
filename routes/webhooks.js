@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
+const { checkSubscription } = require('../middleware/subscription');
 const {
   handleAppointmentWebhook,
   handleRatingWebhook,
@@ -20,6 +21,8 @@ const {
 } = require('../controllers/webhookController');
 
 // Webhook endpoints (no authentication required)
+// Note: Subscription checks are implemented in controllers - these endpoints will reject requests if user doesn't have active subscription
+// Controllers handle subscription validation by finding user from business/customer data (no authentication required)
 router.post('/appointment', handleAppointmentWebhook);
 router.post('/rating', handleRatingWebhook);
 router.post('/payment-checkout', handlePaymentCheckoutWebhook);
@@ -43,7 +46,7 @@ router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
 router.get('/appointments/customer/:customerId', authenticateToken, getAppointmentsByCustomerId);
 
-// WhatsApp message endpoint (authentication required) - Store with validation
+// WhatsApp message endpoint (authentication required) - Store with validation - requires subscription (checked in controller)
 router.post('/whatsapp-message', authenticateToken, createWhatsappMessageWithValidation);
 
 module.exports = router;
