@@ -61,7 +61,8 @@ const register = async (req, res) => {
     }
     const userReferralCode = `PLUSFIVE${currentYear}${randomCode}`;
 
-    // Create user with only valid fields
+    // Create user with only valid fields (auto-verify email)
+    // Explicitly set subscriptionStatus to 'pending' for new users (no subscription yet)
     const user = await prisma.user.create({
       data: {
         email,
@@ -69,6 +70,10 @@ const register = async (req, res) => {
         firstName,
         lastName,
         referralCode: userReferralCode,
+        emailVerified: new Date(), // Auto-verify email on registration
+        subscriptionStatus: 'pending', // New users don't have active subscription
+        subscriptionPlan: null, // No subscription plan yet
+        subscriptionExpirationDate: null, // No expiration date yet
         ...validUserFields
       },
       select: {
@@ -79,7 +84,13 @@ const register = async (req, res) => {
         role: true,
         emailVerified: true,
         referralCode: true,
-      createdAt: true
+        phoneNumber: true,
+        businessName: true,
+        businessType: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        subscriptionPlan: true,
+        createdAt: true
       }
     });
 
@@ -119,12 +130,10 @@ const register = async (req, res) => {
               };
               
             } catch (affiliateError) {
-              console.error('❌ Affiliate coupon/promotion creation failed:', affiliateError);
+              // Continue without affiliate coupon/promotion
             }
             
           } catch (stripeError) {
-            console.error('❌ Stripe customer creation failed:', stripeError);
-            console.error('❌ Stripe error details:', stripeError.message);
             // Continue without Stripe integration
           }
 
@@ -141,38 +150,26 @@ const register = async (req, res) => {
 
         }
       } catch (referralError) {
-        console.error('❌ Referral creation failed:', referralError);
         // Don't fail registration if referral fails
       }
     }
 
-    // Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    // Generate JWT token for automatic login after registration
+    const token = generateToken(user.id, user.email, user.role);
 
-    // Save verification token
-    await prisma.emailVerification.create({
-      data: {
-        userId: user.id,
-        token: verificationToken,
-        expires
-      }
-    });
-
-    // Send verification email
-    try {
-      await sendVerificationEmail(email, verificationToken, firstName);
-      return successResponse(res, {
-        user,
-        message: 'Registration successful. Please check your email to verify your account.'
-      }, 'User registered successfully');
-    } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-      return errorResponse(res, 'Registration successful but failed to send verification email. Please contact support.', 500);
+    // Format phone number - remove +972 prefix
+    let formattedUser = { ...user };
+    if (formattedUser.phoneNumber && formattedUser.phoneNumber.startsWith('+972')) {
+      formattedUser.phoneNumber = '0' + formattedUser.phoneNumber.substring(4);
     }
+
+    // Email is already verified during registration, return token for automatic login
+    return successResponse(res, {
+      user: formattedUser,
+      token,
+      message: 'Registration successful. You are now logged in.'
+    }, 'User registered successfully');
   } catch (error) {
-    console.error('Registration error:', error);
-    
     // Handle compound unique constraint errors
     if (error.code === 'P2002') {
       if (error.meta?.target?.includes('email')) {
@@ -207,16 +204,6 @@ const login = async (req, res) => {
       return errorResponse(res, 'Invalid email or password', 401);
     }
 
-    // Check if user is active
-    if (!user.isActive) {
-      return errorResponse(res, 'Account is deactivated', 401);
-    }
-
-    // Check if email is verified
-    if (!user.emailVerified) {
-      return errorResponse(res, 'Please verify your email address before logging in. Check your email for verification link.', 401);
-    }
-
     // Verify password
     const isValidPassword = await verifyPassword(password, user.password);
     if (!isValidPassword) {
@@ -239,7 +226,6 @@ const login = async (req, res) => {
       token
     }, 'Login successful');
   } catch (error) {
-    console.error('Login error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
 };

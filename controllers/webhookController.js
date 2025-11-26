@@ -53,6 +53,7 @@ const handleAppointmentWebhook = async (req, res) => {
     }
 
     // Check if user has active subscription - block data entry if subscription is not active
+    // This check MUST happen BEFORE storing any data (webhook log, customer, appointment, etc.)
     const user = await prisma.user.findUnique({
       where: { id: existingUser.id },
       select: {
@@ -66,26 +67,27 @@ const handleAppointmentWebhook = async (req, res) => {
     if (user && user.role !== 'admin') {
       const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
       
-      // Block if subscription is not active
+      // Block if subscription is not active - return early, NO data will be stored
       if (!subscriptionStatus || 
           subscriptionStatus === 'pending' || 
           subscriptionStatus === 'canceled' || 
           subscriptionStatus === 'inactive' ||
           subscriptionStatus === 'expired') {
-        return errorResponse(res, `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription.`, 403);
+        return errorResponse(res, `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription. Appointment webhook cannot be processed.`, 403);
       }
 
-      // Check expiration date
+      // Check expiration date - return early if expired, NO data will be stored
       if (user.subscriptionExpirationDate) {
         const now = new Date();
         const expirationDate = new Date(user.subscriptionExpirationDate);
         if (expirationDate < now) {
-          return errorResponse(res, `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Please renew to continue.`, 403);
+          return errorResponse(res, `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Appointment webhook cannot be processed. Please renew to continue.`, 403);
         }
       }
     }
 
-    // Only store webhook log if user exists
+    // Only store webhook log AFTER subscription check passes
+    // If subscription check fails, function returns early and this code never executes
     const webhookLog = await prisma.webhookLog.create({
       data: {
         data: webhookData,
@@ -493,15 +495,6 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
   try {
     const webhookData = req.body;
 
-    // 1. Store in WebhookPaymentLog table (raw log data)
-    const paymentLog = await prisma.webhookPaymentLog.create({
-      data: {
-        data: webhookData,
-        type: 'payment_checkout',
-        createdDate: new Date()
-      }
-    });
-
     // Extract actual data - webhookData is the actual data itself
     const actualData = webhookData;
 
@@ -509,11 +502,53 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       return errorResponse(res, 'Invalid webhook data structure', 400);
     }
 
-
-    // 2. Find customer by CustomerPhone first (most reliable), then CustomerFullName, then BusinessId AND EmployeeId
+    // FIRST: Find userId to check subscription BEFORE storing any data
     let userId = null;
     let customerId = null;
 
+    // Try to find user by BusinessName first (if provided) to check subscription immediately
+    if (actualData.BusinessName) {
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          businessName: actualData.BusinessName
+        },
+        select: {
+          id: true,
+          subscriptionStatus: true,
+          subscriptionExpirationDate: true,
+          role: true
+        }
+      });
+
+      if (existingUser) {
+        userId = existingUser.id;
+        
+        // Check subscription immediately for this user BEFORE storing any data
+        if (existingUser.role !== 'admin') {
+          const subscriptionStatus = existingUser.subscriptionStatus?.toLowerCase();
+          
+          // Block if subscription is not active - return early, NO data will be stored
+          if (!subscriptionStatus || 
+              subscriptionStatus === 'pending' || 
+              subscriptionStatus === 'canceled' || 
+              subscriptionStatus === 'inactive' ||
+              subscriptionStatus === 'expired') {
+            return errorResponse(res, `Active subscription required. Business '${actualData.BusinessName}' does not have an active subscription. Payment webhook cannot be processed.`, 403);
+          }
+
+          // Check expiration date - return early if expired, NO data will be stored
+          if (existingUser.subscriptionExpirationDate) {
+            const now = new Date();
+            const expirationDate = new Date(existingUser.subscriptionExpirationDate);
+            if (expirationDate < now) {
+              return errorResponse(res, `Subscription expired. Business '${actualData.BusinessName}' subscription has expired. Payment webhook cannot be processed. Please renew to continue.`, 403);
+            }
+          }
+        }
+      }
+    }
+
+    // Find customer by CustomerPhone first (most reliable), then CustomerFullName, then BusinessId AND EmployeeId
     // First try to find by CustomerPhone (most reliable - unique identifier)
     if (actualData.CustomerPhone) {
       const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
@@ -533,7 +568,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
 
       if (existingCustomerByPhone) {
         customerId = existingCustomerByPhone.id;
-        userId = existingCustomerByPhone.userId;
+        if (!userId) {
+          userId = existingCustomerByPhone.userId;
+        }
       }
     }
 
@@ -554,7 +591,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
 
       if (existingCustomerByName) {
         customerId = existingCustomerByName.id;
-        userId = existingCustomerByName.userId;
+        if (!userId) {
+          userId = existingCustomerByName.userId;
+        }
       }
     }
 
@@ -571,51 +610,72 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           id: true,
           businessId: true,
           employeeId: true,
-          userId: true // select userId field as well
+          userId: true
         }
       });
 
       if (existingCustomer) {
-        // Customer found - both customerId and userId available from Customers table
         customerId = existingCustomer.id;
-        userId = existingCustomer.userId; // userId field is present in Customers table
-      }
-    }
-
-    // Check if user has active subscription - block payment processing if subscription is not active
-    if (userId) {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          subscriptionStatus: true,
-          subscriptionExpirationDate: true,
-          role: true
-        }
-      });
-
-      if (user && user.role !== 'admin') {
-        const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-        
-        // Block if subscription is not active
-        if (!subscriptionStatus || 
-            subscriptionStatus === 'pending' || 
-            subscriptionStatus === 'canceled' || 
-            subscriptionStatus === 'inactive' ||
-            subscriptionStatus === 'expired') {
-          return errorResponse(res, 'Active subscription required. Payment cannot be processed without an active subscription.', 403);
-        }
-
-        // Check expiration date
-        if (user.subscriptionExpirationDate) {
-          const now = new Date();
-          const expirationDate = new Date(user.subscriptionExpirationDate);
-          if (expirationDate < now) {
-            return errorResponse(res, 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.', 403);
-          }
+        if (!userId) {
+          userId = existingCustomer.userId;
         }
       }
     }
+
+    // If no userId found at all, reject the webhook - NO data will be stored
+    if (!userId) {
+      return errorResponse(res, 'User not found. Cannot process payment webhook without valid user.', 404);
+    }
+
+    // MANDATORY FINAL subscription check - ALWAYS verify subscription for the userId that will be used
+    // This ensures subscription is checked even if userId changed during customer lookup
+    // OR if userId was found from customer lookup and BusinessName check was skipped
+    const finalUserCheck = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true
+      }
+    });
+
+    if (!finalUserCheck) {
+      return errorResponse(res, 'User not found. Cannot process payment webhook without valid user.', 404);
+    }
+
+    // Block if user is not admin and subscription is not active - return early, NO data will be stored
+    if (finalUserCheck.role !== 'admin') {
+      const subscriptionStatus = finalUserCheck.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active - return early, NO data will be stored
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, 'Active subscription required. Payment cannot be processed without an active subscription.', 403);
+      }
+
+      // Check expiration date - return early if expired, NO data will be stored
+      if (finalUserCheck.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(finalUserCheck.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.', 403);
+        }
+      }
+    }
+
+    // NOW store in WebhookPaymentLog table (raw log data) - only AFTER subscription check passes
+    // If subscription check fails, function returns early and this code never executes
+    const paymentLog = await prisma.webhookPaymentLog.create({
+      data: {
+        data: webhookData,
+        type: 'payment_checkout',
+        createdDate: new Date()
+      }
+    });
 
     // 4. Get customer status from CustomerUser table before creating PaymentWebhook
     // Determine revenuePaymentStatus based on current status and what it will become after payment
@@ -737,21 +797,34 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                   });
 
                   if (customer) {
-                    const n8nService = new N8nMessageService();
-                    const webhookParams = {
-                      customerName: customer.customerFullName,
-                      customerPhone: customer.customerPhone,
-                      businessName: businessOwner.businessName || 'Business',
-                      businessType: businessOwner.businessType || 'general',
-                      customerService: customer.selectedServices || '',
-                      businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
-                      lastVisitDate: new Date().toISOString().split('T')[0],
-                      whatsappPhone: customer.customerPhone,
-                      previousStatus: currentPreviousStatus
-                    };
+                    // Use createWhatsappMessageRecord to ensure subscription check before sending notification
+                    const whatsappMessageRecord = await createWhatsappMessageRecord(
+                      customer.customerFullName,
+                      customer.customerPhone,
+                      'recovered',
+                      userId
+                    );
 
-                    await n8nService.triggerRecoveredCustomerNotification(webhookParams);
-                    console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${currentPreviousStatus} → recovered)`);
+                    // Only trigger N8N notification if subscription check passed (record was created)
+                    if (whatsappMessageRecord) {
+                      const n8nService = new N8nMessageService();
+                      const webhookParams = {
+                        customerName: customer.customerFullName,
+                        customerPhone: customer.customerPhone,
+                        businessName: businessOwner.businessName || 'Business',
+                        businessType: businessOwner.businessType || 'general',
+                        customerService: customer.selectedServices || '',
+                        businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
+                        lastVisitDate: new Date().toISOString().split('T')[0],
+                        whatsappPhone: customer.customerPhone,
+                        previousStatus: currentPreviousStatus
+                      };
+
+                      await n8nService.triggerRecoveredCustomerNotification(webhookParams);
+                      console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${currentPreviousStatus} → recovered)`);
+                    } else {
+                      console.log(`⚠️ Recovered customer notification not sent - Subscription check failed for user ${userId}`);
+                    }
                   }
                 }
               } catch (notificationError) {
@@ -878,12 +951,25 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             console.log(`✅ Review record created with ID: ${reviewRecord.id}`);
             
             // Store WhatsApp message record BEFORE triggering N8N
-            await createWhatsappMessageRecord(
+            // If subscription check fails, createWhatsappMessageRecord will return null
+            const whatsappMessageRecord = await createWhatsappMessageRecord(
               customer.customerFullName,
               customer.customerPhone,
               'review_request',
               userId
             );
+
+            // Only proceed with N8N trigger and Stripe reporting if WhatsApp message record was created
+            // (which means subscription check passed)
+            if (!whatsappMessageRecord) {
+              console.log(`⚠️ Review request WhatsApp message not sent - Subscription check failed for user ${userId}`);
+              // Don't trigger N8N or report to Stripe if subscription check failed
+              return successResponse(res, {
+                webhookId: paymentLog.id,
+                paymentId: paymentWebhook.id,
+                message: 'Payment processed successfully, but review request not sent due to inactive subscription'
+              }, 'Payment processed, but review request blocked due to inactive subscription', 200);
+            }
             
             // Report usage to Stripe meter (real-time reporting when payment received)
             // Using same logic as reportUsageForMonth cron job

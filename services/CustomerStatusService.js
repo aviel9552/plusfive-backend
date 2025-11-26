@@ -461,25 +461,32 @@ class CustomerStatusService {
                         };
 
                         // Store WhatsApp message record BEFORE triggering N8N
-                        await createWhatsappMessageRecord(
+                        // If subscription check fails, createWhatsappMessageRecord will return null
+                        const whatsappMessageRecord = await createWhatsappMessageRecord(
                             customer.customerFullName, 
                             customer.customerPhone, 
                             newStatus, 
                             userId || customer.userId
                         );
 
-                        if (newStatus === 'at_risk') {
-                            await this.n8nService.triggerAtRiskMessage(webhookParams);
-                        } else if (newStatus === 'lost') {
-                            await this.n8nService.triggerLostMessage(webhookParams);
-                        } else if (newStatus === 'recovered') {
-                            // Add additional parameters for recovered notification
-                            webhookParams.previous_status = currentStatus;
-                            webhookParams.future_appointment = 'Recent activity detected';
-                            await this.n8nService.triggerRecoveredCustomerNotification(webhookParams);
-                        }
+                        // Only trigger N8N webhooks if WhatsApp message record was created successfully
+                        // (which means subscription check passed)
+                        if (whatsappMessageRecord) {
+                            if (newStatus === 'at_risk') {
+                                await this.n8nService.triggerAtRiskMessage(webhookParams);
+                            } else if (newStatus === 'lost') {
+                                await this.n8nService.triggerLostMessage(webhookParams);
+                            } else if (newStatus === 'recovered') {
+                                // Add additional parameters for recovered notification
+                                webhookParams.previous_status = currentStatus;
+                                webhookParams.future_appointment = 'Recent activity detected';
+                                await this.n8nService.triggerRecoveredCustomerNotification(webhookParams);
+                            }
 
-                        console.log(`✅ WhatsApp message record created and N8n webhook triggered for ${newStatus} - Customer: ${customer.customerFullName}`);
+                            console.log(`✅ WhatsApp message record created and N8n webhook triggered for ${newStatus} - Customer: ${customer.customerFullName}`);
+                        } else {
+                            console.log(`⚠️ WhatsApp message not sent for ${newStatus} - Customer: ${customer.customerFullName} - Subscription check failed or user not found`);
+                        }
                     } catch (webhookError) {
                         console.error('❌ Error triggering n8n webhook for status change:', webhookError);
                         // Don't fail the status update if webhook fails

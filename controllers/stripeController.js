@@ -105,7 +105,6 @@ const createCheckoutSession = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Create checkout session error:', error);
     return errorResponse(res, 'Failed to create checkout session', 500);
   }
 };
@@ -195,7 +194,6 @@ const createSimpleCheckout = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Create simple checkout error:', error);
     return errorResponse(res, 'Failed to create checkout session', 500);
   }
 };
@@ -208,7 +206,6 @@ const getPrices = async (req, res) => {
     const prices = await getStripePrices();
     return successResponse(res, { prices });
   } catch (error) {
-    console.error('Get prices error:', error);
     return errorResponse(res, 'Failed to fetch prices', 500);
   }
 };
@@ -313,7 +310,6 @@ const getSubscription = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get subscription error:', error);
     return errorResponse(res, 'Failed to fetch subscription data', 500);
   }
 };
@@ -322,8 +318,6 @@ const getSubscription = async (req, res) => {
  * Cancel subscription
  */
 const cancelSubscription = async (req, res) => {
-  console.log('🔍 Debug Cancel Subscription:', req.params);
-  console.log('🔍 Debug Cancel Subscription:', req.user);
   try {
     const { subscriptionId } = req.params;
     const userId = req.user.userId;
@@ -340,14 +334,6 @@ const cancelSubscription = async (req, res) => {
 
     // Get subscription to verify ownership
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    console.log('🔍 Debug Cancel Subscription:', {
-      userId: user.id,
-      userStripeCustomerId: user.stripeCustomerId,
-      subscriptionId: subscriptionId,
-      subscriptionCustomer: subscription.customer,
-      subscriptionStatus: subscription.status,
-      match: subscription.customer === user.stripeCustomerId
-    });
     
     // If user doesn't have stripeCustomerId, find by email
     let customerId = user.stripeCustomerId;
@@ -356,7 +342,6 @@ const cancelSubscription = async (req, res) => {
         email: user.email,
         limit: 10  // Get all customers with this email
       });
-      console.log('🔍 Found customers by email:', customers.data.length);
       if (customers.data.length > 0) {
         // Check if any customer matches the subscription
         const matchingCustomer = customers.data.find(customer => 
@@ -365,11 +350,9 @@ const cancelSubscription = async (req, res) => {
         
         if (matchingCustomer) {
           customerId = matchingCustomer.id;
-          console.log('✅ Found matching customer:', customerId);
         } else {
           // Use first customer as fallback
           customerId = customers.data[0].id;
-          console.log('⚠️ Using first customer as fallback:', customerId);
         }
         
         // Update user's stripeCustomerId in database
@@ -377,20 +360,9 @@ const cancelSubscription = async (req, res) => {
           where: { id: userId },
           data: { stripeCustomerId: customerId }
         });
-        console.log('✅ Updated user stripeCustomerId:', customerId);
       }
     }
 
-    console.log('🔍 Debug Cancel Subscription:', {
-      userId: user.id,
-      userEmail: user.email,
-      userStripeCustomerId: user.stripeCustomerId,
-      foundCustomerId: customerId,
-      subscriptionId: subscriptionId,
-      subscriptionCustomer: subscription.customer,
-      subscriptionStatus: subscription.status,
-      match: subscription.customer === customerId
-    });
     
     if (!customerId || subscription.customer !== customerId) {
       return errorResponse(res, 'Subscription not found or access denied', 404);
@@ -417,7 +389,6 @@ const cancelSubscription = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Cancel subscription error:', error);
     return errorResponse(res, 'Failed to cancel subscription', 500);
   }
 };
@@ -460,7 +431,6 @@ const createCustomerPortalSession = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Create customer portal session error:', error);
     return errorResponse(res, 'Failed to create customer portal session', 500);
   }
 };
@@ -485,14 +455,6 @@ const reactivateSubscription = async (req, res) => {
 
     // Get subscription to verify ownership
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    console.log('🔍 Debug Cancel Subscription:', {
-      userId: user.id,
-      userStripeCustomerId: user.stripeCustomerId,
-      subscriptionId: subscriptionId,
-      subscriptionCustomer: subscription.customer,
-      subscriptionStatus: subscription.status,
-      match: subscription.customer === user.stripeCustomerId
-    });
     
     // If user doesn't have stripeCustomerId, find by email
     let customerId = user.stripeCustomerId;
@@ -501,7 +463,6 @@ const reactivateSubscription = async (req, res) => {
         email: user.email,
         limit: 10  // Get all customers with this email
       });
-      console.log('🔍 Found customers by email:', customers.data.length);
       if (customers.data.length > 0) {
         // Check if any customer matches the subscription
         const matchingCustomer = customers.data.find(customer => 
@@ -510,11 +471,9 @@ const reactivateSubscription = async (req, res) => {
         
         if (matchingCustomer) {
           customerId = matchingCustomer.id;
-          console.log('✅ Found matching customer:', customerId);
         } else {
           // Use first customer as fallback
           customerId = customers.data[0].id;
-          console.log('⚠️ Using first customer as fallback:', customerId);
         }
         
         // Update user's stripeCustomerId in database
@@ -522,20 +481,9 @@ const reactivateSubscription = async (req, res) => {
           where: { id: userId },
           data: { stripeCustomerId: customerId }
         });
-        console.log('✅ Updated user stripeCustomerId:', customerId);
       }
     }
 
-    console.log('🔍 Debug Cancel Subscription:', {
-      userId: user.id,
-      userEmail: user.email,
-      userStripeCustomerId: user.stripeCustomerId,
-      foundCustomerId: customerId,
-      subscriptionId: subscriptionId,
-      subscriptionCustomer: subscription.customer,
-      subscriptionStatus: subscription.status,
-      match: subscription.customer === customerId
-    });
     
     if (!customerId || subscription.customer !== customerId) {
       return errorResponse(res, 'Subscription not found or access denied', 404);
