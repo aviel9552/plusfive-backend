@@ -548,81 +548,41 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       }
     }
 
-    // Find customer by CustomerPhone first (most reliable), then CustomerFullName, then BusinessId AND EmployeeId
-    // First try to find by CustomerPhone (most reliable - unique identifier)
-    if (actualData.CustomerPhone) {
-      const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
-      const existingCustomerByPhone = await prisma.customers.findFirst({
-        where: {
-          customerPhone: formattedPhone
-        },
-        select: {
-          id: true,
-          businessId: true,
-          employeeId: true,
-          userId: true,
-          customerFullName: true,
-          customerPhone: true
-        }
-      });
-
-      if (existingCustomerByPhone) {
-        customerId = existingCustomerByPhone.id;
-        if (!userId) {
-          userId = existingCustomerByPhone.userId;
-        }
-      }
+    // MANDATORY: Find customer ONLY by CustomerPhone - Payment will be stored ONLY if phone matches
+    // CustomerPhone is REQUIRED and must match exactly in customers table
+    if (!actualData.CustomerPhone) {
+      return errorResponse(res, 'CustomerPhone is required. Cannot process payment webhook without customer phone number.', 400);
     }
 
-    // If not found by phone, try by CustomerFullName (exact match)
-    if (!customerId && actualData.CustomerFullName) {
-      const existingCustomerByName = await prisma.customers.findFirst({
-        where: {
-          customerFullName: actualData.CustomerFullName
-        },
-        select: {
-          id: true,
-          businessId: true,
-          employeeId: true,
-          userId: true,
-          customerFullName: true
-        }
-      });
-
-      if (existingCustomerByName) {
-        customerId = existingCustomerByName.id;
-        if (!userId) {
-          userId = existingCustomerByName.userId;
-        }
+    const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
+    
+    // Find customer ONLY by phone number - no fallback searches
+    const existingCustomerByPhone = await prisma.customers.findFirst({
+      where: {
+        customerPhone: formattedPhone
+      },
+      select: {
+        id: true,
+        businessId: true,
+        employeeId: true,
+        userId: true,
+        customerFullName: true,
+        customerPhone: true
       }
+    });
+
+    // If customer not found by phone, REJECT webhook - NO payment data will be stored
+    if (!existingCustomerByPhone) {
+      return errorResponse(res, `Customer not found. Payment webhook rejected because CustomerPhone '${actualData.CustomerPhone}' (formatted: '${formattedPhone}') does not exist in customers table. Payment will not be stored.`, 404);
     }
 
-    // If not found by name, try by BusinessId AND EmployeeId
-    if (!customerId && actualData.BusinessId && actualData.EmployeeId) {
-      const existingCustomer = await prisma.customers.findFirst({
-        where: {
-          AND: [
-            { businessId: parseInt(actualData.BusinessId) },
-            { employeeId: parseInt(actualData.EmployeeId) }
-          ]
-        },
-        select: {
-          id: true,
-          businessId: true,
-          employeeId: true,
-          userId: true
-        }
-      });
-
-      if (existingCustomer) {
-        customerId = existingCustomer.id;
-        if (!userId) {
-          userId = existingCustomer.userId;
-        }
-      }
+    // Customer found by phone - proceed with payment storage
+    customerId = existingCustomerByPhone.id;
+    if (!userId) {
+      userId = existingCustomerByPhone.userId;
     }
 
-    // If no userId found at all, reject the webhook - NO data will be stored
+    // If still no userId found, reject the webhook - NO data will be stored
     if (!userId) {
       return errorResponse(res, 'User not found. Cannot process payment webhook without valid user.', 404);
     }
