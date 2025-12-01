@@ -245,7 +245,7 @@ async function getAllWhatsappMessages(req, res) {
         }, 'WhatsApp messages Data retrieved successfully');
     } catch (error) {
         console.error('Error in getAllWhatsappMessages:', error);
-        return errorResponse(res, 'Failed to retrieve WhatsApp messages Data', error.message);
+        return errorResponse(res, `Failed to retrieve WhatsApp messages Data: ${error.message}`, 500);
     }
 }
 
