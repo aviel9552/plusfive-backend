@@ -15,16 +15,16 @@ class CronJobService {
     
     this.schedules = {
       production: {
-        job1: '0 */6 * * *',  // Every 6 hours
-        job2: '0 9 * * *',    // Daily 9:00 AM
-        job3: '0 10 * * *',   // Daily 10:00 AM
-        job4: '0 11 * * *'    // Daily 11:00 AM
+        // job1: '0 */6 * * *',  // DISABLED - Redundant! Job 2 & 3 already update all statuses (Every 6 hours)
+        job2: '0 9 * * *',    // Daily 9:00 AM - At Risk check (also updates all statuses)
+        job3: '0 10 * * *',   // Daily 10:00 AM - Lost check (also updates all statuses)
+        job4: '0 11 * * *'    // Daily 11:00 AM - Heartbeat
         // Note: Monthly usage reporting removed - now using real-time reporting
       },
       test: {
-        job1: '*/60 * * * * *', // Every 60 seconds (1 minute) - Status Sync
-        job2: '*/120 * * * * *', // Every 120 seconds (2 minutes) - At Risk Check
-        job3: '*/300 * * * * *', // Every 300 seconds (5 minutes) - Lost Check
+        // job1: '*/60 * * * * *', // DISABLED - Redundant! Job 2 & 3 already update all statuses (Every 60 seconds - Status Sync)
+        job2: '*/120 * * * * *', // Every 120 seconds (2 minutes) - At Risk Check (also updates all statuses)
+        job3: '*/300 * * * * *', // Every 300 seconds (5 minutes) - Lost Check (also updates all statuses)
         job4: '*/60 * * * * *' // Every 60 seconds (1 minute) - Heartbeat
         // Note: Monthly usage reporting removed - now using real-time reporting
       }
@@ -38,37 +38,41 @@ class CronJobService {
     
     if (this.isTestMode) {
       console.log(`🕒 Starting cron jobs in ${mode}`);
-      console.log(`   - Status Sync: Every 1 minute`);
+      console.log(`   - Status Sync: DISABLED (redundant - Job 2 & 3 already update statuses)`);
       console.log(`   - At Risk Check: Every 2 minutes`);
       console.log(`   - Lost Check: Every 5 minutes`);
     } else {
       console.log(`🕒 Starting cron jobs in ${mode} - Production schedule`);
+      console.log(`   - Status Sync: DISABLED (redundant - Job 2 & 3 already update statuses)`);
     }
 
-    // Cron job 1
-    this.scheduleJob('cron-job-1', currentSchedules.job1, async () => {
-      const startTime = new Date();
-      console.log(`⏱️ [cron-job-1] Status sync started at ${startTime.toISOString()}`);
-      try {
-        const results = await this.customerStatusService.processAllCustomerStatuses();
-        const endTime = new Date();
-        const duration = ((endTime - startTime) / 1000).toFixed(2);
-        console.log(`✅ [cron-job-1] Status sync completed in ${duration}s at ${endTime.toISOString()}`, {
-          processed: results.processed,
-          updated: results.updated,
-          counts: {
-            new: results.new,
-            active: results.active,
-            at_risk: results.at_risk,
-            lost: results.lost,
-            recovered: results.recovered
-          },
-          errors: results.errors
-        });
-      } catch (error) {
-        console.error('❌ [cron-job-1] Status sync failed:', error.message);
-      }
-    });
+    // Cron job 1 - COMMENTED OUT: Redundant! Job 2 & 3 already call processAllCustomerStatuses()
+    // Status updates happen automatically in Job 2 (At Risk) and Job 3 (Lost)
+    // if (currentSchedules.job1) {
+    //   this.scheduleJob('cron-job-1', currentSchedules.job1, async () => {
+    //     const startTime = new Date();
+    //     console.log(`⏱️ [cron-job-1] Status sync started at ${startTime.toISOString()}`);
+    //     try {
+    //       const results = await this.customerStatusService.processAllCustomerStatuses();
+    //       const endTime = new Date();
+    //       const duration = ((endTime - startTime) / 1000).toFixed(2);
+    //       console.log(`✅ [cron-job-1] Status sync completed in ${duration}s at ${endTime.toISOString()}`, {
+    //         processed: results.processed,
+    //         updated: results.updated,
+    //         counts: {
+    //           new: results.new,
+    //           active: results.active,
+    //           at_risk: results.at_risk,
+    //           lost: results.lost,
+    //           recovered: results.recovered
+    //         },
+    //         errors: results.errors
+    //       });
+    //     } catch (error) {
+    //       console.error('❌ [cron-job-1] Status sync failed:', error.message);
+    //     }
+    //   });
+    // }
 
     // Cron job 2 - At Risk
     this.scheduleJob('cron-job-2', currentSchedules.job2, async () => {
@@ -192,17 +196,17 @@ class CronJobService {
     console.log(`\n✅ All cron jobs scheduled successfully in ${mode}`);
     if (this.isTestMode) {
       console.log(`📊 Test Mode Configuration:`);
-      console.log(`   - Job 1 (Status Sync): Every 60 seconds (1 minute)`);
-      console.log(`   - Job 2 (At Risk Check): Every 120 seconds (2 minutes)`);
-      console.log(`   - Job 3 (Lost Check): Every 300 seconds (5 minutes)`);
+      console.log(`   - Job 1 (Status Sync): DISABLED (redundant - Job 2 & 3 already update statuses)`);
+      console.log(`   - Job 2 (At Risk Check): Every 120 seconds (2 minutes) - Also updates all statuses`);
+      console.log(`   - Job 3 (Lost Check): Every 300 seconds (5 minutes) - Also updates all statuses`);
       console.log(`   - Job 4 (Heartbeat): Every 60 seconds (1 minute)`);
       console.log(`   - Monthly Usage: REMOVED (now using real-time reporting)`);
       console.log(`   - Risk Threshold: ${process.env.AT_RISK_TEST_MINUTES || 2} minutes`);
       console.log(`   - Lost Threshold: ${process.env.LOST_TEST_MINUTES || 5} minutes`);
       console.log(`\n⏰ Test Mode Schedule:`);
-      console.log(`   - Status Sync runs every 1 minute`);
-      console.log(`   - At Risk check runs every 2 minutes`);
-      console.log(`   - Lost check runs every 5 minutes\n`);
+      console.log(`   - Status Sync: DISABLED (redundant)`);
+      console.log(`   - At Risk check runs every 2 minutes (updates all statuses)`);
+      console.log(`   - Lost check runs every 5 minutes (updates all statuses)\n`);
     }
   }
 
@@ -223,11 +227,11 @@ class CronJobService {
     if (this.isTestMode) {
       let scheduleDesc = '';
       if (name === 'cron-job-1') {
-        scheduleDesc = 'Every 60 seconds (1 minute)';
+        scheduleDesc = 'DISABLED';
       } else if (name === 'cron-job-2') {
-        scheduleDesc = 'Every 120 seconds (2 minutes)';
+        scheduleDesc = 'Every 120 seconds (2 minutes) - Also updates all statuses';
       } else if (name === 'cron-job-3') {
-        scheduleDesc = 'Every 300 seconds (5 minutes)';
+        scheduleDesc = 'Every 300 seconds (5 minutes) - Also updates all statuses';
       } else if (name === 'cron-job-4') {
         scheduleDesc = 'Every 60 seconds (1 minute)';
       } else {
