@@ -4,29 +4,23 @@ const { createWhatsappMessageRecord } = require('../controllers/whatsappMessageC
 
 class CustomerStatusService {
     constructor() {
-        // Test mode vs Production thresholds
+        // Test mode is only used for cron schedule frequency, not for thresholds
+        // Always use production day-based thresholds regardless of test mode
         this.isTestMode = process.env.CRON_TEST_MODE === 'true';
 
-        console.log('isTestMode', this.isTestMode);
+        console.log('isTestMode', this.isTestMode, '(only affects cron schedule frequency, not thresholds)');
 
         const parseNumber = (value, fallback) => {
             const parsed = parseInt(value, 10);
             return Number.isNaN(parsed) ? fallback : parsed;
         };
 
-        this.timeUnitLabel = this.isTestMode ? 'minutes' : 'days';
+        // Always use days as time unit (production logic)
+        this.timeUnitLabel = 'days';
 
-        this.statusThresholds = this.isTestMode ? {
-            // Testing thresholds - minute-based
-            atRisk: {
-                defaultDays: parseNumber(process.env.AT_RISK_TEST_MINUTES, 2),
-                bufferDays: 0
-            },
-            lost: {
-                defaultDays: parseNumber(process.env.LOST_TEST_MINUTES, 5),
-                bufferDays: 0
-            }
-        } : {
+        // Always use production thresholds (day-based) regardless of test mode
+        // Test mode only affects cron schedule frequency in CronJobService
+        this.statusThresholds = {
             // Production thresholds - from environment variables
             atRisk: {
                 defaultDays: parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30),
@@ -38,15 +32,20 @@ class CustomerStatusService {
             }
         };
 
+        // Log the thresholds being used (always production, regardless of test mode)
+        console.log('📊 Customer Status Thresholds (ALWAYS PRODUCTION):');
+        console.log(`   - At Risk: ${this.statusThresholds.atRisk.defaultDays} days (default) + ${this.statusThresholds.atRisk.bufferDays} days (buffer)`);
+        console.log(`   - Lost: ${this.statusThresholds.lost.defaultDays} days (default) + ${this.statusThresholds.lost.bufferDays} days (buffer)`);
+        console.log(`   - Time Unit: ${this.timeUnitLabel}`);
+
         this.n8nService = new N8nMessageService();
     }
 
     // Calculate days between two dates
+    // Always use days calculation (production logic) regardless of test mode
     calculateDaysBetween(date1, date2) {
         const diffTime = Math.abs(date2 - date1);
-        if (this.isTestMode) {
-            return Math.ceil(diffTime / (1000 * 60)); // minutes
-        }
+        // Always calculate in days (production logic)
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
 
@@ -244,11 +243,8 @@ class CustomerStatusService {
                   const daysSinceLastVisit = this.calculateDaysBetween(lastVisitDate, new Date());
       let averageDays = await this.calculateAverageDaysBetweenVisits(customerId);
 
-      // Force use default thresholds in test mode (ignore averageDays)
-      if (this.isTestMode) {
-        averageDays = null;
-
-      }
+      // Note: Test mode no longer affects threshold calculation
+      // Always use production logic with averageDays if available
 
       // No upcoming appointment check - only use updatedAt as requested
 
@@ -443,9 +439,8 @@ class CustomerStatusService {
                             }
                         }
 
-                        const offsetMs = this.isTestMode
-                            ? (daysSinceLastVisit * 60 * 1000)
-                            : (daysSinceLastVisit * 24 * 60 * 60 * 1000);
+                        // Always calculate offset in days (production logic)
+                        const offsetMs = daysSinceLastVisit * 24 * 60 * 60 * 1000;
 
                         const webhookParams = {
                             customer_id: customerId,

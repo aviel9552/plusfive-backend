@@ -195,18 +195,24 @@ class CronJobService {
     // Summary log
     console.log(`\n✅ All cron jobs scheduled successfully in ${mode}`);
     if (this.isTestMode) {
-      console.log(`📊 Test Mode Configuration:`);
+      console.log(`📊 Test Mode Configuration (Schedule Only):`);
       console.log(`   - Job 1 (Status Sync): DISABLED (redundant - Job 2 & 3 already update statuses)`);
       console.log(`   - Job 2 (At Risk Check): Every 120 seconds (2 minutes) - Also updates all statuses`);
       console.log(`   - Job 3 (Lost Check): Every 300 seconds (5 minutes) - Also updates all statuses`);
       console.log(`   - Job 4 (Heartbeat): Every 60 seconds (1 minute)`);
       console.log(`   - Monthly Usage: REMOVED (now using real-time reporting)`);
-      console.log(`   - Risk Threshold: ${process.env.AT_RISK_TEST_MINUTES || 2} minutes`);
-      console.log(`   - Lost Threshold: ${process.env.LOST_TEST_MINUTES || 5} minutes`);
+      console.log(`\n⚠️ IMPORTANT: Test mode only affects cron schedule frequency.`);
+      console.log(`   Thresholds are ALWAYS production-based (days), not test minutes.`);
+      console.log(`   - Risk Threshold: ${process.env.AT_RISK_DEFAULT_DAYS || 30} days (production)`);
+      console.log(`   - Lost Threshold: ${process.env.LOST_DEFAULT_DAYS || 60} days (production)`);
       console.log(`\n⏰ Test Mode Schedule:`);
       console.log(`   - Status Sync: DISABLED (redundant)`);
       console.log(`   - At Risk check runs every 2 minutes (updates all statuses)`);
       console.log(`   - Lost check runs every 5 minutes (updates all statuses)\n`);
+    } else {
+      console.log(`📊 Production Mode Configuration:`);
+      console.log(`   - Risk Threshold: ${process.env.AT_RISK_DEFAULT_DAYS || 30} days`);
+      console.log(`   - Lost Threshold: ${process.env.LOST_DEFAULT_DAYS || 60} days`);
     }
   }
 
