@@ -251,16 +251,17 @@ class CustomerStatusService {
                   // Calculate thresholds
       let atRiskThreshold, lostThreshold;
 
-      if (averageDays === null) {
-        // First time customer or not enough data
-        atRiskThreshold = this.statusThresholds.atRisk.defaultDays;
-        lostThreshold = this.statusThresholds.lost.defaultDays;
-      } else {
-        // Regular customer with visit history
-        atRiskThreshold = averageDays + this.statusThresholds.atRisk.bufferDays;
-        lostThreshold = averageDays + this.statusThresholds.lost.bufferDays;
-      }
-
+    //   if (averageDays === null) {
+    //     // First time customer or not enough data
+    //     atRiskThreshold = this.statusThresholds.atRisk.defaultDays;
+    //     lostThreshold = this.statusThresholds.lost.defaultDays;
+    //   } else {
+    //     // Regular customer with visit history
+    //     atRiskThreshold = averageDays + this.statusThresholds.atRisk.bufferDays;
+    //     lostThreshold = averageDays + this.statusThresholds.lost.bufferDays;
+    //   }
+      atRiskThreshold = this.statusThresholds.atRisk.defaultDays; // 30
+      lostThreshold = this.statusThresholds.lost.defaultDays;     // 60
 
 
             // Determine status based on days since last visit
@@ -541,18 +542,14 @@ class CustomerStatusService {
                         const daysSinceLastVisit = lastVisitDate ? 
                             this.calculateDaysBetween(lastVisitDate, new Date()) : 0;
                         
-                        // Calculate threshold used for this customer
-                        const averageDays = await this.calculateAverageDaysBetweenVisits(customer.id);
+                        // Calculate threshold used for this customer (for logging only)
+                        // Always use defaultDays (30 for at_risk, 60 for lost) - consistent with determineCustomerStatus
                         let threshold = 0;
                         
                         if (newStatus === 'at_risk') {
-                            threshold = averageDays === null ? 
-                                this.statusThresholds.atRisk.defaultDays : 
-                                averageDays + this.statusThresholds.atRisk.bufferDays;
+                            threshold = this.statusThresholds.atRisk.defaultDays; // 30
                         } else if (newStatus === 'lost') {
-                            threshold = averageDays === null ? 
-                                this.statusThresholds.lost.defaultDays : 
-                                averageDays + this.statusThresholds.lost.bufferDays;
+                            threshold = this.statusThresholds.lost.defaultDays; // 60
                         }
 
                         const updateResult = await this.updateCustomerStatus(
