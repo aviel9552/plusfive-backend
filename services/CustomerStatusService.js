@@ -123,37 +123,66 @@ class CustomerStatusService {
         }
     }
 
-    // Calculate average days between customer visits
-    async calculateAverageDaysBetweenVisits(customerId) {
+    // Calculate running average of payment intervals
+    // Logic: First payment = no data (use default), Second = interval itself, 
+    //        Third+ = running average: (previous_average + new_interval) / 2
+    async calculateRunningAveragePaymentInterval(customerId, userId = null) {
         try {
-            const appointments = await prisma.appointment.findMany({
-                where: { customerId },
-                orderBy: { startDate: 'asc' },
-                select: { startDate: true }
+            // Get all successful payments for this customer, ordered by date
+            const paymentWhere = {
+                customerId: customerId,
+                status: 'success'
+            };
+            if (userId) {
+                paymentWhere.userId = userId;
+            }
+
+            const payments = await prisma.paymentWebhook.findMany({
+                where: paymentWhere,
+                orderBy: { paymentDate: 'asc' },
+                select: { paymentDate: true }
             });
 
-            if (appointments.length < 2) {
-                return null; // Not enough data for average
+            // First payment: no data, return null (will use default)
+            if (payments.length < 2) {
+                return null;
             }
 
-            let totalDays = 0;
-            let validIntervals = 0;
-
-            for (let i = 1; i < appointments.length; i++) {
-                const prevDate = new Date(appointments[i - 1].startDate);
-                const currentDate = new Date(appointments[i].startDate);
-
-                if (prevDate && currentDate) {
-                    totalDays += this.calculateDaysBetween(prevDate, currentDate);
-                    validIntervals++;
-                }
+            // Second payment: return the interval itself
+            if (payments.length === 2) {
+                const firstDate = new Date(payments[0].paymentDate);
+                const secondDate = new Date(payments[1].paymentDate);
+                const interval = this.calculateDaysBetween(firstDate, secondDate);
+                return interval;
             }
 
-            return validIntervals > 0 ? Math.round(totalDays / validIntervals) : null;
+            // Third payment onwards: calculate running average
+            // Start with the first interval (between payment 1 and 2)
+            let runningAverage = this.calculateDaysBetween(
+                new Date(payments[0].paymentDate),
+                new Date(payments[1].paymentDate)
+            );
+
+            // For each subsequent payment, update running average: (old_average + new_interval) / 2
+            for (let i = 2; i < payments.length; i++) {
+                const prevDate = new Date(payments[i - 1].paymentDate);
+                const currentDate = new Date(payments[i].paymentDate);
+                const newInterval = this.calculateDaysBetween(prevDate, currentDate);
+                
+                // Running average formula: (previous_average + new_interval) / 2
+                runningAverage = (runningAverage + newInterval) / 2;
+            }
+
+            return runningAverage;
         } catch (error) {
-            console.error('Error calculating average days:', error);
+            console.error('Error calculating running average payment interval:', error);
             return null;
         }
+    }
+
+    // Legacy function - kept for backward compatibility but now uses payment intervals
+    async calculateAverageDaysBetweenVisits(customerId, userId = null) {
+        return await this.calculateRunningAveragePaymentInterval(customerId, userId);
     }
 
     // Get last visit date (payment date priority over appointment date)
@@ -240,28 +269,27 @@ class CustomerStatusService {
                 return 'new'; // No payment or appointments yet
             }
 
-                  const daysSinceLastVisit = this.calculateDaysBetween(lastVisitDate, new Date());
-      let averageDays = await this.calculateAverageDaysBetweenVisits(customerId);
+            const daysSinceLastVisit = this.calculateDaysBetween(lastVisitDate, new Date());
+            
+            // Calculate running average of payment intervals
+            // Logic: First payment = no data (use default), Second = interval itself,
+            //        Third+ = running average: (previous_average + new_interval) / 2
+            const runningAverage = await this.calculateRunningAveragePaymentInterval(customerId, userId);
 
-      // Note: Test mode no longer affects threshold calculation
-      // Always use production logic with averageDays if available
+            // Calculate thresholds based on running average
+            let atRiskThreshold, lostThreshold;
 
-      // No upcoming appointment check - only use updatedAt as requested
-
-                  // Calculate thresholds
-      let atRiskThreshold, lostThreshold;
-
-    //   if (averageDays === null) {
-    //     // First time customer or not enough data
-    //     atRiskThreshold = this.statusThresholds.atRisk.defaultDays;
-    //     lostThreshold = this.statusThresholds.lost.defaultDays;
-    //   } else {
-    //     // Regular customer with visit history
-    //     atRiskThreshold = averageDays + this.statusThresholds.atRisk.bufferDays;
-    //     lostThreshold = averageDays + this.statusThresholds.lost.bufferDays;
-    //   }
-      atRiskThreshold = this.statusThresholds.atRisk.defaultDays; // 30
-      lostThreshold = this.statusThresholds.lost.defaultDays;     // 60
+            if (runningAverage === null) {
+                // First payment or only one payment - use default thresholds
+                atRiskThreshold = this.statusThresholds.atRisk.defaultDays; // 30
+                lostThreshold = this.statusThresholds.lost.defaultDays;     // 60
+            } else {
+                // Use running average as the threshold
+                // At Risk threshold = running average itself
+                atRiskThreshold = runningAverage;
+                // Lost threshold = 2x the running average (or use default if too small)
+                lostThreshold = Math.max(runningAverage * 2, this.statusThresholds.lost.defaultDays);
+            }
 
 
             // Determine status based on days since last visit
@@ -543,13 +571,18 @@ class CustomerStatusService {
                             this.calculateDaysBetween(lastVisitDate, new Date()) : 0;
                         
                         // Calculate threshold used for this customer (for logging only)
-                        // Always use defaultDays (30 for at_risk, 60 for lost) - consistent with determineCustomerStatus
+                        // Use same logic as determineCustomerStatus - running average or default
+                        const runningAverage = await this.calculateRunningAveragePaymentInterval(customer.id, customer.userId);
                         let threshold = 0;
                         
                         if (newStatus === 'at_risk') {
-                            threshold = this.statusThresholds.atRisk.defaultDays; // 30
+                            threshold = runningAverage === null ? 
+                                this.statusThresholds.atRisk.defaultDays : 
+                                runningAverage;
                         } else if (newStatus === 'lost') {
-                            threshold = this.statusThresholds.lost.defaultDays; // 60
+                            threshold = runningAverage === null ? 
+                                this.statusThresholds.lost.defaultDays : 
+                                Math.max(runningAverage * 2, this.statusThresholds.lost.defaultDays);
                         }
 
                         const updateResult = await this.updateCustomerStatus(
