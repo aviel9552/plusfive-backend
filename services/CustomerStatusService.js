@@ -20,22 +20,17 @@ class CustomerStatusService {
 
         // Always use production thresholds (day-based) regardless of test mode
         // Test mode only affects cron schedule frequency in CronJobService
-        this.statusThresholds = {
-            // Production thresholds - from environment variables
-            atRisk: {
-                defaultDays: parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30),
-                bufferDays: parseNumber(process.env.AT_RISK_BUFFER_DAYS, 5)
-            },
-            lost: {
-                defaultDays: parseNumber(process.env.LOST_DEFAULT_DAYS, 60),
-                bufferDays: parseNumber(process.env.LOST_BUFFER_DAYS, 15)
-            }
-        };
+        // ADBP (Average Days Between Payments) - Default value when no payment history
+        this.ADBP_DEFAULT = parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30);
+        // BUFFER - Constant buffer value for both RISK and LOST calculations
+        this.BUFFER = parseNumber(process.env.AT_RISK_BUFFER_DAYS, 5);
 
         // Log the thresholds being used (always production, regardless of test mode)
-        console.log('📊 Customer Status Thresholds (ALWAYS PRODUCTION):');
-        console.log(`   - At Risk: ${this.statusThresholds.atRisk.defaultDays} days (default) + ${this.statusThresholds.atRisk.bufferDays} days (buffer)`);
-        console.log(`   - Lost: ${this.statusThresholds.lost.defaultDays} days (default) + ${this.statusThresholds.lost.bufferDays} days (buffer)`);
+        console.log('📊 Customer Status Calculation Parameters (ALWAYS PRODUCTION):');
+        console.log(`   - ADBP Default: ${this.ADBP_DEFAULT} days (used when no payment history)`);
+        console.log(`   - BUFFER: ${this.BUFFER} days (constant for both RISK and LOST)`);
+        console.log(`   - RISK Formula: ADBP + BUFFER`);
+        console.log(`   - LOST Formula: (ADBP * 2) + BUFFER`);
         console.log(`   - Time Unit: ${this.timeUnitLabel}`);
 
         this.n8nService = new N8nMessageService();
@@ -87,7 +82,8 @@ class CustomerStatusService {
     }
 
     // Generate appropriate reason message for status changes
-    generateStatusChangeReason(oldStatus, newStatus, daysSinceLastVisit, threshold) {
+    // Optional parameters: adbp, dbp, buffer for detailed calculation info
+    generateStatusChangeReason(oldStatus, newStatus, daysSinceLastVisit, threshold, adbp = null, dbp = null, buffer = null) {
         const oldStatusCap = this.capitalizeStatus(oldStatus);
         const newStatusCap = this.capitalizeStatus(newStatus);
 
@@ -105,9 +101,19 @@ class CustomerStatusService {
                 return 'Customer is actively booking appointments';
 
             case 'at_risk':
+                // Include calculation details if available
+                if (adbp !== null && dbp !== null && buffer !== null) {
+                    const effectiveADBP = adbp === null ? this.ADBP_DEFAULT : adbp;
+                    return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (ADBP: ${effectiveADBP.toFixed(2)}, DBP: ${dbp}, BUFFER: ${buffer}, Threshold: ${threshold} ${this.timeUnitLabel} = ADBP + BUFFER)`;
+                }
                 return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (threshold: ${threshold} ${this.timeUnitLabel})`;
 
             case 'lost':
+                // Include calculation details if available
+                if (adbp !== null && dbp !== null && buffer !== null) {
+                    const effectiveADBP = adbp === null ? this.ADBP_DEFAULT : adbp;
+                    return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (ADBP: ${effectiveADBP.toFixed(2)}, DBP: ${dbp}, BUFFER: ${buffer}, Threshold: ${threshold} ${this.timeUnitLabel} = (ADBP * 2) + BUFFER)`;
+                }
                 return `No activity for ${daysSinceLastVisit} ${this.timeUnitLabel} (threshold: ${threshold} ${this.timeUnitLabel})`;
 
             case 'recovered':
@@ -123,10 +129,12 @@ class CustomerStatusService {
         }
     }
 
-    // Calculate running average of payment intervals
-    // Logic: First payment = no data (use default), Second = interval itself, 
-    //        Third+ = running average: (previous_average + new_interval) / 2
-    async calculateRunningAveragePaymentInterval(customerId, userId = null) {
+    // Calculate ADBP (Average Days Between Payments)
+    // Formula: (previous ADBP + current DBP) / 2
+    // - First payment: no data, return null (will use default ADBP = 30)
+    // - Second payment: ADBP = (default ADBP + DBP) / 2 = (30 + DBP) / 2
+    // - Third+ payment: ADBP = (previous ADBP + current DBP) / 2
+    async calculateADBP(customerId, userId = null) {
         try {
             // Get all successful payments for this customer, ordered by date
             const paymentWhere = {
@@ -143,46 +151,96 @@ class CustomerStatusService {
                 select: { paymentDate: true }
             });
 
-            // First payment: no data, return null (will use default)
+            // First payment: no data, return null (will use default ADBP)
             if (payments.length < 2) {
                 return null;
             }
 
-            // Second payment: return the interval itself
+            // Second payment: ADBP = (default ADBP + DBP) / 2
+            // DBP = days between first and second payment
             if (payments.length === 2) {
                 const firstDate = new Date(payments[0].paymentDate);
                 const secondDate = new Date(payments[1].paymentDate);
-                const interval = this.calculateDaysBetween(firstDate, secondDate);
-                return interval;
+                const dbp = this.calculateDaysBetween(firstDate, secondDate);
+                // Formula: (default ADBP + DBP) / 2
+                const adbp = (this.ADBP_DEFAULT + dbp) / 2;
+                return adbp;
             }
 
-            // Third payment onwards: calculate running average
-            // Start with the first interval (between payment 1 and 2)
-            let runningAverage = this.calculateDaysBetween(
+            // Third payment onwards: ADBP = (previous ADBP + current DBP) / 2
+            // Start with the ADBP after second payment
+            let previousADBP = (this.ADBP_DEFAULT + this.calculateDaysBetween(
                 new Date(payments[0].paymentDate),
                 new Date(payments[1].paymentDate)
-            );
+            )) / 2;
 
-            // For each subsequent payment, update running average: (old_average + new_interval) / 2
+            // For each subsequent payment, update ADBP: (previous ADBP + current DBP) / 2
             for (let i = 2; i < payments.length; i++) {
                 const prevDate = new Date(payments[i - 1].paymentDate);
                 const currentDate = new Date(payments[i].paymentDate);
-                const newInterval = this.calculateDaysBetween(prevDate, currentDate);
+                const currentDBP = this.calculateDaysBetween(prevDate, currentDate);
                 
-                // Running average formula: (previous_average + new_interval) / 2
-                runningAverage = (runningAverage + newInterval) / 2;
+                // Formula: (previous ADBP + current DBP) / 2
+                previousADBP = (previousADBP + currentDBP) / 2;
             }
 
-            return runningAverage;
+            return previousADBP;
         } catch (error) {
-            console.error('Error calculating running average payment interval:', error);
+            console.error('Error calculating ADBP:', error);
             return null;
         }
     }
 
-    // Legacy function - kept for backward compatibility but now uses payment intervals
+    // Legacy function - kept for backward compatibility but now uses ADBP calculation
+    async calculateRunningAveragePaymentInterval(customerId, userId = null) {
+        return await this.calculateADBP(customerId, userId);
+    }
+
+    // Legacy function - kept for backward compatibility but now uses ADBP calculation
     async calculateAverageDaysBetweenVisits(customerId, userId = null) {
-        return await this.calculateRunningAveragePaymentInterval(customerId, userId);
+        return await this.calculateADBP(customerId, userId);
+    }
+
+    // Get DBP (Days Between Payment) - Days since last payment
+    async getDBP(customerId, userId = null) {
+        try {
+            const lastVisitDate = await this.getLastVisitDate(customerId, userId);
+            if (!lastVisitDate) {
+                return 0; // No payment yet
+            }
+            return this.calculateDaysBetween(lastVisitDate, new Date());
+        } catch (error) {
+            console.error('Error getting DBP:', error);
+            return 0;
+        }
+    }
+
+    // Get BUFFER value (constant)
+    getBUFFER() {
+        return this.BUFFER;
+    }
+
+    // Get all calculation metrics for a customer (ADBP, DBP, BUFFER)
+    async getCustomerCalculationMetrics(customerId, userId = null) {
+        try {
+            const adbp = await this.calculateADBP(customerId, userId);
+            const dbp = await this.getDBP(customerId, userId);
+            const buffer = this.getBUFFER();
+
+            // Use default ADBP if no payment history
+            const effectiveADBP = adbp === null ? this.ADBP_DEFAULT : adbp;
+
+            return {
+                ADBP: effectiveADBP,
+                DBP: dbp,
+                BUFFER: buffer,
+                riskThreshold: effectiveADBP + buffer,
+                lostThreshold: (effectiveADBP * 2) + buffer
+            };
+        } catch (error) {
+            console.error('Error getting customer calculation metrics:', error);
+            return null;
+        }
     }
 
     // Get last visit date (payment date priority over appointment date)
@@ -271,25 +329,18 @@ class CustomerStatusService {
 
             const daysSinceLastVisit = this.calculateDaysBetween(lastVisitDate, new Date());
             
-            // Calculate running average of payment intervals
-            // Logic: First payment = no data (use default), Second = interval itself,
-            //        Third+ = running average: (previous_average + new_interval) / 2
-            const runningAverage = await this.calculateRunningAveragePaymentInterval(customerId, userId);
+            // Calculate ADBP (Average Days Between Payments)
+            // Formula: (previous ADBP + current DBP) / 2
+            // - First payment: use default ADBP = 30
+            // - Second+ payment: calculate using formula
+            const adbp = await this.calculateADBP(customerId, userId);
 
-            // Calculate thresholds based on running average
-            let atRiskThreshold, lostThreshold;
-
-            if (runningAverage === null) {
-                // First payment or only one payment - use default thresholds
-                atRiskThreshold = this.statusThresholds.atRisk.defaultDays; // 30
-                lostThreshold = this.statusThresholds.lost.defaultDays;     // 60
-            } else {
-                // Use running average as the threshold
-                // At Risk threshold = running average itself
-                atRiskThreshold = runningAverage;
-                // Lost threshold = 2x the running average (or use default if too small)
-                lostThreshold = Math.max(runningAverage * 2, this.statusThresholds.lost.defaultDays);
-            }
+            // Calculate thresholds using explicit formulas:
+            // RISK threshold = ADBP + BUFFER
+            // LOST threshold = (ADBP * 2) + BUFFER
+            const effectiveADBP = adbp === null ? this.ADBP_DEFAULT : adbp;
+            const atRiskThreshold = effectiveADBP + this.BUFFER;
+            const lostThreshold = (effectiveADBP * 2) + this.BUFFER;
 
 
             // Determine status based on days since last visit
@@ -381,12 +432,15 @@ class CustomerStatusService {
             }
 
             // Generate appropriate reason for status change
-            const { daysSinceLastVisit = 0, threshold = 0 } = additionalContext;
+            const { daysSinceLastVisit = 0, threshold = 0, adbp = null, dbp = null } = additionalContext;
             const reason = this.generateStatusChangeReason(
                 currentStatus, 
                 newStatus, 
                 daysSinceLastVisit, 
-                threshold
+                threshold,
+                adbp,
+                dbp,
+                this.BUFFER
             );
 
             // Update status in CustomerUser table only if different
@@ -571,25 +625,29 @@ class CustomerStatusService {
                             this.calculateDaysBetween(lastVisitDate, new Date()) : 0;
                         
                         // Calculate threshold used for this customer (for logging only)
-                        // Use same logic as determineCustomerStatus - running average or default
-                        const runningAverage = await this.calculateRunningAveragePaymentInterval(customer.id, customer.userId);
+                        // Use same logic as determineCustomerStatus - ADBP calculation
+                        const adbp = await this.calculateADBP(customer.id, customer.userId);
+                        const effectiveADBP = adbp === null ? this.ADBP_DEFAULT : adbp;
                         let threshold = 0;
                         
                         if (newStatus === 'at_risk') {
-                            threshold = runningAverage === null ? 
-                                this.statusThresholds.atRisk.defaultDays : 
-                                runningAverage;
+                            // RISK threshold = ADBP + BUFFER
+                            threshold = effectiveADBP + this.BUFFER;
                         } else if (newStatus === 'lost') {
-                            threshold = runningAverage === null ? 
-                                this.statusThresholds.lost.defaultDays : 
-                                Math.max(runningAverage * 2, this.statusThresholds.lost.defaultDays);
+                            // LOST threshold = (ADBP * 2) + BUFFER
+                            threshold = (effectiveADBP * 2) + this.BUFFER;
                         }
 
                         const updateResult = await this.updateCustomerStatus(
                             customer.id, 
                             newStatus, 
                             customer.userId,
-                            { daysSinceLastVisit, threshold }
+                            { 
+                                daysSinceLastVisit, 
+                                threshold,
+                                adbp: adbp, // Pass ADBP for detailed logging
+                                dbp: daysSinceLastVisit // DBP is same as daysSinceLastVisit
+                            }
                         );
                         
                         // Only count as updated if status actually changed
