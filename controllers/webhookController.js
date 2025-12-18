@@ -774,7 +774,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                         businessName: businessOwner.businessName || 'Business',
                         businessType: businessOwner.businessType || 'general',
                         customerService: customer.selectedServices || '',
-                        businessOwnerPhone: businessOwner.phoneNumber || businessOwner.whatsappNumber,
+                        businessOwnerPhone: businessOwner.phoneNumber,
                         lastVisitDate: new Date().toISOString().split('T')[0],
                         whatsappPhone: customer.customerPhone,
                         previousStatus: currentPreviousStatus
@@ -840,7 +840,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             business_name: customer.user?.businessName || 'Business',
             business_type: customer.user?.businessType || 'general',
             customer_service: customer.selectedServices || '',
-            business_owner_phone: customer.user?.phoneNumber || customer.user?.whatsappNumber,
+            business_owner_phone: customer.user?.phoneNumber,
             last_visit_date: new Date().toISOString().split('T')[0],
             whatsapp_phone: customer.customerPhone,
             customer_status: customerStatus

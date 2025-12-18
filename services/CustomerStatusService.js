@@ -533,7 +533,7 @@ class CustomerStatusService {
                             business_name: customer.user?.businessName || 'Business',
                             business_type: customer.user?.businessType || 'general',
                             customer_service: customer.selectedServices || '',
-                            business_owner_phone: customer.user?.phoneNumber || customer.user?.whatsappNumber,
+                            business_owner_phone: customer.user?.phoneNumber,
                             last_visit_date: daysSinceLastVisit ? new Date(Date.now() - offsetMs).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
                             whatsapp_phone: customer.customerPhone
                         };
