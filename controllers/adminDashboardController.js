@@ -1108,7 +1108,7 @@ class AdminDashboardController {
         }
       });
 
-      // Group payments by customer and calculate total LTV (all-time revenue) and monthly cumulative
+      // Group payments by customer and calculate cumulative LTV up to end of each month
       const customerRevenueMap = new Map();
       
       // Initialize customer revenue map
@@ -1116,108 +1116,94 @@ class AdminDashboardController {
         customerRevenueMap.set(customer.id, {
           customerId: customer.id,
           customerName: customer.customerFullName,
-          monthlyRevenue: new Array(12).fill(0), // Cumulative revenue up to end of each month
-          totalLTV: 0, // Total LTV (all-time revenue) for this customer
-          paymentCount: 0,
           payments: [] // Store all payments for this customer
         });
       });
 
-      // Calculate total LTV per customer and monthly revenue (only for payments made IN that month)
+      // Store all payments for each customer
       allPayments.forEach(payment => {
         const paymentDate = new Date(payment.paymentDate);
-        const paymentMonth = paymentDate.getMonth(); // 0-11
-        const paymentYear = paymentDate.getFullYear();
         const amount = Number(payment.total) || 0;
         
         if (customerRevenueMap.has(payment.customerId)) {
           const customerData = customerRevenueMap.get(payment.customerId);
-          
-          // Add to total LTV (all-time revenue) - this is the actual LTV
-          customerData.totalLTV += amount;
-          customerData.paymentCount++;
           customerData.payments.push({
             total: amount,
             paymentDate: paymentDate
           });
-          
-          // Only add revenue to the specific month where payment was made (not cumulative)
-          // This ensures months with no payments show 0
-          if (paymentYear === currentYear) {
-            // Only add to the month where payment was made
-            customerData.monthlyRevenue[paymentMonth] += amount;
-          } else if (paymentYear < currentYear) {
-            // For payments from previous years, don't add to current year months
-            // These are already included in totalLTV but not shown in monthly breakdown
-          }
-          // For future year payments, don't add to current year months
         }
+      });
+
+      // Sort payments by date for each customer
+      customerRevenueMap.forEach((customerData) => {
+        customerData.payments.sort((a, b) => a.paymentDate - b.paymentDate);
       });
 
       // Determine how many customers have EVER paid at least once
       const customersWhoPaidCount = Array.from(customerRevenueMap.values()).filter(
-        customerData => customerData.totalLTV > 0
+        customerData => customerData.payments.length > 0
       ).length;
 
-      // Process data by month
+      // Process data by month - calculate LTV for payments made ONLY in each specific month
+      // Each month shows separate data (not cumulative), and values are frozen once month ends
       const monthlyLTVData = [];
       
       for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
         const targetDate = new Date(currentYear, monthIndex, 1);
-        const monthEnd = new Date(currentYear, monthIndex + 1, 0);
+        const monthEnd = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59, 999);
         const totalDaysInMonth = monthEnd.getDate();
         const monthNumber = monthIndex + 1;
 
-        // Calculate total revenue and average LTV for this month
+        // Calculate LTV for payments made ONLY in this specific month (not cumulative)
+        // IMPORTANT: Each month shows ONLY payments made in that month, previous months are NOT included
+        const monthStartDate = new Date(currentYear, monthIndex, 1, 0, 0, 0);
         let totalRevenueForMonth = 0;
         let customersWithPayments = 0;
         const customerDetails = [];
-
-        // Calculate revenue for payments made IN this specific month (not cumulative)
-        const monthStartDate = new Date(currentYear, monthIndex, 1, 0, 0, 0);
-        const monthEndDate = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59);
         
         customerRevenueMap.forEach((customerData, customerId) => {
-          // monthlyRevenue[monthIndex] contains revenue from payments made IN this month only
-          const customerLTVThisMonth = customerData.monthlyRevenue[monthIndex];
-          
-          // Count payments made IN this specific month
+          // Filter payments made ONLY in this specific month
+          // Example: For December, only payments between Dec 1 and Dec 31 are included
+          // November payments are NOT included in December's totalRevenueForMonth
           const paymentsInThisMonth = customerData.payments.filter(p => {
-            return p.paymentDate >= monthStartDate && p.paymentDate <= monthEndDate;
-          }).length;
+            return p.paymentDate >= monthStartDate && p.paymentDate <= monthEnd;
+          });
           
-          // Only include customers who made payments in this month
-          if (customerLTVThisMonth > 0) {
-            totalRevenueForMonth += customerLTVThisMonth;
+          // Calculate revenue from payments made ONLY in this month (previous months excluded)
+          const monthlyRevenue = paymentsInThisMonth.reduce((sum, p) => sum + p.total, 0);
+          
+          // Only include customers who made payments in this specific month
+          if (monthlyRevenue > 0) {
+            totalRevenueForMonth += monthlyRevenue;
             customersWithPayments++;
             
             customerDetails.push({
               customerId: customerData.customerId,
               customerName: customerData.customerName,
-              ltvCount: Math.round(customerLTVThisMonth * 100) / 100, // LTV (revenue) for this customer IN this month
-              totalRevenue: Math.round(customerLTVThisMonth * 100) / 100,
-              paymentCount: paymentsInThisMonth,
+              ltvCount: Math.round(monthlyRevenue * 100) / 100, // Revenue from payments made IN this month only
+              totalRevenue: Math.round(monthlyRevenue * 100) / 100,
+              paymentCount: paymentsInThisMonth.length, // Payments made IN this month
               totalDaysInMonth: totalDaysInMonth
             });
           }
         });
 
         // Calculate average LTV for this month
-        // Formula: (Total revenue from payments made IN this month) ÷ (Customers who have paid at least once)
-        // If no payments in this month, averageLTV will be 0
-        const averageLTV = customersWhoPaidCount > 0 
-          ? totalRevenueForMonth / customersWhoPaidCount 
+        // Formula: (Total revenue from payments made IN this month) ÷ (Customers who paid IN this month)
+        const averageLTV = customersWithPayments > 0 
+          ? totalRevenueForMonth / customersWithPayments 
           : 0;
 
         // Debug logging for monthly calculation
         if (process.env.NODE_ENV === 'development') {
           console.log(`📊 [Monthly LTV] ${targetDate.toLocaleString('default', { month: 'short' })} ${currentYear}:`, {
-            totalRevenueForMonth: Math.round(totalRevenueForMonth * 100) / 100,
+            totalRevenueForMonth: Math.round(totalRevenueForMonth * 100) / 100, // ONLY payments made in this month (previous months excluded)
             totalCustomers,
             customersWhoPaidCount,
             customersWithPayments,
             averageLTV: Math.round(averageLTV * 100) / 100,
-            formula: `(${Math.round(totalRevenueForMonth * 100) / 100} ÷ ${customersWhoPaidCount || 0}) = ${Math.round(averageLTV * 100) / 100}`
+            formula: `(${Math.round(totalRevenueForMonth * 100) / 100} ÷ ${customersWithPayments || 0}) = ${Math.round(averageLTV * 100) / 100}`,
+            note: `Only includes payments from ${monthStartDate.toISOString().split('T')[0]} to ${monthEnd.toISOString().split('T')[0]}`
           });
         }
 
@@ -1227,16 +1213,19 @@ class AdminDashboardController {
           year: currentYear,
           totalDaysInMonth: totalDaysInMonth,
           customersWithPayments: customersWithPayments,
+          totalRevenueForMonth: Math.round(totalRevenueForMonth * 100) / 100, // Total payments made in this month
           averageLTVCount: Math.round(averageLTV * 100) / 100, // Average LTV in currency
           customerDetails: customerDetails
         });
       }
 
-      // Calculate overall average LTV (total revenue from all customers ÷ total customers)
+      // Calculate overall average LTV (total revenue from all customers ÷ customers who paid)
       // This is the true average LTV based on all-time revenue
       let totalRevenueAllCustomers = 0;
       customerRevenueMap.forEach((customerData) => {
-        totalRevenueAllCustomers += customerData.totalLTV;
+        // Sum all payments for this customer (all-time LTV)
+        const customerTotalLTV = customerData.payments.reduce((sum, p) => sum + p.total, 0);
+        totalRevenueAllCustomers += customerTotalLTV;
       });
       
       const overallAverageLTV = customersWhoPaidCount > 0 
@@ -1248,8 +1237,9 @@ class AdminDashboardController {
         console.log(`📊 [Overall Average LTV] Year ${currentYear}:`, {
           totalRevenueAllCustomers: Math.round(totalRevenueAllCustomers * 100) / 100,
           totalCustomers,
+          customersWhoPaidCount,
           overallAverageLTV: Math.round(overallAverageLTV * 100) / 100,
-          formula: `(${Math.round(totalRevenueAllCustomers * 100) / 100} ÷ ${totalCustomers}) = ${Math.round(overallAverageLTV * 100) / 100}`
+          formula: `(${Math.round(totalRevenueAllCustomers * 100) / 100} ÷ ${customersWhoPaidCount}) = ${Math.round(overallAverageLTV * 100) / 100}`
         });
       }
 
