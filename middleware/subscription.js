@@ -3,7 +3,7 @@ const { errorResponse } = require('../lib/utils');
 
 /**
  * Middleware to check if user has active subscription
- * Blocks access if subscription is not active, canceled, or expired
+ * 🔥 כרגע בבייפאס: לא חוסם בכלל לפי סטטוס מנוי (גם אם לא פעיל / מבוטל)
  */
 const checkSubscription = async (req, res, next) => {
   try {
@@ -23,8 +23,8 @@ const checkSubscription = async (req, res, next) => {
         subscriptionExpirationDate: true,
         subscriptionStartDate: true,
         subscriptionPlan: true,
-        role: true
-      }
+        role: true,
+      },
     });
 
     if (!user) {
@@ -36,19 +36,18 @@ const checkSubscription = async (req, res, next) => {
       return next();
     }
 
-    // Check subscription status
-    const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-    
-    // ⚠️ TEMP: Allow access even without active subscription
-console.log("Subscription:", subscriptionStatus, "-> Access Allowed (no block)");
-next();
+    // ---- TEMP: ביטול חסימה לפי מנוי ----
+    const subscriptionStatus = user.subscriptionStatus?.toLowerCase() || 'unknown';
+    console.log('⚠️ Subscription check BYPASSED. Status:', subscriptionStatus);
+    return next();
 
-
+    // ---- לוגיקה ישנה (מושבתת כרגע) ----
+    /*
     // Check if subscription is active
     if (subscriptionStatus !== 'active') {
       return errorResponse(
-        res, 
-        'Active subscription required. Please subscribe to continue using the service.', 
+        res,
+        'Active subscription required. Please subscribe to continue using the service.',
         403
       );
     }
@@ -57,24 +56,25 @@ next();
     if (user.subscriptionExpirationDate) {
       const now = new Date();
       const expirationDate = new Date(user.subscriptionExpirationDate);
-      
+
       if (expirationDate < now) {
         // Subscription expired - update status
         await prisma.user.update({
           where: { id: userId },
-          data: { subscriptionStatus: 'expired' }
+          data: { subscriptionStatus: 'expired' },
         });
-        
+
         return errorResponse(
-          res, 
-          'Your subscription has expired. Please renew your subscription to continue using the service.', 
+          res,
+          'Your subscription has expired. Please renew your subscription to continue using the service.',
           403
         );
       }
     }
 
     // Subscription is active - allow access
-    next();
+    return next();
+    */
   } catch (error) {
     console.error('Subscription check error:', error);
     return errorResponse(res, 'Failed to verify subscription status', 500);
@@ -82,6 +82,7 @@ next();
 };
 
 module.exports = {
-  checkSubscription
+  checkSubscription,
 };
+
 
