@@ -70,8 +70,8 @@ if (!subscriptionStatus ||
         subscriptionStatus === 'pending') {
       return errorResponse(
         res, 
-        'Active subscription required. Please subscribe to continue using the service.', 
-        403
+        ''TEST – IF YOU SEE THIS, WE HIT THE WRONG PLACE'
+
       );
     }
 
