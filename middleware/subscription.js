@@ -47,8 +47,11 @@ next();
 
 
 
-    // Check if subscription is active
-    if (subscriptionStatus !== 'active') {
+    // Block if subscription is canceled, inactive, or pending
+    if (!subscriptionStatus || 
+        subscriptionStatus === 'canceled' || 
+        subscriptionStatus === 'inactive' || 
+        subscriptionStatus === 'pending') {
       return errorResponse(
         res, 
         'Active subscription required. Please subscribe to continue using the service.', 
