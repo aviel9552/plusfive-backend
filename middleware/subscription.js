@@ -39,17 +39,12 @@ const checkSubscription = async (req, res, next) => {
     // Check subscription status
     const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
     
-    // Block if subscription is canceled, inactive, or pending
-    if (!subscriptionStatus || 
-        subscriptionStatus === 'canceled' || 
-        subscriptionStatus === 'inactive' || 
-        subscriptionStatus === 'pending') {
-      return errorResponse(
-        res, 
-        'Active subscription required. Please subscribe to continue using the service.', 
-        403
-      );
-    }
+    if (!subscriptionStatus || subscriptionStatus !== 'active') {
+  // רק לוג זמני
+  console.log("Subscription is not active – but user still allowed");
+}
+next();
+
 
 
     // Check if subscription is active
