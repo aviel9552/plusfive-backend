@@ -37,13 +37,29 @@ const checkSubscription = async (req, res, next) => {
     }
 
     // Check subscription status
-    const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-    
-    if (!subscriptionStatus || subscriptionStatus !== 'active') {
-  // רק לוג זמני
-  console.log("Subscription is not active – but user still allowed");
+const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+
+// 🔓 TEMP: אל תחסום בכלל לפי subscriptionStatus
+// רק תכתוב לוג כדי שתוכל לוודא שזה רץ
+console.log('Subscription check (TEMP OPEN):', subscriptionStatus);
+
+// שים לב: אין כאן return, ממשיכים הלאה
+// אל תמחק את השורות הישנות עדיין, פשוט תבטל אותן:
+
+/*
+// Block if subscription is canceled, inactive, or pending
+if (!subscriptionStatus || 
+    subscriptionStatus === 'canceled' || 
+    subscriptionStatus === 'inactive' || 
+    subscriptionStatus === 'pending') {
+  return errorResponse(
+    res, 
+    'Active subscription required. Please subscribe to continue using the service.', 
+    403
+  );
 }
-next();
+*/
+
 
 
 
