@@ -8,187 +8,151 @@ const { stripe } = require('../lib/stripe');
 const formatIsraeliPhone = (phoneNumber) => {
   if (!phoneNumber) return null;
 
+  // Remove any existing country code or special characters
   let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
 
+  // If phone already starts with 972, just add +
   if (cleanPhone.startsWith('972')) {
     return `+${cleanPhone}`;
   }
 
+  // If phone starts with 0, remove it and add +972
   if (cleanPhone.startsWith('0')) {
     cleanPhone = cleanPhone.substring(1);
   }
 
+  // Add Israel country code +972
   return `+972${cleanPhone}`;
 };
 
-const parseDateSafely = (dateString) => {
-  if (!dateString) return null;
-
-  try {
-    const [datePart, timePart] = dateString.split(' ');
-    const [day, month, year] = datePart.split('/');
-
-    const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(
-      2,
-      '0'
-    )} ${timePart || '00:00'}:00`;
-
-    const parsedDate = new Date(formattedDate);
-    if (isNaN(parsedDate.getTime())) return null;
-    return parsedDate;
-  } catch (e) {
-    return null;
-  }
-};
-
-const isSubscriptionActive = (user) => {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-
-  const status = (user.subscriptionStatus || '').toLowerCase();
-  if (!status) return false;
-
-  const inactive =
-    status === 'pending' ||
-    status === 'canceled' ||
-    status === 'inactive' ||
-    status === 'expired';
-
-  if (inactive) return false;
-
-  if (user.subscriptionExpirationDate) {
-    const now = new Date();
-    const exp = new Date(user.subscriptionExpirationDate);
-    if (exp < now) return false;
-  }
-
-  return true;
-};
-
-/**
- * IMPORTANT WEBHOOK RULE:
- * - Never return 4xx/5xx to Calmark for business/subscription problems.
- * - Always return 200 quickly.
- * - Log the inbound payload FIRST.
- * - If user not active / not found → mark log as queued/ignored, return 200.
- */
-
-// Handle appointment webhook - store any data without validation (when active), otherwise queue
+// Handle appointment webhook - store any data without validation
 const handleAppointmentWebhook = async (req, res) => {
-  const webhookData = req.body;
-
-  // 1) Always create a log FIRST (so you never "lose" events)
-  let webhookLog = null;
   try {
-    webhookLog = await prisma.webhookLog.create({
-      data: {
-        data: webhookData,
-        type: 'appointment',
-        status: 'received', // received | queued | processed | ignored | failed
-      },
-    });
-  } catch (e) {
-    // Even if logging fails, NEVER break Calmark (avoid turning off webhook)
-    console.error('❌ Failed to write webhookLog (appointment):', e);
-    return res.status(200).json({ success: true, received: true });
-  }
+    const webhookData = req.body;
+    console.log('calmark webhookData', webhookData);
 
-  try {
-    console.log('✅ calmark appointment webhook received', {
-      webhookLogId: webhookLog.id,
-      businessName: webhookData?.BusinessName,
-    });
-
-    // 2) Identify business/user (do NOT block Calmark if not found)
+    // Check if business exists in User table FIRST - before ANY database operations
     let existingUser = null;
     if (webhookData.BusinessName) {
+      console.log('Inside', webhookData.BusinessName);
       existingUser = await prisma.user.findFirst({
-        where: { businessName: webhookData.BusinessName },
-        select: { id: true, businessName: true },
-      });
-    }
-
-    if (!existingUser) {
-      await prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: {
-          status: 'ignored',
-          // keep reason inside the log data if you want; simplest: attach a small meta object
-          meta: { reason: 'business_not_found' },
+        where: {
+          businessName: webhookData.BusinessName
         },
-      }).catch(() => null);
-
-      // ALWAYS 200
-      return res.status(200).json({
-        success: true,
-        received: true,
-        queued: false,
-        reason: 'business_not_found',
+        select: {
+          id: true,
+          businessName: true
+        }
       });
     }
 
-    // 3) Subscription check (NEVER 403 here)
+  console.log('existingUser', existingUser);
+    // If business doesn't exist, return error immediately - NO data should be stored
+    if (!existingUser) {
+      return errorResponse(res, `Business '${webhookData.BusinessName}' not found. Please create user first.`, 400);
+    }
+
+    // Check if user has active subscription - block data entry if subscription is not active
+    // This check MUST happen BEFORE storing any data (webhook log, customer, appointment, etc.)
     const user = await prisma.user.findUnique({
       where: { id: existingUser.id },
       select: {
         id: true,
         subscriptionStatus: true,
         subscriptionExpirationDate: true,
-        role: true,
-      },
+        role: true
+      }
     });
 
-    if (!isSubscriptionActive(user)) {
-      await prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: {
-          status: 'queued',
-          meta: {
-            reason: 'subscription_inactive',
-            userId: existingUser.id,
-            businessName: existingUser.businessName,
-          },
-        },
-      }).catch(() => null);
+    if (user && user.role !== 'admin') {
+      const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active - return early, NO data will be stored
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription. Appointment webhook cannot be processed.`, 403);
+      }
 
-      // ALWAYS 200 (Calmark must keep sending)
-      return res.status(200).json({
-        success: true,
-        received: true,
-        queued: true,
-        reason: 'subscription_inactive',
-      });
+      // Check expiration date - return early if expired, NO data will be stored
+      if (user.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(user.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Appointment webhook cannot be processed. Please renew to continue.`, 403);
+        }
+      }
     }
 
-    // 4) Active → process as before
-    // Check if customer exists in Customers table (by phone only)
-    let existingCustomer = null;
-    let customerId = null;
-    const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
+    // Only store webhook log AFTER subscription check passes
+    // If subscription check fails, function returns early and this code never executes
+    const webhookLog = await prisma.webhookLog.create({
+      data: {
+        data: webhookData,
+        type: 'appointment',
+        status: 'pending'
+      }
+    });
 
-    if (formattedPhone) {
+    console.log('webhookLog', webhookLog);
+
+    // Check if customer exists in Customers table
+    let existingCustomer = null;
+
+    // Check only by CustomerPhone
+    if (webhookData.CustomerPhone) {
+      const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
+
       existingCustomer = await prisma.customers.findFirst({
-        where: { customerPhone: formattedPhone },
+        where: {
+          customerPhone: formattedPhone
+        },
         select: {
           id: true,
           employeeId: true,
           customerFullName: true,
-          customerPhone: true,
-        },
+          customerPhone: true
+        }
       });
     }
 
-    const userId = existingUser.id;
+    let userId = existingUser.id;
+    let customerId;
 
+
+    // Helper function to parse date safely
+    const parseDateSafely = (dateString) => {
+      if (!dateString) return null;
+
+      try {
+        // Handle format: "12/08/2025 19:30"
+        const [datePart, timePart] = dateString.split(' ');
+        const [day, month, year] = datePart.split('/');
+
+        // Create date in format: YYYY-MM-DD HH:MM:SS
+        const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${timePart || '00:00'}:00`;
+
+        const parsedDate = new Date(formattedDate);
+
+        // Check if date is valid
+        if (isNaN(parsedDate.getTime())) {
+          return null;
+        }
+
+        return parsedDate;
+      } catch (error) {
+        return null;
+      }
+    };
+    // If customer doesn't exist, create new customer
     if (!existingCustomer) {
+      const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
       const newCustomer = await prisma.customers.create({
         data: {
-          firstName: webhookData.CustomerFullName
-            ? webhookData.CustomerFullName.split(' ')[0]
-            : null,
-          lastName: webhookData.CustomerFullName
-            ? webhookData.CustomerFullName.split(' ').slice(1).join(' ')
-            : null,
+          firstName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ')[0] : null,
+          lastName: webhookData.CustomerFullName ? webhookData.CustomerFullName.split(' ').slice(1).join(' ') : null,
           customerPhone: formattedPhone,
           email: webhookData.CustomerEmail || null,
           appointmentCount: webhookData.AppointmentCount || 0,
@@ -200,14 +164,17 @@ const handleAppointmentWebhook = async (req, res) => {
           businessId: webhookData.BusinessId || null,
           employeeId: webhookData.EmployeeId || null,
           businessName: webhookData.BusinessName || null,
-          userId: userId,
-        },
+          userId: userId // Reference to User table
+        }
       });
       customerId = newCustomer.id;
     } else {
       customerId = existingCustomer.id;
     }
 
+
+    // Now add appointment data to Appointment table
+    const formattedPhoneForAppointment = formatIsraeliPhone(webhookData.CustomerPhone);
     const appointmentData = {
       source: webhookData.Source || null,
       endDate: parseDateSafely(webhookData.EndDate),
@@ -219,161 +186,240 @@ const handleAppointmentWebhook = async (req, res) => {
       employeeId: webhookData.EmployeeId || null,
       businessName: webhookData.BusinessName || null,
       employeeName: webhookData.EmployeeName || null,
-      customerPhone: formattedPhone,
+      customerPhone: formattedPhoneForAppointment,
       appointmentCount: webhookData.AppointmentCount || 0,
       customerFullName: webhookData.CustomerFullName || null,
       selectedServices: webhookData.SelectedServices || null,
-      customerId: customerId,
-      userId: userId,
+      customerId: customerId, // Reference to newly created customer
+      userId: userId // Reference to User table
     };
 
     const newAppointment = await prisma.appointment.create({
-      data: appointmentData,
+      data: appointmentData
     });
 
-    // customerUser relation (as before)
+    // Check if CustomerUser record already exists (customerId + userId combination)
     let existingCustomerUser = await prisma.customerUser.findFirst({
-      where: { customerId, userId },
+      where: {
+        customerId: customerId,
+        userId: userId
+      }
     });
 
     let customerUserId;
 
     if (existingCustomerUser) {
+      // Keep existing status - no status update on appointment webhook
+      // Status updates (lost/risk to recovered, new to active) happen only on payment checkout webhook
       customerUserId = existingCustomerUser.id;
     } else {
+      // Check if customerId exists but with different userId
       const customerWithDifferentUser = await prisma.customerUser.findFirst({
-        where: { customerId },
+        where: {
+          customerId: customerId
+        }
       });
 
-      const newCustomerUser = await prisma.customerUser.create({
-        data: {
-          customerId,
-          userId,
-          status: 'new',
-        },
-      });
-      customerUserId = newCustomerUser.id;
+      if (customerWithDifferentUser) {
+        // Customer exists with different user, create new record with status 'new'
+        const newCustomerUser = await prisma.customerUser.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            status: 'new'
+          }
+        });
+        customerUserId = newCustomerUser.id;
 
-      await prisma.customerStatusLog.create({
-        data: {
-          customerId,
-          userId,
-          oldStatus: null,
-          newStatus: 'New',
-          reason: customerWithDifferentUser
-            ? 'New appointment booked (customer existed under different user)'
-            : 'New appointment booked',
-        },
-      });
+        // Create CustomerStatusLog for new customer status
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: null, // First status entry
+            newStatus: 'New',
+            reason: 'New appointment booked'
+          }
+        });
+      } else {
+        // First time customer-user relation, create with status 'new'
+        const newCustomerUser = await prisma.customerUser.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            status: 'new'
+          }
+        });
+        customerUserId = newCustomerUser.id;
+
+        // Create CustomerStatusLog for new customer status
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: customerId,
+            userId: userId,
+            oldStatus: null, // First status entry
+            newStatus: 'New',
+            reason: 'New appointment booked'
+          }
+        });
+      }
     }
 
-    // Mark log processed
-    await prisma.webhookLog.update({
-      where: { id: webhookLog.id },
-      data: {
-        status: 'processed',
-        meta: { userId, customerId, appointmentId: newAppointment.id },
-      },
-    }).catch(() => null);
+    // Duplicate recovery notification code removed - already handled above
 
-    // ALWAYS 200 to webhook sender (don’t use 201 here)
-    return res.status(200).json({
-      success: true,
+
+
+    return successResponse(res, {
       webhookId: webhookLog.id,
-      userId,
-      customerId,
+      userId: userId,
+      customerId: customerId,
       appointmentId: newAppointment.id,
-      customerUserId,
-      message: 'Appointment webhook processed successfully',
-    });
+      customerUserId: customerUserId,
+      message: 'Appointment webhook processed successfully - Customer, Appointment and Customer-User relation created',
+      data: webhookData
+    }, 'Appointment webhook processed successfully', 201);
+
   } catch (error) {
     console.error('Appointment webhook error:', error);
-
-    await prisma.webhookLog.update({
-      where: { id: webhookLog.id },
-      data: {
-        status: 'failed',
-        meta: { reason: 'exception', error: String(error?.message || error) },
-      },
-    }).catch(() => null);
-
-    // STILL return 200 so Calmark keeps sending
-    return res.status(200).json({ success: true, received: true, queued: true });
+    return errorResponse(res, 'Failed to process appointment webhook', 500);
   }
 };
 
-// Handle rating webhook - update review when active, otherwise queue
+// Handle rating webhook - store customer rating data
 const handleRatingWebhook = async (req, res) => {
-  const webhookData = req.body;
-  let webhookLog = null;
-
-  // Always log first (optional: you can use webhookLog table for rating too)
   try {
-    webhookLog = await prisma.webhookLog.create({
-      data: {
-        data: webhookData,
-        type: 'rating',
-        status: 'received',
-      },
-    });
-  } catch (e) {
-    console.error('❌ Failed to write webhookLog (rating):', e);
-    return res.status(200).json({ success: true, received: true });
-  }
-
-  try {
+    const webhookData = req.body;
+    // Extract actual data
     const actualData = webhookData;
 
-    // Validate minimal identifiers — but DO NOT 400, just ignore/queue
-    if (!actualData || (!actualData.RatingId && !actualData.review_id && !actualData.paymentId)) {
-      await prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: { status: 'ignored', meta: { reason: 'missing_identifiers' } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'missing_identifiers' });
+    if (!actualData) {
+      return errorResponse(res, 'Invalid webhook data structure', 400);
     }
 
-    // Find review by RatingId/review_id/paymentId
+    // Validate RatingId/review_id before creating log (paymentId is optional fallback)
+    if (!actualData.RatingId && !actualData.review_id && !actualData.paymentId) {
+      return errorResponse(res, 'Rating ID, Review ID or Payment ID is required', 400);
+    }
+
+    // 2. Find customer by CustomerFullName or BusinessId + EmployeeId
+    let userId = null;
+    let customerId = null;
+
+    // First try to find by CustomerFullName (exact match)
+    if (actualData.CustomerFullName) {
+      const existingCustomerByName = await prisma.customers.findFirst({
+        where: {
+          customerFullName: actualData.CustomerFullName
+        },
+        select: {
+          id: true,
+          businessId: true,
+          employeeId: true,
+          userId: true,
+          customerFullName: true
+        }
+      });
+
+      if (existingCustomerByName) {
+        customerId = existingCustomerByName.id;
+        userId = existingCustomerByName.userId;
+      }
+    }
+
+    // If not found by name, try by BusinessId AND EmployeeId
+    if (!customerId && actualData.BusinessId && actualData.EmployeeId) {
+      console.log('Inside', actualData.BusinessId, actualData.EmployeeId);
+      const existingCustomer = await prisma.customers.findFirst({
+        where: {
+          AND: [
+            { businessId: parseInt(actualData.BusinessId) },
+            { employeeId: parseInt(actualData.EmployeeId) }
+          ]
+        },
+        select: {
+          id: true,
+          businessId: true,
+          employeeId: true,
+          userId: true
+        }
+      });
+      console.log('existingCustomer', existingCustomer);
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+        userId = existingCustomer.userId;
+      }
+    }
+
+    // 3. Find review by RatingId, review_id OR paymentId (payment webhook ID)
     let existingReview = null;
     let reviewId = null;
 
+    // Priority 1: If RatingId is provided, use it
     if (actualData.RatingId) {
       existingReview = await prisma.review.findUnique({
         where: { id: actualData.RatingId },
-        select: { id: true, customerId: true, userId: true },
+        select: { id: true, customerId: true, userId: true }
       });
-      if (existingReview) reviewId = existingReview.id;
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
     }
 
+    // Priority 2: If review_id is provided and RatingId not found, use it
     if (!existingReview && actualData.review_id) {
       existingReview = await prisma.review.findUnique({
         where: { id: actualData.review_id },
-        select: { id: true, customerId: true, userId: true },
+        select: { id: true, customerId: true, userId: true }
       });
-      if (existingReview) reviewId = existingReview.id;
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
     }
 
+    // Priority 3: If paymentId (payment webhook ID) is provided and RatingId/review_id not found, find review by paymentWebhookId
     if (!existingReview && actualData.paymentId) {
       existingReview = await prisma.review.findFirst({
         where: { paymentWebhookId: actualData.paymentId },
-        select: { id: true, customerId: true, userId: true },
+        select: { id: true, customerId: true, userId: true }
       });
-      if (existingReview) reviewId = existingReview.id;
+      
+      if (existingReview) {
+        reviewId = existingReview.id;
+        // Update customerId and userId from review if not already set
+        if (!customerId && existingReview.customerId) {
+          customerId = existingReview.customerId;
+        }
+        if (!userId && existingReview.userId) {
+          userId = existingReview.userId;
+        }
+      }
     }
 
+    // Validate that review was found
     if (!existingReview) {
-      await prisma.webhookLog.update({
-        where: { id: webhookLog.id },
-        data: { status: 'ignored', meta: { reason: 'review_not_found' } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'review_not_found' });
+      const errorMsg = actualData.RatingId || actualData.review_id || actualData.paymentId
+        ? 'Invalid Rating ID, Review ID or Payment ID - review not found'
+        : 'Either Rating ID, Review ID or Payment ID is required';
+      return errorResponse(res, errorMsg, 404);
     }
 
-    const userId = existingReview.userId;
-
-    // Subscription gate (queue if inactive)
+    // Check if user has active subscription - block rating processing if subscription is not active
     if (userId) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -381,263 +427,337 @@ const handleRatingWebhook = async (req, res) => {
           id: true,
           subscriptionStatus: true,
           subscriptionExpirationDate: true,
-          role: true,
-        },
+          role: true
+        }
       });
 
-      if (!isSubscriptionActive(user)) {
-        await prisma.webhookLog.update({
-          where: { id: webhookLog.id },
-          data: {
-            status: 'queued',
-            meta: { reason: 'subscription_inactive', userId, reviewId },
-          },
-        }).catch(() => null);
+      if (user && user.role !== 'admin') {
+        const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+        
+        // Block if subscription is not active
+        if (!subscriptionStatus || 
+            subscriptionStatus === 'pending' || 
+            subscriptionStatus === 'canceled' || 
+            subscriptionStatus === 'inactive' ||
+            subscriptionStatus === 'expired') {
+          return errorResponse(res, 'Active subscription required. Rating cannot be processed without an active subscription.', 403);
+        }
 
-        return res.status(200).json({ success: true, received: true, queued: true });
+        // Check expiration date
+        if (user.subscriptionExpirationDate) {
+          const now = new Date();
+          const expirationDate = new Date(user.subscriptionExpirationDate);
+          if (expirationDate < now) {
+            return errorResponse(res, 'Subscription expired. Rating cannot be processed. Please renew subscription to continue.', 403);
+          }
+        }
       }
     }
 
-    // Update review
+    // 4. Store rating data in Review table (UPDATE existing review)
     if (actualData.Rating && reviewId) {
-      await prisma.review.update({
-        where: { id: reviewId },
+      console.log('Inside', customerId, actualData.Rating, 'Updating review ID:', reviewId);
+      const review = await prisma.review.update({
+        where: { id: reviewId }, // Use reviewId (already found from RatingId or paymentId)
         data: {
           rating: parseInt(actualData.Rating) || 0,
           message: actualData.Comment || actualData.Feedback || '',
-          status: 'received',
+          status: 'received', // received, processed, responded
           whatsappMessageId: actualData.WhatsappMessageId || null,
-          messageStatus: 'received',
-        },
+          messageStatus: 'received' // sent, delivered, read, failed
+        }
       });
+      reviewId = review.id;
     }
 
-    await prisma.webhookLog.update({
-      where: { id: webhookLog.id },
-      data: { status: 'processed', meta: { reviewId, userId } },
-    }).catch(() => null);
+    return successResponse(res, {
+      CustomerFullName: actualData.CustomerFullName || null,
+      BusinessId: actualData.BusinessId ? parseInt(actualData.BusinessId) : null,
+      EmployeeId: actualData.EmployeeId ? parseInt(actualData.EmployeeId) : null,
+      Rating: actualData.Rating ? parseInt(actualData.Rating) : null,
+      Comment: actualData.Comment || null,
+      Feedback: actualData.Feedback || null,
+      review_id: reviewId,
+      customerId: customerId,
+      userId: userId,
+      ratingStored: reviewId ? true : false,
+      message: 'Rating webhook processed successfully'
+    }, 'Rating webhook processed successfully', 201);
 
-    return res.status(200).json({ success: true, received: true, processed: true, review_id: reviewId });
   } catch (error) {
     console.error('Rating webhook error:', error);
-
-    await prisma.webhookLog.update({
-      where: { id: webhookLog.id },
-      data: { status: 'failed', meta: { reason: 'exception', error: String(error?.message || error) } },
-    }).catch(() => null);
-
-    return res.status(200).json({ success: true, received: true, queued: true });
+    return errorResponse(res, 'Failed to process rating webhook', 500);
   }
 };
 
-// Handle payment checkout webhook - store logs always, process only when active
+// Handle payment checkout webhook - store data in both WebhookPaymentLog and PaymentWebhook tables
 const handlePaymentCheckoutWebhook = async (req, res) => {
-  const webhookData = req.body;
-  const actualData = webhookData;
-
-  // Always create raw log FIRST
-  let paymentLog = null;
   try {
-    paymentLog = await prisma.webhookPaymentLog.create({
-      data: {
-        data: webhookData,
-        type: 'payment_checkout',
-        createdDate: new Date(),
-      },
-    });
-  } catch (e) {
-    console.error('❌ Failed to write webhookPaymentLog:', e);
-    return res.status(200).json({ success: true, received: true });
-  }
+    const webhookData = req.body;
 
-  try {
+    // Extract actual data - webhookData is the actual data itself
+    const actualData = webhookData;
+
     if (!actualData) {
-      await prisma.webhookPaymentLog.update({
-        where: { id: paymentLog.id },
-        data: { meta: { status: 'ignored', reason: 'invalid_payload' } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'invalid_payload' });
+      return errorResponse(res, 'Invalid webhook data structure', 400);
     }
 
-    // Resolve userId early (BusinessName first)
+    // FIRST: Find userId to check subscription BEFORE storing any data
     let userId = null;
     let customerId = null;
 
-    let userFromBusiness = null;
+    // Try to find user by BusinessName first (if provided) to check subscription immediately
     if (actualData.BusinessName) {
-      userFromBusiness = await prisma.user.findFirst({
-        where: { businessName: actualData.BusinessName },
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          businessName: actualData.BusinessName
+        },
         select: {
           id: true,
           subscriptionStatus: true,
           subscriptionExpirationDate: true,
-          role: true,
-        },
+          role: true
+        }
       });
-      if (userFromBusiness) userId = userFromBusiness.id;
+
+      if (existingUser) {
+        userId = existingUser.id;
+        
+        // Check subscription immediately for this user BEFORE storing any data
+        if (existingUser.role !== 'admin') {
+          const subscriptionStatus = existingUser.subscriptionStatus?.toLowerCase();
+          
+          // Block if subscription is not active - return early, NO data will be stored
+          if (!subscriptionStatus || 
+              subscriptionStatus === 'pending' || 
+              subscriptionStatus === 'canceled' || 
+              subscriptionStatus === 'inactive' ||
+              subscriptionStatus === 'expired') {
+            return errorResponse(res, `Active subscription required. Business '${actualData.BusinessName}' does not have an active subscription. Payment webhook cannot be processed.`, 403);
+          }
+
+          // Check expiration date - return early if expired, NO data will be stored
+          if (existingUser.subscriptionExpirationDate) {
+            const now = new Date();
+            const expirationDate = new Date(existingUser.subscriptionExpirationDate);
+            if (expirationDate < now) {
+              return errorResponse(res, `Subscription expired. Business '${actualData.BusinessName}' subscription has expired. Payment webhook cannot be processed. Please renew to continue.`, 403);
+            }
+          }
+        }
+      }
     }
 
-    // CustomerPhone is required to link payment → customer
+    // MANDATORY: Find customer ONLY by CustomerPhone - Payment will be stored ONLY if phone matches
+    // CustomerPhone is REQUIRED and must match exactly in customers table
     if (!actualData.CustomerPhone) {
-      await prisma.webhookPaymentLog.update({
-        where: { id: paymentLog.id },
-        data: { meta: { status: 'ignored', reason: 'missing_customer_phone', userId } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'missing_customer_phone' });
+      return errorResponse(res, 'CustomerPhone is required. Cannot process payment webhook without customer phone number.', 400);
     }
 
     const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
-
+    
+    // Find customer ONLY by phone number - no fallback searches
     const existingCustomerByPhone = await prisma.customers.findFirst({
-      where: { customerPhone: formattedPhone },
+      where: {
+        customerPhone: formattedPhone
+      },
       select: {
         id: true,
+        businessId: true,
+        employeeId: true,
         userId: true,
-      },
+        customerFullName: true,
+        customerPhone: true
+      }
     });
 
+    // If customer not found by phone, REJECT webhook - NO payment data will be stored
     if (!existingCustomerByPhone) {
-      await prisma.webhookPaymentLog.update({
-        where: { id: paymentLog.id },
-        data: { meta: { status: 'ignored', reason: 'customer_not_found_by_phone', formattedPhone, userId } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'customer_not_found_by_phone' });
+      return errorResponse(res, `Customer not found. Payment webhook rejected because CustomerPhone '${actualData.CustomerPhone}' (formatted: '${formattedPhone}') does not exist in customers table. Payment will not be stored.`, 404);
     }
 
+    // Customer found by phone - proceed with payment storage
     customerId = existingCustomerByPhone.id;
-    if (!userId) userId = existingCustomerByPhone.userId;
-
     if (!userId) {
-      await prisma.webhookPaymentLog.update({
-        where: { id: paymentLog.id },
-        data: { meta: { status: 'ignored', reason: 'user_not_found', customerId } },
-      }).catch(() => null);
-
-      return res.status(200).json({ success: true, received: true, reason: 'user_not_found' });
+      userId = existingCustomerByPhone.userId;
     }
 
-    // Final subscription check (QUEUE if inactive)
+    // If still no userId found, reject the webhook - NO data will be stored
+    if (!userId) {
+      return errorResponse(res, 'User not found. Cannot process payment webhook without valid user.', 404);
+    }
+
+    // MANDATORY FINAL subscription check - ALWAYS verify subscription for the userId that will be used
+    // This ensures subscription is checked even if userId changed during customer lookup
+    // OR if userId was found from customer lookup and BusinessName check was skipped
     const finalUserCheck = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
         subscriptionStatus: true,
         subscriptionExpirationDate: true,
-        role: true,
-        phoneNumber: true,
-        businessName: true,
-        businessType: true,
-        whatsappNumber: true,
-        stripeSubscriptionId: true,
-        email: true,
-      },
+        role: true
+      }
     });
 
-    if (!finalUserCheck || !isSubscriptionActive(finalUserCheck)) {
-      await prisma.webhookPaymentLog.update({
-        where: { id: paymentLog.id },
-        data: { meta: { status: 'queued', reason: 'subscription_inactive', userId, customerId } },
-      }).catch(() => null);
-
-      // ALWAYS 200
-      return res.status(200).json({ success: true, received: true, queued: true, reason: 'subscription_inactive' });
+    if (!finalUserCheck) {
+      return errorResponse(res, 'User not found. Cannot process payment webhook without valid user.', 404);
     }
 
-    // ACTIVE → continue with your existing payment flow (unchanged core)
-    // 1) Determine revenuePaymentStatus + previousStatus
-    let revenuePaymentStatus = null;
-    let previousStatus = null;
+    // Block if user is not admin and subscription is not active - return early, NO data will be stored
+    if (finalUserCheck.role !== 'admin') {
+      const subscriptionStatus = finalUserCheck.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active - return early, NO data will be stored
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, 'Active subscription required. Payment cannot be processed without an active subscription.', 403);
+      }
 
-    const customerUser = await prisma.customerUser.findFirst({
-      where: { customerId: customerId },
-      select: { status: true },
-    });
-
-    if (customerUser && customerUser.status) {
-      previousStatus = customerUser.status;
-      if (customerUser.status === 'recovered') revenuePaymentStatus = 'recovered';
-      else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
-        revenuePaymentStatus = 'recovered';
+      // Check expiration date - return early if expired, NO data will be stored
+      if (finalUserCheck.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(finalUserCheck.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.', 403);
+        }
       }
     }
 
-    // 2) Store structured PaymentWebhook
-    const paymentWebhook = await prisma.paymentWebhook.create({
+    // NOW store in WebhookPaymentLog table (raw log data) - only AFTER subscription check passes
+    // If subscription check fails, function returns early and this code never executes
+    const paymentLog = await prisma.webhookPaymentLog.create({
       data: {
-        total: parseFloat(actualData.Total) || 0.0,
-        totalWithoutVAT: parseFloat(actualData.TotalWithoutVAT) || 0.0,
-        totalVAT: parseFloat(actualData.TotalVAT) || 0.0,
-        employeeId: parseInt(actualData.EmployeeId) || null,
-        businessId: parseInt(actualData.BusinessId) || null,
-        customerId: customerId,
-        userId: userId,
-        paymentDate: new Date(),
-        status: 'success',
-        customerOldStatus: previousStatus || null,
-        revenuePaymentStatus: revenuePaymentStatus,
-      },
+        data: webhookData,
+        type: 'payment_checkout',
+        createdDate: new Date()
+      }
     });
 
-    // 3) Update CustomerUser status + logs (as you had)
+    // 4. Get customer status from CustomerUser table before creating PaymentWebhook
+    // Determine revenuePaymentStatus based on current status and what it will become after payment
+    let revenuePaymentStatus = null;
+    let previousStatus = null;
+    if (customerId) {
+      const customerUser = await prisma.customerUser.findFirst({
+        where: {
+          customerId: customerId
+        },
+        select: {
+          status: true
+        }
+      });
+
+      if (customerUser && customerUser.status) {
+        previousStatus = customerUser.status;
+        
+        // If customer is already recovered, payment is from recovered customer
+        if (customerUser.status === 'recovered') {
+          revenuePaymentStatus = 'recovered';
+        }
+        // If customer is lost/at_risk/risk, this payment will RECOVER them
+        // So set revenuePaymentStatus = 'recovered' (this payment is recovery revenue)
+        else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
+          revenuePaymentStatus = 'recovered'; // This payment recovers the customer
+        }
+        // For other statuses (new, active), leave as null
+      }
+    }
+
+    // 5. Store structured data in PaymentWebhook table with userId and customerId
+    const paymentWebhook = await prisma.paymentWebhook.create({
+      data: {
+        total: parseFloat(actualData.Total) || 0.00,
+        totalWithoutVAT: parseFloat(actualData.TotalWithoutVAT) || 0.00,
+        totalVAT: parseFloat(actualData.TotalVAT) || 0.00,
+        employeeId: parseInt(actualData.EmployeeId) || null,
+        businessId: parseInt(actualData.BusinessId) || null,
+        customerId: customerId, // Reference to Customers table
+        userId: userId, // Reference to User table
+        paymentDate: new Date(),
+        status: 'success',
+        customerOldStatus: previousStatus || null, // Previous customer status before payment
+        revenuePaymentStatus: revenuePaymentStatus // Set based on CustomerUser status
+      }
+    });
+
+
+    // Update CustomerUser status after payment
+    // Handles: 'new' to 'active', 'lost'/'at_risk' to 'recovered'
     if (customerId && userId) {
       try {
+        // Check if CustomerUser record exists
         const existingCustomerUser = await prisma.customerUser.findFirst({
-          where: { customerId, userId },
-          select: { id: true, status: true },
+          where: {
+            customerId: customerId,
+            userId: userId
+          },
+          select: {
+            id: true,
+            status: true
+          }
         });
 
         if (existingCustomerUser) {
+          // Use previousStatus from earlier query, or get from existingCustomerUser if not set
           const currentPreviousStatus = previousStatus || existingCustomerUser.status;
           let newStatus = null;
           let statusChangeReason = null;
 
+          // Handle lost/at_risk to recovered
           if (currentPreviousStatus === 'lost' || currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk') {
             newStatus = 'recovered';
             statusChangeReason = `Payment received after being ${currentPreviousStatus === 'lost' ? 'lost' : 'at risk'}`;
-          } else if (currentPreviousStatus === 'new') {
+          }
+          // Handle new to active
+          else if (currentPreviousStatus === 'new') {
             newStatus = 'active';
             statusChangeReason = 'First payment received';
           }
 
+          // Update status if there's a change
           if (newStatus) {
             await prisma.customerUser.update({
-              where: { id: existingCustomerUser.id },
-              data: { status: newStatus },
+              where: {
+                id: existingCustomerUser.id
+              },
+              data: {
+                status: newStatus
+              }
             });
 
+            // Create CustomerStatusLog for status transition
             await prisma.customerStatusLog.create({
               data: {
-                customerId,
-                userId,
-                oldStatus:
-                  currentPreviousStatus === 'lost'
-                    ? 'Lost'
-                    : currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk'
-                    ? 'Risk'
-                    : 'New',
+                customerId: customerId,
+                userId: userId,
+                oldStatus: currentPreviousStatus === 'lost' ? 'Lost' : (currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk' ? 'Risk' : 'New'),
                 newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
-                reason: statusChangeReason,
-              },
+                reason: statusChangeReason
+              }
             });
 
-            // Send recovered notification (your logic, unchanged)
+            console.log(`✅ Customer status updated from '${currentPreviousStatus}' to '${newStatus}' after payment - Customer ID: ${customerId}`);
+
+            // Send recovered customer notification if status changed to recovered
             if (newStatus === 'recovered') {
               try {
                 const businessOwner = await prisma.user.findUnique({
                   where: { id: userId },
-                  select: { phoneNumber: true, businessName: true, businessType: true, whatsappNumber: true },
+                  select: { phoneNumber: true, businessName: true, businessType: true, whatsappNumber: true }
                 });
 
                 if (businessOwner && (businessOwner.phoneNumber || businessOwner.whatsappNumber)) {
                   const customer = await prisma.customers.findUnique({
                     where: { id: customerId },
-                    select: { customerFullName: true, customerPhone: true, selectedServices: true },
+                    select: { customerFullName: true, customerPhone: true, selectedServices: true }
                   });
 
                   if (customer) {
+                    // Use createWhatsappMessageRecord to ensure subscription check before sending notification
                     const whatsappMessageRecord = await createWhatsappMessageRecord(
                       customer.customerFullName,
                       customer.customerPhone,
@@ -645,9 +765,10 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                       userId
                     );
 
+                    // Only trigger N8N notification if subscription check passed (record was created)
                     if (whatsappMessageRecord) {
                       const n8nService = new N8nMessageService();
-                      await n8nService.triggerRecoveredCustomerNotification({
+                      const webhookParams = {
                         customerName: customer.customerFullName,
                         customerPhone: customer.customerPhone,
                         businessName: businessOwner.businessName || 'Business',
@@ -656,278 +777,433 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                         businessOwnerPhone: businessOwner.phoneNumber,
                         lastVisitDate: new Date().toISOString().split('T')[0],
                         whatsappPhone: customer.customerPhone,
-                        previousStatus: currentPreviousStatus,
-                      });
+                        previousStatus: currentPreviousStatus
+                      };
+
+                      await n8nService.triggerRecoveredCustomerNotification(webhookParams);
+                      console.log(`✅ N8n recovered customer notification triggered for: ${customer.customerFullName} (${currentPreviousStatus} → recovered)`);
+                    } else {
+                      console.log(`⚠️ Recovered customer notification not sent - Subscription check failed for user ${userId}`);
                     }
                   }
                 }
               } catch (notificationError) {
                 console.error('❌ Error triggering n8n recovered customer notification:', notificationError);
+                // Don't fail the webhook if notification fails
               }
             }
           }
         }
       } catch (statusUpdateError) {
         console.error('❌ Error updating customer status after payment:', statusUpdateError);
+        // Don't fail the webhook if status update fails
       }
     }
 
-    // 4) Review request flow (your logic stays, but do NOT return 4xx anywhere)
-    // (You already return successResponse 200 when subscription blocks — good.)
-    try {
-      const customer = await prisma.customers.findUnique({
-        where: { id: customerId },
-        include: {
-          user: {
-            select: {
-              businessName: true,
-              businessType: true,
-              phoneNumber: true,
-              whatsappNumber: true,
-            },
-          },
-        },
-      });
-
-      if (customer) {
-        const n8nService = new N8nMessageService();
-
-        const previousPayments = await prisma.paymentWebhook.count({
-          where: { customerId: customerId },
+    // If customerId is found, trigger n8n review request
+    if (customerId) {
+      try {
+        // Get customer details for n8n webhook
+        const customer = await prisma.customers.findUnique({
+          where: { id: customerId },
+          include: {
+            user: {
+              select: {
+                businessName: true,
+                businessType: true,
+                phoneNumber: true,
+                whatsappNumber: true
+              }
+            }
+          }
         });
 
-        const customerStatus = previousPayments <= 1 ? 'new' : 'active';
 
-        const webhookParams = {
-          customer_name: customer.customerFullName,
-          customer_phone: customer.customerPhone,
-          business_name: customer.user?.businessName || 'Business',
-          business_type: customer.user?.businessType || 'general',
-          customer_service: customer.selectedServices || '',
-          business_owner_phone: customer.user?.phoneNumber,
-          last_visit_date: new Date().toISOString().split('T')[0],
-          whatsapp_phone: customer.customerPhone,
-          customer_status: customerStatus,
-        };
+        if (customer) {
+          const n8nService = new N8nMessageService();
+          
+          // Determine if customer is new or active based on previous orders/payments
+          const previousPayments = await prisma.paymentWebhook.count({
+            where: {
+              customerId: customerId,
+              createdAt: {
+                lt: new Date()
+              }
+            }
+          });
 
-        const reviewRecord = await prisma.review.create({
-          data: {
-            customerId: customerId,
-            userId: userId,
-            rating: 0,
-            message: `Rating request sent via N8N after payment`,
-            status: 'sent',
-            whatsappMessageId: null,
-            messageStatus: 'pending',
-            paymentWebhookId: paymentWebhook.id,
-          },
-        });
+          const customerStatus = previousPayments === 0 ? 'new' : 'active';
 
-        const whatsappMessageRecord = await createWhatsappMessageRecord(
-          customer.customerFullName,
-          customer.customerPhone,
-          'review_request',
-          userId
-        );
+          const webhookParams = {
+            customer_name: customer.customerFullName,
+            customer_phone: customer.customerPhone,
+            business_name: customer.user?.businessName || 'Business',
+            business_type: customer.user?.businessType || 'general',
+            customer_service: customer.selectedServices || '',
+            business_owner_phone: customer.user?.phoneNumber,
+            last_visit_date: new Date().toISOString().split('T')[0],
+            whatsapp_phone: customer.customerPhone,
+            customer_status: customerStatus
+          };
 
-        if (whatsappMessageRecord) {
-          // Stripe meter reporting stays (your existing logic can remain)
-          try {
-            if (finalUserCheck && finalUserCheck.stripeSubscriptionId) {
-              const subscription = await stripe.subscriptions.retrieve(finalUserCheck.stripeSubscriptionId, {
-                expand: ['items.data.price.product'],
-              });
+          // Check if user has active subscription before sending review request WhatsApp message
+          if (userId) {
+            const user = await prisma.user.findUnique({
+              where: { id: userId },
+              select: {
+                id: true,
+                subscriptionStatus: true,
+                subscriptionExpirationDate: true,
+                role: true
+              }
+            });
 
-              const meteredItem = subscription.items.data.find(
-                (item) => item.price?.recurring?.usage_type === 'metered'
-              );
+            if (user && user.role !== 'admin') {
+              const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+              
+              // Block if subscription is not active
+              if (!subscriptionStatus || 
+                  subscriptionStatus === 'pending' || 
+                  subscriptionStatus === 'canceled' || 
+                  subscriptionStatus === 'inactive' ||
+                  subscriptionStatus === 'expired') {
+                console.error(`❌ Subscription check failed for user ${userId} - Status: ${subscriptionStatus} - Review request WhatsApp message NOT sent`);
+                // Don't create review record or send message if subscription is not active
+                return successResponse(res, {
+                  webhookId: paymentLog.id,
+                  paymentId: paymentWebhook.id,
+                  message: 'Payment processed successfully, but review request not sent due to inactive subscription'
+                }, 'Payment processed, but review request blocked due to inactive subscription', 200);
+              }
 
-              if (meteredItem) {
-                let eventName = 'whatsapp_message';
-
-                if (meteredItem.price?.metadata?.event_name) eventName = meteredItem.price.metadata.event_name;
-                else if (meteredItem.price?.product && typeof meteredItem.price.product === 'object') {
-                  if (meteredItem.price.product.metadata?.event_name) eventName = meteredItem.price.product.metadata.event_name;
-                }
-
-                const stripeCustomerId = subscription.customer;
-                const stripeCustomerIdStr = typeof stripeCustomerId === 'string' ? stripeCustomerId : stripeCustomerId?.id;
-
-                if (stripeCustomerIdStr) {
-                  await stripe.billing.meterEvents.create({
-                    event_name: eventName,
-                    payload: {
-                      stripe_customer_id: stripeCustomerIdStr,
-                      subscription_item: meteredItem.id,
-                      value: 1,
-                      timestamp: Math.floor(Date.now() / 1000),
-                    },
-                  });
+              // Check expiration date
+              if (user.subscriptionExpirationDate) {
+                const now = new Date();
+                const expirationDate = new Date(user.subscriptionExpirationDate);
+                if (expirationDate < now) {
+                  console.error(`❌ Subscription expired for user ${userId} - Review request WhatsApp message NOT sent`);
+                  return successResponse(res, {
+                    webhookId: paymentLog.id,
+                    paymentId: paymentWebhook.id,
+                    message: 'Payment processed successfully, but review request not sent due to expired subscription'
+                  }, 'Payment processed, but review request blocked due to expired subscription', 200);
                 }
               }
             }
-          } catch (stripeError) {
-            console.error('❌ Error reporting usage to Stripe (payment webhook):', stripeError.message);
           }
 
-          await n8nService.triggerReviewRequest({
-            ...webhookParams,
-            review_id: reviewRecord.id,
-            payment_webhook_id: paymentWebhook.id,
-          });
+          // Create review record first, then trigger N8N with review_id
+          // Note: WhatsApp messaging is handled by N8N only
+          try {
+            const reviewRecord = await prisma.review.create({
+              data: {
+                customerId: customerId,
+                userId: userId,
+                rating: 0, // Placeholder - will be updated when customer responds
+                message: `Rating request sent via N8N after payment`,
+                status: 'sent', // sent, received, responded
+                whatsappMessageId: null, // Will be updated by N8N if needed
+                messageStatus: 'pending', // pending, sent, delivered, read
+                paymentWebhookId: paymentWebhook.id // Link to payment webhook
+              }
+            });
+            
+            console.log(`✅ Review record created with ID: ${reviewRecord.id}`);
+            
+            // Store WhatsApp message record BEFORE triggering N8N
+            // If subscription check fails, createWhatsappMessageRecord will return null
+            const whatsappMessageRecord = await createWhatsappMessageRecord(
+              customer.customerFullName,
+              customer.customerPhone,
+              'review_request',
+              userId
+            );
+
+            // Only proceed with N8N trigger and Stripe reporting if WhatsApp message record was created
+            // (which means subscription check passed)
+            if (!whatsappMessageRecord) {
+              console.log(`⚠️ Review request WhatsApp message not sent - Subscription check failed for user ${userId}`);
+              // Don't trigger N8N or report to Stripe if subscription check failed
+              return successResponse(res, {
+                webhookId: paymentLog.id,
+                paymentId: paymentWebhook.id,
+                message: 'Payment processed successfully, but review request not sent due to inactive subscription'
+              }, 'Payment processed, but review request blocked due to inactive subscription', 200);
+            }
+            
+            // Report usage to Stripe meter (real-time reporting when payment received)
+            // Using same logic as reportUsageForMonth cron job
+            try {
+              if (userId) {
+                const userWithStripe = await prisma.user.findUnique({
+                  where: { id: userId },
+                  select: { 
+                    id: true, 
+                    email: true, 
+                    stripeSubscriptionId: true
+                  }
+                });
+
+                if (userWithStripe && userWithStripe.stripeSubscriptionId) {
+                  // Get subscription with expanded price and product (same as cron job)
+                  const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId, {
+                    expand: ['items.data.price.product']
+                  });
+                  
+                  // Find the metered subscription item (WhatsApp messages)
+                  const meteredItem = subscription.items.data.find(item => 
+                    item.price?.recurring?.usage_type === 'metered'
+                  );
+
+                  if (!meteredItem) {
+                    console.log(`⚠️  No metered subscription item found for user ${userWithStripe.email} - skipping`);
+                  } else {
+                    // Get event name dynamically from price metadata, product metadata, or use default
+                    // Priority: price.metadata.event_name > product.metadata.event_name > default "whatsapp_message"
+                    let eventName = "whatsapp_message"; // Default fallback
+                    
+                    // Try to get event name from price metadata
+                    if (meteredItem.price?.metadata?.event_name) {
+                      eventName = meteredItem.price.metadata.event_name;
+                      console.log(`📋 Event name from price metadata: ${eventName}`);
+                    } 
+                    // Try to get event name from product metadata
+                    else if (meteredItem.price?.product) {
+                      let product = meteredItem.price.product;
+                      if (typeof product === 'string') {
+                        try {
+                          product = await stripe.products.retrieve(product);
+                        } catch (error) {
+                          console.error(`❌ Error fetching product for event name:`, error.message);
+                        }
+                      }
+                      if (product && typeof product === 'object' && product.metadata?.event_name) {
+                        eventName = product.metadata.event_name;
+                        console.log(`📋 Event name from product metadata: ${eventName}`);
+                      }
+                    }
+                    
+                    console.log(`📋 Using event name: ${eventName}`);
+
+                    // Get Stripe customer ID from subscription (same as cron job)
+                    const stripeCustomerId = subscription.customer;
+                    if (!stripeCustomerId) {
+                      console.error(`❌ No customer ID found in subscription for user ${userWithStripe.email}`);
+                    } else {
+                      // Extract customer ID if it's an object
+                      const customerId = typeof stripeCustomerId === 'string' 
+                        ? stripeCustomerId 
+                        : stripeCustomerId?.id;
+                      
+                      console.log(`📋 Stripe Customer ID: ${customerId}`);
+
+                      // Create meter event for real-time usage tracking (same as cron job)
+                      const usageEvent = await stripe.billing.meterEvents.create({
+                        event_name: eventName,
+                        payload: {
+                          stripe_customer_id: customerId,
+                          subscription_item: meteredItem.id,
+                          value: 1, // One unit per message
+                          timestamp: Math.floor(Date.now() / 1000) // Current timestamp
+                        }
+                      });
+
+                      console.log(`✅ Real-time usage reported to Stripe meter: ${eventName} for user ${userWithStripe.email} (payment webhook)`);
+                      console.log(`📋 Event ID: ${usageEvent.id}`);
+                    }
+                  }
+                }
+              }
+            } catch (stripeError) {
+              console.error('❌ Error reporting usage to Stripe (payment webhook):', stripeError.message);
+              // Don't fail the webhook if Stripe reporting fails
+            }
+            
+            // Trigger N8N with review_id - N8N will handle WhatsApp messaging
+            await n8nService.triggerReviewRequest({
+              ...webhookParams,
+              review_id: reviewRecord.id, // ✅ Pass review ID to n8n
+              payment_webhook_id: paymentWebhook.id // Also pass payment webhook ID
+            });
+            
+            console.log(`✅ Review record, whatsappMessage record created, Stripe usage reported and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
+          } catch (reviewError) {
+            console.error('❌ Error creating review record or triggering N8N:', reviewError);
+            // Don't fail webhook if review record creation or N8N fails
+          }
         }
+      } catch (webhookError) {
+        console.error('❌ Error triggering n8n review request after payment:', webhookError);
+        // Don't fail the webhook if n8n fails
       }
-    } catch (webhookError) {
-      console.error('❌ Error triggering n8n review request after payment:', webhookError);
     }
 
-    // Mark raw paymentLog meta as processed (optional)
-    await prisma.webhookPaymentLog.update({
-      where: { id: paymentLog.id },
-      data: { meta: { status: 'processed', userId, customerId, paymentWebhookId: paymentWebhook.id } },
-    }).catch(() => null);
-
-    // ALWAYS 200 to Calmark
-    return res.status(200).json({
-      success: true,
-      received: true,
-      processed: true,
+    return successResponse(res, {
       webhookId: paymentLog.id,
       paymentId: paymentWebhook.id,
-      userId,
-      customerId,
-    });
+      userId: userId,
+      customerId: customerId,
+      message: 'Payment checkout webhook received successfully',
+      data: actualData,
+      whatsappReviewSent: customerId ? true : false
+    }, 'Payment checkout webhook processed successfully', 201);
+
   } catch (error) {
     console.error('Payment checkout webhook error:', error);
-
-    await prisma.webhookPaymentLog.update({
-      where: { id: paymentLog.id },
-      data: { meta: { status: 'failed', reason: 'exception', error: String(error?.message || error) } },
-    }).catch(() => null);
-
-    // STILL 200
-    return res.status(200).json({ success: true, received: true, queued: true });
+    return errorResponse(res, 'Failed to process payment checkout webhook', 500);
   }
 };
 
-// ----- Admin endpoints (unchanged) -----
-
+// Get all webhook logs (admin only)
 const getAllWebhookLogs = async (req, res) => {
   try {
     const { type, status, page = 1, limit = 50 } = req.query;
+
     const skip = (page - 1) * limit;
 
+    // Build where clause
     const where = {};
     if (type) where.type = type;
     if (status) where.status = status;
 
+    // Get webhook logs with pagination
     const webhookLogs = await prisma.webhookLog.findMany({
       where,
       orderBy: { createdDate: 'desc' },
       skip: parseInt(skip),
-      take: parseInt(limit),
+      take: parseInt(limit)
     });
 
+    // Get total count
     const totalCount = await prisma.webhookLog.count({ where });
 
-    return successResponse(
-      res,
-      {
-        webhookLogs,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limit),
-        },
-      },
-      'Webhook logs retrieved successfully'
-    );
+    return successResponse(res, {
+      webhookLogs,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Webhook logs retrieved successfully');
+
   } catch (error) {
     console.error('Get webhook logs error:', error);
     return errorResponse(res, 'Failed to retrieve webhook logs', 500);
   }
 };
 
+// Get webhook log by ID
 const getWebhookLogById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const webhookLog = await prisma.webhookLog.findUnique({ where: { id } });
-    if (!webhookLog) return errorResponse(res, 'Webhook log not found', 404);
+    const webhookLog = await prisma.webhookLog.findUnique({
+      where: { id }
+    });
+
+    if (!webhookLog) {
+      return errorResponse(res, 'Webhook log not found', 404);
+    }
 
     return successResponse(res, webhookLog, 'Webhook log retrieved successfully');
+
   } catch (error) {
     console.error('Get webhook log by ID error:', error);
     return errorResponse(res, 'Failed to retrieve webhook log', 500);
   }
 };
 
+// Update webhook log status
 const updateWebhookLogStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!status || !['pending', 'processed', 'failed', 'received', 'queued', 'ignored'].includes(status)) {
-      return errorResponse(res, 'Invalid status.', 400);
+    if (!status || !['pending', 'processed', 'failed'].includes(status)) {
+      return errorResponse(res, 'Invalid status. Must be pending, processed, or failed', 400);
     }
 
     const updatedWebhookLog = await prisma.webhookLog.update({
       where: { id },
-      data: { status },
+      data: { status }
     });
 
     return successResponse(res, updatedWebhookLog, 'Webhook log status updated successfully');
+
   } catch (error) {
     console.error('Update webhook log status error:', error);
     return errorResponse(res, 'Failed to update webhook log status', 500);
   }
 };
 
-// Payment webhooks endpoints (unchanged)
+// Get all payment webhooks
 const getAllPaymentWebhooks = async (req, res) => {
   try {
     const { userId, customerId, status, page = 1, limit = 50 } = req.query;
+
     const skip = (page - 1) * limit;
 
+    // Build where clause
     const where = {};
     if (userId) where.userId = userId;
     if (customerId) where.customerId = customerId;
     if (status) where.status = status;
 
+    // Get payment webhooks with pagination
     const paymentWebhooks = await prisma.paymentWebhook.findMany({
       where,
       include: {
-        customer: { select: { id: true, customerFullName: true, customerPhone: true, selectedServices: true } },
-        user: { select: { id: true, businessName: true, email: true, phoneNumber: true } },
-        appointment: { select: { id: true, customerFullName: true, startDate: true, endDate: true } },
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' },
       skip: parseInt(skip),
-      take: parseInt(limit),
+      take: parseInt(limit)
     });
 
+    // Get total count
     const totalCount = await prisma.paymentWebhook.count({ where });
 
-    return successResponse(
-      res,
-      {
-        paymentWebhooks,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limit),
-        },
-      },
-      'Payment webhooks retrieved successfully'
-    );
+    return successResponse(res, {
+      paymentWebhooks,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Payment webhooks retrieved successfully');
+
   } catch (error) {
     console.error('Get payment webhooks error:', error);
     return errorResponse(res, 'Failed to retrieve payment webhooks', 500);
   }
 };
 
+// Get payment webhook by ID
 const getPaymentWebhookById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -935,82 +1211,735 @@ const getPaymentWebhookById = async (req, res) => {
     const paymentWebhook = await prisma.paymentWebhook.findUnique({
       where: { id },
       include: {
-        customer: { select: { id: true, customerFullName: true, customerPhone: true, selectedServices: true, email: true } },
-        user: { select: { id: true, businessName: true, email: true, phoneNumber: true, whatsappNumber: true } },
-        appointment: { select: { id: true, customerFullName: true, startDate: true, endDate: true, duration: true, selectedServices: true } },
-      },
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true,
+            duration: true,
+            selectedServices: true
+          }
+        }
+      }
     });
 
-    if (!paymentWebhook) return errorResponse(res, 'Payment webhook not found', 404);
+    if (!paymentWebhook) {
+      return errorResponse(res, 'Payment webhook not found', 404);
+    }
 
     return successResponse(res, paymentWebhook, 'Payment webhook retrieved successfully');
+
   } catch (error) {
     console.error('Get payment webhook by ID error:', error);
     return errorResponse(res, 'Failed to retrieve payment webhook', 500);
   }
 };
 
+// Get payment webhooks by customer ID
 const getPaymentWebhooksByCustomerId = async (req, res) => {
   try {
     const { customerId } = req.params;
     const { page = 1, limit = 50, status } = req.query;
 
     const skip = (page - 1) * limit;
+
+    // Build where clause
     const where = { customerId };
     if (status) where.status = status;
 
+    // Get payment webhooks for this customer with pagination
     const paymentWebhooks = await prisma.paymentWebhook.findMany({
       where,
       include: {
-        user: { select: { id: true, businessName: true, email: true, phoneNumber: true, whatsappNumber: true } },
-        appointment: { select: { id: true, customerFullName: true, startDate: true, endDate: true, duration: true, selectedServices: true } },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            customerFullName: true,
+            startDate: true,
+            endDate: true,
+            duration: true,
+            selectedServices: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' },
       skip: parseInt(skip),
-      take: parseInt(limit),
+      take: parseInt(limit)
     });
 
+    // Get customer details
     const customer = await prisma.customers.findUnique({
       where: { id: customerId },
-      select: { id: true, customerFullName: true, customerPhone: true, selectedServices: true, email: true, createdAt: true, appointmentCount: true },
+      select: {
+        id: true,
+        customerFullName: true,
+        customerPhone: true,
+        selectedServices: true,
+        email: true,
+        createdAt: true,
+        appointmentCount: true
+      }
     });
 
-    if (!customer) return errorResponse(res, 'Customer not found', 404);
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
 
+    // Get total count
     const totalCount = await prisma.paymentWebhook.count({ where });
 
+    // Calculate total revenue for this customer
     const totalRevenue = await prisma.paymentWebhook.aggregate({
       where: { customerId },
       _sum: { total: true },
-      _count: { total: true },
+      _count: { total: true }
     });
 
-    return successResponse(
-      res,
-      {
-        customer,
-        paymentWebhooks,
-        summary: {
-          totalPayments: totalRevenue._count.total || 0,
-          totalRevenue: totalRevenue._sum.total || 0,
-        },
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limit),
-        },
+    return successResponse(res, {
+      customer,
+      paymentWebhooks,
+      summary: {
+        totalPayments: totalRevenue._count.total || 0,
+        totalRevenue: totalRevenue._sum.total || 0
       },
-      'Payment webhooks retrieved successfully by customer ID'
-    );
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Payment webhooks retrieved successfully by customer ID');
+
   } catch (error) {
     console.error('Get payment webhooks by customer ID error:', error);
     return errorResponse(res, 'Failed to retrieve payment webhooks', 500);
   }
 };
 
-// (השאר אצלך נשאר אותו דבר: appointments / whatsapp handlers / createWhatsappMessageWithValidation וכו’)
-// לא שיניתי אותם כי הבעיה המרכזית היא “inbound webhooks חייבים 200 תמיד”.
+// Get all appointments
+const getAllAppointments = async (req, res) => {
+  try {
+    const { userId, customerId, employeeId, page = 1, limit = 50 } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = {};
+    if (userId) where.userId = userId;
+    if (customerId) where.customerId = customerId;
+    if (employeeId) where.employeeId = parseInt(employeeId);
+
+    // Get appointments with pagination
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            status: true,
+            paymentDate: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get total count
+    const totalCount = await prisma.appointment.count({ where });
+
+    return successResponse(res, {
+      appointments,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Appointments retrieved successfully');
+
+  } catch (error) {
+    console.error('Get appointments error:', error);
+    return errorResponse(res, 'Failed to retrieve appointments', 500);
+  }
+};
+
+// Get appointment by ID
+const getAppointmentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true,
+            appointmentCount: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            totalWithoutVAT: true,
+            totalVAT: true,
+            status: true,
+            revenuePaymentStatus: true,
+            paymentDate: true,
+            createdAt: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    return successResponse(res, appointment, 'Appointment retrieved successfully');
+
+  } catch (error) {
+    console.error('Get appointment by ID error:', error);
+    return errorResponse(res, 'Failed to retrieve appointment', 500);
+  }
+};
+
+// Get appointments by customer ID
+const getAppointmentsByCustomerId = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { page = 1, limit = 50, userId } = req.query;
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where = { customerId };
+    if (userId) where.userId = userId;
+
+    // Get appointments for this customer with pagination
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phoneNumber: true,
+            whatsappNumber: true
+          }
+        },
+        payments: {
+          select: {
+            id: true,
+            total: true,
+            status: true,
+            revenuePaymentStatus: true,
+            paymentDate: true
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            rating: true,
+            message: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(skip),
+      take: parseInt(limit)
+    });
+
+    // Get customer details
+    const customer = await prisma.customers.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        customerFullName: true,
+        customerPhone: true,
+        selectedServices: true,
+        email: true,
+        createdAt: true,
+        appointmentCount: true
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Get total count
+    const totalCount = await prisma.appointment.count({ where });
+
+    // Calculate statistics
+    const totalAppointments = totalCount;
+    const appointmentsWithPayments = await prisma.appointment.count({
+      where: {
+        customerId,
+        payments: {
+          some: {}
+        }
+      }
+    });
+
+    return successResponse(res, {
+      customer,
+      appointments,
+      summary: {
+        totalAppointments,
+        appointmentsWithPayments,
+        appointmentsWithoutPayments: totalAppointments - appointmentsWithPayments
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    }, 'Appointments retrieved successfully by customer ID');
+
+  } catch (error) {
+    console.error('Get appointments by customer ID error:', error);
+    return errorResponse(res, 'Failed to retrieve appointments', 500);
+  }
+};
+
+
+
+// Handle incoming WhatsApp messages from Meta/Facebook
+const handleWhatsAppIncomingMessage = async (req, res) => {
+  try {
+    const webhookData = req.body;
+
+    const { PrismaClient } = require('@prisma/client');
+    const prisma = new PrismaClient();
+
+
+
+    // Check if it's a message webhook
+    if (webhookData.entry && webhookData.entry.length > 0) {
+      const entry = webhookData.entry[0];
+      const changes = entry.changes;
+
+      if (changes && changes.length > 0) {
+        const change = changes[0];
+        const value = change.value;
+
+        // Check for incoming messages
+        if (value.messages && value.messages.length > 0) {
+          for (const message of value.messages) {
+            const from = message.from; // Sender's phone number
+            const messageId = message.id;
+            const timestamp = message.timestamp;
+
+            // Extract message content based on type
+            let messageContent = '';
+            let messageType = message.type;
+
+            switch (messageType) {
+              case 'text':
+                messageContent = message.text.body;
+                break;
+              case 'button':
+                messageContent = message.button.text;
+                break;
+              case 'interactive':
+                if (message.interactive.type === 'button_reply') {
+                  // For rating buttons, use the button ID (e.g., rating_5) for easier processing
+                  const buttonId = message.interactive.button_reply.id;
+                  const buttonTitle = message.interactive.button_reply.title;
+                  messageContent = buttonId.startsWith('rating_') ? buttonId : buttonTitle;
+                } else if (message.interactive.type === 'list_reply') {
+                  messageContent = message.interactive.list_reply.title;
+                }
+                break;
+              default:
+                messageContent = `Unsupported message type: ${messageType}`;
+            }
+
+
+
+            // Try to find customer by phone number (try both with and without +)
+            let existingCustomer = await prisma.customers.findFirst({
+              where: {
+                customerPhone: from
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    businessName: true,
+                    firstName: true,
+                    lastName: true
+                  }
+                }
+              }
+            });
+
+            // If not found, try with + prefix
+            if (!existingCustomer) {
+              const phoneWithPlus = `+${from}`;
+              existingCustomer = await prisma.customers.findFirst({
+                where: {
+                  customerPhone: phoneWithPlus
+                },
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      businessName: true,
+                      firstName: true,
+                      lastName: true
+                    }
+                  }
+                }
+              });
+
+            }
+
+            if (existingCustomer) {
+
+
+              // Check if message content is a rating (1-5)
+              const rating = parseInt(messageContent);
+              if (rating >= 1 && rating <= 5) {
+
+                // Store rating in Review table
+                const newReview = await prisma.review.create({
+                  data: {
+                    rating: rating,
+                    message: `WhatsApp Rating: ${messageContent}`,
+                    customerId: existingCustomer.id,
+                    userId: existingCustomer.userId,
+                    whatsappMessageId: messageId,
+                    messageStatus: 'received'
+                  }
+                });
+
+
+              }
+
+              // Note: Conversation flows (at-risk, lost) removed - now handled by N8N only
+
+
+
+            }
+          }
+        }
+
+
+      }
+    }
+
+    // Always respond with 200 to acknowledge webhook
+    return res.status(200).json({ message: 'Webhook received successfully' });
+
+  } catch (error) {
+    console.error('❌ WhatsApp webhook error:', error);
+    return res.status(500).json({ error: 'Failed to process WhatsApp webhook' });
+  }
+};
+
+// Webhook verification for Meta/Facebook (required for webhook setup)
+const verifyWhatsAppWebhook = async (req, res) => {
+  try {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    // Meta/Facebook webhook verification token
+    const VERIFY_TOKEN = 'plusfive_webhook_token_2025';
+
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      return res.status(200).send(challenge);
+    } else {
+      return res.status(403).json({ error: 'Verification failed' });
+    }
+  } catch (error) {
+    console.error('❌ WhatsApp webhook verification error:', error);
+    return res.status(500).json({ error: 'Verification error' });
+  }
+};
+
+// Create WhatsApp message with validation (customer_id and user_id must match)
+const createWhatsappMessageWithValidation = async (req, res) => {
+  try {
+    const { customer_id, user_id, messageType, billStatus, billDate } = req.body;
+
+    // Validate required fields
+    if (!customer_id || !user_id || !messageType) {
+      return errorResponse(res, 'Missing required fields: customer_id, user_id, and messageType are required', 400);
+    }
+
+    // Validate that customer exists and belongs to the user
+    const customer = await prisma.customers.findUnique({
+      where: { id: customer_id },
+      select: {
+        id: true,
+        userId: true,
+        customerFullName: true,
+        customerPhone: true
+      }
+    });
+
+    if (!customer) {
+      return errorResponse(res, 'Customer not found', 404);
+    }
+
+    // Validate that customer belongs to the user
+    if (customer.userId !== user_id) {
+      return errorResponse(res, 'Customer does not belong to this user. Validation failed.', 403);
+    }
+
+    // Validate that user exists
+    const user = await prisma.user.findUnique({
+      where: { id: user_id },
+      select: {
+        id: true,
+        businessName: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check if user has active subscription before creating WhatsApp message record
+    if (user.role !== 'admin') {
+      const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+      
+      // Block if subscription is not active
+      if (!subscriptionStatus || 
+          subscriptionStatus === 'pending' || 
+          subscriptionStatus === 'canceled' || 
+          subscriptionStatus === 'inactive' ||
+          subscriptionStatus === 'expired') {
+        return errorResponse(res, 'Active subscription required. WhatsApp message cannot be created without an active subscription.', 403);
+      }
+
+      // Check expiration date
+      if (user.subscriptionExpirationDate) {
+        const now = new Date();
+        const expirationDate = new Date(user.subscriptionExpirationDate);
+        if (expirationDate < now) {
+          return errorResponse(res, 'Subscription expired. WhatsApp message cannot be created. Please renew subscription to continue.', 403);
+        }
+      }
+    }
+
+    // Create whatsappMessage record
+    const whatsappMessage = await prisma.whatsappMessage.create({
+      data: {
+        messageType: messageType,
+        messageDate: new Date(),
+        billStatus: billStatus || false,
+        billDate: billDate ? new Date(billDate) : null,
+        customerId: customer_id,
+        userId: user_id
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true
+          }
+        }
+      }
+    });
+
+    // Report usage to Stripe using meterEvents API (real-time reporting)
+    // Using same logic as reportUsageForMonth cron job
+    try {
+      const userWithStripe = await prisma.user.findUnique({
+        where: { id: user_id },
+        select: { 
+          id: true, 
+          email: true, 
+          stripeSubscriptionId: true
+        }
+      });
+
+      if (userWithStripe && userWithStripe.stripeSubscriptionId) {
+        // Get subscription with expanded price and product (same as cron job)
+        const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId, {
+          expand: ['items.data.price.product']
+        });
+        
+        // Find the metered subscription item (WhatsApp messages)
+        const meteredItem = subscription.items.data.find(item => 
+          item.price?.recurring?.usage_type === 'metered'
+        );
+
+        if (!meteredItem) {
+          console.log(`⚠️  No metered subscription item found for user ${userWithStripe.email} - skipping`);
+        } else {
+          // Get event name dynamically from price metadata, product metadata, or use default
+          // Priority: price.metadata.event_name > product.metadata.event_name > default "whatsapp_message"
+          let eventName = "whatsapp_message"; // Default fallback
+          
+          // Try to get event name from price metadata
+          if (meteredItem.price?.metadata?.event_name) {
+            eventName = meteredItem.price.metadata.event_name;
+            console.log(`📋 Event name from price metadata: ${eventName}`);
+          } 
+          // Try to get event name from product metadata
+          else if (meteredItem.price?.product) {
+            let product = meteredItem.price.product;
+            if (typeof product === 'string') {
+              try {
+                product = await stripe.products.retrieve(product);
+              } catch (error) {
+                console.error(`❌ Error fetching product for event name:`, error.message);
+              }
+            }
+            if (product && typeof product === 'object' && product.metadata?.event_name) {
+              eventName = product.metadata.event_name;
+              console.log(`📋 Event name from product metadata: ${eventName}`);
+            }
+          }
+          
+          console.log(`📋 Using event name: ${eventName}`);
+
+          // Get Stripe customer ID from subscription (same as cron job)
+          const stripeCustomerId = subscription.customer;
+          if (!stripeCustomerId) {
+            console.error(`❌ No customer ID found in subscription for user ${userWithStripe.email}`);
+          } else {
+            // Extract customer ID if it's an object
+            const customerId = typeof stripeCustomerId === 'string' 
+              ? stripeCustomerId 
+              : stripeCustomerId?.id;
+            
+            console.log(`📋 Stripe Customer ID: ${customerId}`);
+
+            // Create meter event for real-time usage tracking (same as cron job)
+            const usageEvent = await stripe.billing.meterEvents.create({
+              event_name: eventName,
+              payload: {
+                stripe_customer_id: customerId,
+                subscription_item: meteredItem.id,
+                value: 1, // One unit per message
+                timestamp: Math.floor(Date.now() / 1000) // Current timestamp
+              }
+            });
+
+            console.log(`✅ Real-time usage reported to Stripe meter: ${eventName} for user ${userWithStripe.email}`);
+            console.log(`📋 Event ID: ${usageEvent.id}`);
+          }
+        }
+      }
+    } catch (stripeError) {
+      console.error('❌ Error reporting usage to Stripe:', stripeError.message);
+      // Don't fail the request if Stripe reporting fails
+    }
+
+    return successResponse(res, {
+      whatsappMessage,
+      messageType: whatsappMessage.messageType, // Explicitly show stored messageType
+      validation: {
+        customer_id: customer_id,
+        user_id: user_id,
+        customer_belongs_to_user: true,
+        message: 'Validation successful - customer belongs to user',
+        messageType_stored: true
+      }
+    }, 'WhatsApp message stored successfully with validation', 201);
+
+  } catch (error) {
+    console.error('Error creating WhatsApp message with validation:', error);
+    return errorResponse(res, 'Failed to create WhatsApp message', 500);
+  }
+};
 
 module.exports = {
   handleAppointmentWebhook,
@@ -1019,15 +1948,14 @@ module.exports = {
   getAllWebhookLogs,
   getWebhookLogById,
   updateWebhookLogStatus,
-  // השאר אצלך נשאר כמו שהיה (אם אתה צריך שאחבר גם אותם מחדש תגיד)
-  handleWhatsAppIncomingMessage: require('./webhookController').handleWhatsAppIncomingMessage,
-  verifyWhatsAppWebhook: require('./webhookController').verifyWhatsAppWebhook,
+  handleWhatsAppIncomingMessage,
+  verifyWhatsAppWebhook,
   getAllPaymentWebhooks,
   getPaymentWebhookById,
   getPaymentWebhooksByCustomerId,
-  getAllAppointments: require('./webhookController').getAllAppointments,
-  getAppointmentById: require('./webhookController').getAppointmentById,
-  getAppointmentsByCustomerId: require('./webhookController').getAppointmentsByCustomerId,
-  createWhatsappMessageWithValidation: require('./webhookController').createWhatsappMessageWithValidation,
+  getAllAppointments,
+  getAppointmentById,
+  getAppointmentsByCustomerId,
+  createWhatsappMessageWithValidation
 };
 
