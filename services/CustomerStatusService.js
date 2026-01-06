@@ -21,7 +21,7 @@ class CustomerStatusService {
         // Always use production thresholds (day-based) regardless of test mode
         // Test mode only affects cron schedule frequency in CronJobService
         // ADBP (Average Days Between Payments) - Default value when no payment history
-        this.ADBP_DEFAULT = parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 30);
+        this.ADBP_DEFAULT = parseNumber(process.env.AT_RISK_DEFAULT_DAYS, 45);
         // BUFFER - Constant buffer value for both RISK and LOST calculations
         this.BUFFER = parseNumber(process.env.AT_RISK_BUFFER_DAYS, 5);
 
