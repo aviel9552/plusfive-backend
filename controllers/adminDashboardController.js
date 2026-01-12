@@ -2040,7 +2040,9 @@ class AdminDashboardController {
             data.push({
               label: targetDate.toLocaleString('default', { month: 'short' }),
               scanCount: monthResult ? Number(monthResult.scan_count) : 0,
-              shareCount: monthResult ? Number(monthResult.share_count) : 0
+              shareCount: monthResult ? Number(monthResult.share_count) : 0,
+              month: targetMonth,
+              year: targetYear
             });
           }
           break;
