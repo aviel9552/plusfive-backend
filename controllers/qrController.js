@@ -1,6 +1,87 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const QRCode = require('qrcode');
+const { stripe } = require('../lib/stripe');
+
+// Helper function to check if user has active subscription
+// Checks Stripe API first (most reliable), then falls back to database
+const checkUserSubscription = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      subscriptionStatus: true,
+      subscriptionExpirationDate: true,
+      role: true,
+      stripeSubscriptionId: true
+    }
+  });
+
+  if (!user) {
+    return { hasActiveSubscription: false, reason: 'User not found' };
+  }
+
+  // Admin users don't need subscription
+  if (user.role === 'admin') {
+    return { hasActiveSubscription: true };
+  }
+
+  // FIRST: Check Stripe API if stripeSubscriptionId is available (most reliable source)
+  if (user.stripeSubscriptionId) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      
+      // Check subscription status from Stripe
+      const stripeStatus = subscription.status?.toLowerCase();
+      if (!stripeStatus || 
+          stripeStatus === 'canceled' || 
+          stripeStatus === 'unpaid' ||
+          stripeStatus === 'past_due' ||
+          stripeStatus === 'incomplete' ||
+          stripeStatus === 'incomplete_expired') {
+        return { hasActiveSubscription: false, reason: 'Subscription not active' };
+      }
+
+      // Check current_period_end from Stripe (Unix timestamp in seconds)
+      if (subscription.current_period_end) {
+        const expiryTimestamp = subscription.current_period_end * 1000; // Convert to milliseconds
+        const now = Date.now();
+        if (expiryTimestamp < now) {
+          return { hasActiveSubscription: false, reason: 'Subscription expired' };
+        }
+      }
+
+      // Stripe subscription is active and not expired
+      return { hasActiveSubscription: true };
+    } catch (stripeError) {
+      // If Stripe API call fails, fall back to database check
+      console.error('Error checking Stripe subscription:', stripeError.message);
+    }
+  }
+
+  // SECOND: Fallback to database fields if Stripe check failed or no stripeSubscriptionId
+  const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+  
+  // Block if subscription is not active
+  if (!subscriptionStatus || 
+      subscriptionStatus === 'pending' || 
+      subscriptionStatus === 'canceled' || 
+      subscriptionStatus === 'inactive' ||
+      subscriptionStatus === 'expired') {
+    return { hasActiveSubscription: false, reason: 'Subscription not active' };
+  }
+
+  // Check expiration date from database
+  if (user.subscriptionExpirationDate) {
+    const now = new Date();
+    const expirationDate = new Date(user.subscriptionExpirationDate);
+    if (expirationDate < now) {
+      return { hasActiveSubscription: false, reason: 'Subscription expired' };
+    }
+  }
+
+  return { hasActiveSubscription: true };
+};
 
 // Get all QR codes
 const getAllQRCodes = async (req, res) => {
@@ -129,6 +210,12 @@ const createQRCode = async (req, res) => {
     if (!code) {
       return errorResponse(res, 'QR code is required', 400);
     }
+
+    // Check if user has active subscription - block QR code creation if subscription is not active
+    const subscriptionCheck = await checkUserSubscription(req.user.userId);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      return errorResponse(res, `Active subscription required. ${subscriptionCheck.reason === 'Subscription expired' ? 'Subscription has expired. Please renew to continue.' : 'QR code cannot be created without an active subscription.'}`, 403);
+    }
     
     // Generate QR code image based on the short code
     const qrCodeImage = await QRCode.toDataURL(code, {
@@ -183,6 +270,13 @@ const createQRCode = async (req, res) => {
 const generateQRCodeWithUserInfo = async (req, res) => {
   try {
     const { name, messageForCustomer, directMessage, directUrl, messageUrl, size = 200, color = '#000000', backgroundColor = '#FFFFFF' } = req.body;
+    
+    // Check if user has active subscription - block QR code generation if subscription is not active
+    // This check MUST happen BEFORE any database operations
+    const subscriptionCheck = await checkUserSubscription(req.user.userId);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      return errorResponse(res, `Active subscription required. ${subscriptionCheck.reason === 'Subscription expired' ? 'Subscription has expired. Please renew to continue.' : 'QR code cannot be generated without an active subscription.'}`, 403);
+    }
     
     // Check if user already has a QR code
     const existingQRCode = await prisma.qRCode.findFirst({
@@ -900,6 +994,13 @@ const generateWhatsAppQRCode = async (req, res) => {
     
     if (!userMessage || !directChatPhone || !directChatMessage) {
       return errorResponse(res, 'Missing required data: userMessage, directChatPhone, directChatMessage', 400);
+    }
+
+    // Check if user has active subscription - block QR code generation if subscription is not active
+    // This check MUST happen BEFORE any database operations
+    const subscriptionCheck = await checkUserSubscription(req.user.userId);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      return errorResponse(res, `Active subscription required. ${subscriptionCheck.reason === 'Subscription expired' ? 'Subscription has expired. Please renew to continue.' : 'QR code cannot be generated without an active subscription.'}`, 403);
     }
 
     const appUrl = process.env.FRONTEND_URL || 'https://www.plusfive.io';

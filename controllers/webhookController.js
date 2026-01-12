@@ -25,6 +25,71 @@ const formatIsraeliPhone = (phoneNumber) => {
   return `+972${cleanPhone}`;
 };
 
+// Helper function to check if user has active subscription
+// Checks Stripe API first (most reliable), then falls back to database
+const checkUserSubscription = async (user) => {
+  // Admin users don't need subscription
+  if (user.role === 'admin') {
+    return { hasActiveSubscription: true };
+  }
+
+  // FIRST: Check Stripe API if stripeSubscriptionId is available (most reliable source)
+  if (user.stripeSubscriptionId) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      
+      // Check subscription status from Stripe
+      const stripeStatus = subscription.status?.toLowerCase();
+      if (!stripeStatus || 
+          stripeStatus === 'canceled' || 
+          stripeStatus === 'unpaid' ||
+          stripeStatus === 'past_due' ||
+          stripeStatus === 'incomplete' ||
+          stripeStatus === 'incomplete_expired') {
+        return { hasActiveSubscription: false, reason: 'Subscription not active' };
+      }
+
+      // Check current_period_end from Stripe (Unix timestamp in seconds)
+      if (subscription.current_period_end) {
+        const expiryTimestamp = subscription.current_period_end * 1000; // Convert to milliseconds
+        const now = Date.now();
+        if (expiryTimestamp < now) {
+          return { hasActiveSubscription: false, reason: 'Subscription expired' };
+        }
+      }
+
+      // Stripe subscription is active and not expired
+      return { hasActiveSubscription: true };
+    } catch (stripeError) {
+      // If Stripe API call fails, fall back to database check
+      console.error('Error checking Stripe subscription:', stripeError.message);
+    }
+  }
+
+  // SECOND: Fallback to database fields if Stripe check failed or no stripeSubscriptionId
+  const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
+  
+  // Block if subscription is not active
+  if (!subscriptionStatus || 
+      subscriptionStatus === 'pending' || 
+      subscriptionStatus === 'canceled' || 
+      subscriptionStatus === 'inactive' ||
+      subscriptionStatus === 'expired') {
+    return { hasActiveSubscription: false, reason: 'Subscription not active' };
+  }
+
+  // Check expiration date from database
+  if (user.subscriptionExpirationDate) {
+    const now = new Date();
+    const expirationDate = new Date(user.subscriptionExpirationDate);
+    if (expirationDate < now) {
+      return { hasActiveSubscription: false, reason: 'Subscription expired' };
+    }
+  }
+
+  return { hasActiveSubscription: true };
+};
+
 // Handle appointment webhook - store any data without validation
 const handleAppointmentWebhook = async (req, res) => {
   try {
@@ -60,29 +125,18 @@ const handleAppointmentWebhook = async (req, res) => {
         id: true,
         subscriptionStatus: true,
         subscriptionExpirationDate: true,
-        role: true
+        role: true,
+        stripeSubscriptionId: true
       }
     });
 
-    if (user && user.role !== 'admin') {
-      const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-      
-      // Block if subscription is not active - return early, NO data will be stored
-      if (!subscriptionStatus || 
-          subscriptionStatus === 'pending' || 
-          subscriptionStatus === 'canceled' || 
-          subscriptionStatus === 'inactive' ||
-          subscriptionStatus === 'expired') {
-        return errorResponse(res, `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription. Appointment webhook cannot be processed.`, 403);
-      }
-
-      // Check expiration date - return early if expired, NO data will be stored
-      if (user.subscriptionExpirationDate) {
-        const now = new Date();
-        const expirationDate = new Date(user.subscriptionExpirationDate);
-        if (expirationDate < now) {
-          return errorResponse(res, `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Appointment webhook cannot be processed. Please renew to continue.`, 403);
-        }
+    if (user) {
+      const subscriptionCheck = await checkUserSubscription(user);
+      if (!subscriptionCheck.hasActiveSubscription) {
+        const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+          ? `Subscription expired. Business '${webhookData.BusinessName}' subscription has expired. Appointment webhook cannot be processed. Please renew to continue.`
+          : `Active subscription required. Business '${webhookData.BusinessName}' does not have an active subscription. Appointment webhook cannot be processed.`;
+        return errorResponse(res, errorMessage, 403);
       }
     }
 
@@ -427,29 +481,18 @@ const handleRatingWebhook = async (req, res) => {
           id: true,
           subscriptionStatus: true,
           subscriptionExpirationDate: true,
-          role: true
+          role: true,
+          stripeSubscriptionId: true
         }
       });
 
-      if (user && user.role !== 'admin') {
-        const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-        
-        // Block if subscription is not active
-        if (!subscriptionStatus || 
-            subscriptionStatus === 'pending' || 
-            subscriptionStatus === 'canceled' || 
-            subscriptionStatus === 'inactive' ||
-            subscriptionStatus === 'expired') {
-          return errorResponse(res, 'Active subscription required. Rating cannot be processed without an active subscription.', 403);
-        }
-
-        // Check expiration date
-        if (user.subscriptionExpirationDate) {
-          const now = new Date();
-          const expirationDate = new Date(user.subscriptionExpirationDate);
-          if (expirationDate < now) {
-            return errorResponse(res, 'Subscription expired. Rating cannot be processed. Please renew subscription to continue.', 403);
-          }
+      if (user) {
+        const subscriptionCheck = await checkUserSubscription(user);
+        if (!subscriptionCheck.hasActiveSubscription) {
+          const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+            ? 'Subscription expired. Rating cannot be processed. Please renew subscription to continue.'
+            : 'Active subscription required. Rating cannot be processed without an active subscription.';
+          return errorResponse(res, errorMessage, 403);
         }
       }
     }
@@ -516,7 +559,8 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           id: true,
           subscriptionStatus: true,
           subscriptionExpirationDate: true,
-          role: true
+          role: true,
+          stripeSubscriptionId: true
         }
       });
 
@@ -524,26 +568,12 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         userId = existingUser.id;
         
         // Check subscription immediately for this user BEFORE storing any data
-        if (existingUser.role !== 'admin') {
-          const subscriptionStatus = existingUser.subscriptionStatus?.toLowerCase();
-          
-          // Block if subscription is not active - return early, NO data will be stored
-          if (!subscriptionStatus || 
-              subscriptionStatus === 'pending' || 
-              subscriptionStatus === 'canceled' || 
-              subscriptionStatus === 'inactive' ||
-              subscriptionStatus === 'expired') {
-            return errorResponse(res, `Active subscription required. Business '${actualData.BusinessName}' does not have an active subscription. Payment webhook cannot be processed.`, 403);
-          }
-
-          // Check expiration date - return early if expired, NO data will be stored
-          if (existingUser.subscriptionExpirationDate) {
-            const now = new Date();
-            const expirationDate = new Date(existingUser.subscriptionExpirationDate);
-            if (expirationDate < now) {
-              return errorResponse(res, `Subscription expired. Business '${actualData.BusinessName}' subscription has expired. Payment webhook cannot be processed. Please renew to continue.`, 403);
-            }
-          }
+        const subscriptionCheck = await checkUserSubscription(existingUser);
+        if (!subscriptionCheck.hasActiveSubscription) {
+          const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+            ? `Subscription expired. Business '${actualData.BusinessName}' subscription has expired. Payment webhook cannot be processed. Please renew to continue.`
+            : `Active subscription required. Business '${actualData.BusinessName}' does not have an active subscription. Payment webhook cannot be processed.`;
+          return errorResponse(res, errorMessage, 403);
         }
       }
     }
@@ -596,7 +626,8 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         id: true,
         subscriptionStatus: true,
         subscriptionExpirationDate: true,
-        role: true
+        role: true,
+        stripeSubscriptionId: true
       }
     });
 
@@ -605,26 +636,12 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     }
 
     // Block if user is not admin and subscription is not active - return early, NO data will be stored
-    if (finalUserCheck.role !== 'admin') {
-      const subscriptionStatus = finalUserCheck.subscriptionStatus?.toLowerCase();
-      
-      // Block if subscription is not active - return early, NO data will be stored
-      if (!subscriptionStatus || 
-          subscriptionStatus === 'pending' || 
-          subscriptionStatus === 'canceled' || 
-          subscriptionStatus === 'inactive' ||
-          subscriptionStatus === 'expired') {
-        return errorResponse(res, 'Active subscription required. Payment cannot be processed without an active subscription.', 403);
-      }
-
-      // Check expiration date - return early if expired, NO data will be stored
-      if (finalUserCheck.subscriptionExpirationDate) {
-        const now = new Date();
-        const expirationDate = new Date(finalUserCheck.subscriptionExpirationDate);
-        if (expirationDate < now) {
-          return errorResponse(res, 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.', 403);
-        }
-      }
+    const subscriptionCheck = await checkUserSubscription(finalUserCheck);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+        ? 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.'
+        : 'Active subscription required. Payment cannot be processed without an active subscription.';
+      return errorResponse(res, errorMessage, 403);
     }
 
     // NOW store in WebhookPaymentLog table (raw log data) - only AFTER subscription check passes
