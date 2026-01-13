@@ -1,6 +1,27 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 
+// Helper function to format Israeli phone numbers (same as webhookController)
+const formatIsraeliPhone = (phoneNumber) => {
+  if (!phoneNumber) return null;
+
+  // Remove any existing country code or special characters
+  let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
+
+  // If phone already starts with 972, just add +
+  if (cleanPhone.startsWith('972')) {
+    return `+${cleanPhone}`;
+  }
+
+  // If phone starts with 0, remove it and add +972
+  if (cleanPhone.startsWith('0')) {
+    cleanPhone = cleanPhone.substring(1);
+  }
+
+  // Add Israel country code +972
+  return `+972${cleanPhone}`;
+};
+
 // Add new customer to business owner's list
 const addCustomer = async (req, res) => {
   try {
@@ -11,17 +32,14 @@ const addCustomer = async (req, res) => {
       lastPayment, 
       totalPaid, 
       status,
-      // Auth registration fields
+      // Customer fields (like webhook)
       email,
       password,
       firstName,
       lastName,
       phoneNumber,
-      businessName,
-      businessType,
       address,
-      whatsappNumber,
-      directChatMessage
+      customerFullName
     } = req.body;
     
     const userId = req.user.userId;
@@ -36,19 +54,16 @@ const addCustomer = async (req, res) => {
       return await addExistingCustomer(req, res, customerId, notes, rating, lastPayment, totalPaid, status);
     }
 
-    // If auth fields are provided, create new customer user first
-    if (email && password && firstName && lastName) {
+    // If customer fields are provided, create new customer (like webhook)
+    if (firstName && lastName && phoneNumber) {
       return await createAndAddNewCustomer(req, res, {
         email,
         password,
         firstName,
         lastName,
         phoneNumber,
-        businessName,
-        businessType,
         address,
-        whatsappNumber,
-        directChatMessage,
+        customerFullName,
         notes,
         rating,
         lastPayment,
@@ -57,7 +72,7 @@ const addCustomer = async (req, res) => {
       });
     }
 
-    return errorResponse(res, 'Either provide customerId for existing customer or complete customer details for new customer', 400);
+    return errorResponse(res, 'Either provide customerId for existing customer or complete customer details (firstName, lastName, phoneNumber) for new customer', 400);
 
   } catch (error) {
     console.error('Add customer error:', error);
@@ -75,91 +90,74 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
       return errorResponse(res, 'Customer ID is required', 400);
     }
 
-    // Validate rating range
-    if (rating && (rating < 0 || rating > 5)) {
-      return errorResponse(res, 'Rating must be between 0 and 5', 400);
-    }
-
-    // Validate payment amounts
-    if (lastPayment && lastPayment < 0) {
-      return errorResponse(res, 'Last payment amount cannot be negative', 400);
-    }
-
-    if (totalPaid && totalPaid < 0) {
-      return errorResponse(res, 'Total paid amount cannot be negative', 400);
-    }
-
-    // Check if customer exists and has role 'customer'
-    const customer = await prisma.user.findFirst({
-      where: {
-        id: customerId,
-        role: 'customer'
-      },
+    // Check if customer exists in Customers table
+    const existingCustomer = await prisma.customers.findUnique({
+      where: { id: customerId },
       select: {
         id: true,
         firstName: true,
         lastName: true,
         email: true,
-        phoneNumber: true,
-        businessName: true
+        customerPhone: true,
+        customerFullName: true
       }
     });
 
-    if (!customer) {
-      return errorResponse(res, 'Customer not found or invalid role. User must have role "customer"', 404);
+    if (!existingCustomer) {
+      return errorResponse(res, 'Customer not found', 404);
     }
 
-    // Check if customer is already added to this user
-    const existingCustomer = await prisma.customerMaster.findFirst({
+    // Check if CustomerUser relation already exists
+    const existingCustomerUser = await prisma.customerUser.findFirst({
       where: {
-        userId,
-        customerId
+        customerId: customerId,
+        userId: userId
       }
     });
 
-    if (existingCustomer) {
+    if (existingCustomerUser) {
       return errorResponse(res, 'Customer already exists in your customer list', 400);
     }
 
-    // Check if user is trying to add themselves
-    if (userId === customerId) {
-      return errorResponse(res, 'You cannot add yourself as a customer', 400);
-    }
+    // Create CustomerUser relation (like webhook does)
+    const newCustomerUser = await prisma.customerUser.create({
+      data: {
+        customerId: customerId,
+        userId: userId,
+        status: status || 'active'
+      }
+    });
 
-    // Prepare customer data with defaults
-    const customerData = {
-      userId,
-      customerId,
-      notes: notes || null,
-      status: status || 'active',
-      rating: rating ? parseFloat(rating) : null,
-      lastPayment: lastPayment ? parseFloat(lastPayment) : null,
-      totalPaid: totalPaid ? parseFloat(totalPaid) : null,
-      totalVisits: 0,
-      totalSpent: 0.00
-    };
+    // Create CustomerStatusLog for new customer status
+    await prisma.customerStatusLog.create({
+      data: {
+        customerId: customerId,
+        userId: userId,
+        oldStatus: null,
+        newStatus: status || 'active',
+        reason: 'Customer added to business owner list'
+      }
+    });
 
-    // Add customer to user's list
-    const newCustomer = await prisma.customerMaster.create({
-      data: customerData,
+    // Fetch customer with relation
+    const customer = await prisma.customers.findUnique({
+      where: { id: customerId },
       include: {
-        customer: {
+        user: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
-            email: true,
-            phoneNumber: true,
-            businessName: true
+            email: true
           }
         }
       }
     });
 
-
     return successResponse(res, {
-      ...newCustomer,
-      message: `Customer ${customer.firstName} ${customer.lastName} added successfully to your customer list`
+      ...customer,
+      customerUserId: newCustomerUser.id,
+      message: `Customer ${existingCustomer.firstName} ${existingCustomer.lastName} added successfully to your customer list`
     }, 'Customer added successfully', 201);
 
   } catch (error) {
@@ -178,11 +176,10 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
   }
 };
 
-// Helper function to create new customer user and add to business owner
+// Helper function to create new customer (like webhook)
 const createAndAddNewCustomer = async (req, res, customerData) => {
   try {
     const userId = req.user.userId;
-    const bcrypt = require('bcryptjs');
 
     // Validate userId
     if (!userId) {
@@ -192,75 +189,96 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
     // Check if user exists in database
     const currentUser = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true }
+      select: { id: true, email: true, businessName: true }
     });
 
     if (!currentUser) {
       return errorResponse(res, 'User not found in database. Please login again.', 400);
     }
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: customerData.email }
-    });
+    // Format phone number (like webhook)
+    const formattedPhone = formatIsraeliPhone(customerData.phoneNumber);
 
-    if (existingUser) {
-      return errorResponse(res, 'User with this email already exists', 400);
+    if (!formattedPhone) {
+      return errorResponse(res, 'Valid phone number is required', 400);
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(customerData.password, 12);
-
-    // Create new customer user
-    const newCustomerUser = await prisma.user.create({
-      data: {
-        email: customerData.email,
-        password: hashedPassword,
-        firstName: customerData.firstName,
-        lastName: customerData.lastName,
-        phoneNumber: customerData.phoneNumber || null,
-        businessName: customerData.businessName || null,
-        businessType: customerData.businessType || null,
-        address: customerData.address || null,
-        whatsappNumber: customerData.whatsappNumber || null,
-        directChatMessage: customerData.directChatMessage || null,
-        role: 'customer',
-        emailVerified: new Date() // Auto-verify for business-added customers
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        phoneNumber: true,
-        businessName: true
+    // Check if customer already exists by phone (like webhook)
+    const existingCustomer = await prisma.customers.findFirst({
+      where: {
+        customerPhone: formattedPhone
       }
     });
 
-    // Now add to current user's customer list
-    const customerMasterData = {
-      userId: userId,
-      customerId: newCustomerUser.id,
-      notes: customerData.notes || null,
-      status: customerData.status || 'active',
-      rating: customerData.rating ? parseFloat(customerData.rating) : null,
-      lastPayment: customerData.lastPayment ? parseFloat(customerData.lastPayment) : null,
-      totalPaid: customerData.totalPaid ? parseFloat(customerData.totalPaid) : null,
-      totalVisits: 0,
-      totalSpent: 0.00
-    };
+    let customerId;
 
-    const newCustomerMaster = await prisma.customerMaster.create({
-      data: customerMasterData,
+    if (existingCustomer) {
+      // Customer exists, use existing customer
+      customerId = existingCustomer.id;
+    } else {
+      // Create new customer in Customers table (like webhook)
+      const fullName = customerData.customerFullName || `${customerData.firstName} ${customerData.lastName}`.trim();
+      
+      const newCustomer = await prisma.customers.create({
+        data: {
+          firstName: customerData.firstName,
+          lastName: customerData.lastName,
+          customerPhone: formattedPhone,
+          email: customerData.email || null,
+          customerFullName: fullName,
+          appointmentCount: 0,
+          userId: userId, // Reference to User table (business owner)
+          businessName: currentUser.businessName || null
+        }
+      });
+      customerId = newCustomer.id;
+    }
+
+    // Check if CustomerUser relation already exists
+    const existingCustomerUser = await prisma.customerUser.findFirst({
+      where: {
+        customerId: customerId,
+        userId: userId
+      }
+    });
+
+    let customerUserId;
+
+    if (existingCustomerUser) {
+      customerUserId = existingCustomerUser.id;
+    } else {
+      // Create CustomerUser relation (like webhook)
+      const newCustomerUser = await prisma.customerUser.create({
+        data: {
+          customerId: customerId,
+          userId: userId,
+          status: customerData.status || 'new'
+        }
+      });
+      customerUserId = newCustomerUser.id;
+
+      // Create CustomerStatusLog for new customer status
+      await prisma.customerStatusLog.create({
+        data: {
+          customerId: customerId,
+          userId: userId,
+          oldStatus: null,
+          newStatus: customerData.status || 'new',
+          reason: 'New customer created'
+        }
+      });
+    }
+
+    // Fetch customer with relation
+    const customer = await prisma.customers.findUnique({
+      where: { id: customerId },
       include: {
-        customer: {
+        user: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
             email: true,
-            phoneNumber: true,
             businessName: true
           }
         }
@@ -268,15 +286,16 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
     });
 
     return successResponse(res, {
-      ...newCustomerMaster,
-      message: `New customer ${newCustomerUser.firstName} ${newCustomerUser.lastName} created and added successfully to your customer list`
+      ...customer,
+      customerUserId: customerUserId,
+      message: `New customer ${customerData.firstName} ${customerData.lastName} created and added successfully to your customer list`
     }, 'New customer created and added successfully', 201);
 
   } catch (error) {
     console.error('Create and add new customer error:', error);
     
     if (error.code === 'P2002') {
-      return errorResponse(res, 'User with this email already exists', 400);
+      return errorResponse(res, 'Customer with this phone number already exists', 400);
     }
 
     if (error.code === 'P2003') {
@@ -303,62 +322,66 @@ const getMyCustomers = async (req, res) => {
 
     // If admin, show all customers from all users
     if (userRole === 'admin') {
-      customers = await prisma.customerMaster.findMany({
+      customers = await prisma.customers.findMany({
         include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phoneNumber: true,
-              businessName: true,
-              businessType: true,
-              address: true,
-              whatsappNumber: true,
-              directChatMessage: true,
-              role: true,
-              createdAt: true,
-              updatedAt: true
-            }
-          },
           user: {
             select: {
               id: true,
               firstName: true,
               lastName: true,
               email: true,
-              role: true
+              businessName: true
+            }
+          },
+          customerUsers: {
+            where: {
+              isDeleted: false
+            },
+            select: {
+              id: true,
+              status: true,
+              userId: true,
+              createdAt: true
             }
           }
         },
         orderBy: { createdAt: 'desc' }
       });
     } else {
-      // For non-admin users, show only their own customers with complete details
-      customers = await prisma.customerMaster.findMany({
-        where: { userId },
+      // For non-admin users, show only their own customers through CustomerUser relation
+      const customerUsers = await prisma.customerUser.findMany({
+        where: {
+          userId: userId,
+          isDeleted: false
+        },
         include: {
           customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phoneNumber: true,
-              businessName: true,
-              businessType: true,
-              address: true,
-              whatsappNumber: true,
-              directChatMessage: true,
-              role: true,
-              createdAt: true,
-              updatedAt: true
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  businessName: true
+                }
+              }
             }
           }
         },
         orderBy: { createdAt: 'desc' }
       });
+
+      // Transform to match expected format
+      customers = customerUsers.map(cu => ({
+        ...cu.customer,
+        customerUser: {
+          id: cu.id,
+          status: cu.status,
+          userId: cu.userId,
+          createdAt: cu.createdAt
+        }
+      }));
     }
 
     return successResponse(res, customers, 'Customers retrieved successfully');
@@ -373,22 +396,15 @@ const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const { 
-      notes, 
-      status, 
-      rating, 
-      lastPayment, 
-      totalPaid,
-      // User table fields
-      email,
-      password,
+      // Customer table fields
       firstName,
       lastName,
+      email,
       phoneNumber,
-      businessName,
-      businessType,
+      customerFullName,
       address,
-      whatsappNumber,
-      directChatMessage
+      // CustomerUser status
+      status
     } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
@@ -398,93 +414,104 @@ const updateCustomer = async (req, res) => {
       return errorResponse(res, 'User not authenticated. Please login again.', 401);
     }
 
-    let existingCustomer;
+    // Check if customer exists and belongs to user
+    let customer;
+    let customerUser;
 
-    // If admin, can update any customer
     if (userRole === 'admin') {
-      existingCustomer = await prisma.customerMaster.findUnique({
-        where: { id },
-        include: {
-          customer: true
-        }
+      customer = await prisma.customers.findUnique({
+        where: { id }
       });
+      if (customer) {
+        customerUser = await prisma.customerUser.findFirst({
+          where: {
+            customerId: id,
+            userId: customer.userId || userId
+          }
+        });
+      }
     } else {
-      // For non-admin users, check if customer belongs to them
-      existingCustomer = await prisma.customerMaster.findFirst({
+      // For non-admin users, check if customer belongs to them through CustomerUser
+      customerUser = await prisma.customerUser.findFirst({
         where: {
-          id,
-          userId
-        },
-        include: {
-          customer: true
+          customerId: id,
+          userId: userId,
+          isDeleted: false
         }
       });
+
+      if (customerUser) {
+        customer = await prisma.customers.findUnique({
+          where: { id }
+        });
+      }
     }
 
-    if (!existingCustomer) {
+    if (!customer) {
       return errorResponse(res, 'Customer not found', 404);
     }
 
     // Start a transaction to update both tables
     const result = await prisma.$transaction(async (tx) => {
-      // Update CustomerMaster table
-      const updatedCustomerMaster = await tx.customerMaster.update({
+      // Update Customers table
+      const updateData = {};
+      if (firstName !== undefined) updateData.firstName = firstName;
+      if (lastName !== undefined) updateData.lastName = lastName;
+      if (email !== undefined) updateData.email = email;
+      if (phoneNumber !== undefined) updateData.customerPhone = formatIsraeliPhone(phoneNumber);
+      if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
+
+      const updatedCustomer = await tx.customers.update({
         where: { id },
-        data: {
-          notes,
-          status,
-          rating: rating ? parseFloat(rating) : rating,
-          lastPayment: lastPayment ? parseFloat(lastPayment) : lastPayment,
-          totalPaid: totalPaid ? parseFloat(totalPaid) : totalPaid
-        }
+        data: updateData
       });
 
-      // Update User table if user fields are provided
-      let updatedUser = null;
-      if (email || password || firstName || lastName || phoneNumber || businessName || businessType || address || whatsappNumber || directChatMessage) {
-        const userUpdateData = {};
-        
-        if (email) userUpdateData.email = email;
-        if (firstName) userUpdateData.firstName = firstName;
-        if (lastName) userUpdateData.lastName = lastName;
-        if (phoneNumber !== undefined) userUpdateData.phoneNumber = formatPhoneNumber(phoneNumber);
-        if (businessName !== undefined) userUpdateData.businessName = businessName;
-        if (businessType !== undefined) userUpdateData.businessType = businessType;
-        if (address !== undefined) userUpdateData.address = address;
-        if (whatsappNumber !== undefined) userUpdateData.whatsappNumber = whatsappNumber;
-        if (directChatMessage !== undefined) userUpdateData.directChatMessage = directChatMessage;
+      // Update CustomerUser status if provided
+      let updatedCustomerUser = null;
+      if (status && customerUser) {
+        const oldStatus = customerUser.status;
+        updatedCustomerUser = await tx.customerUser.update({
+          where: { id: customerUser.id },
+          data: { status }
+        });
 
-        // Hash password if provided
-        if (password) {
-          const bcrypt = require('bcryptjs');
-          userUpdateData.password = await bcrypt.hash(password, 12);
-        }
-
-        updatedUser = await tx.user.update({
-          where: { id: existingCustomer.customerId },
-          data: userUpdateData
+        // Create CustomerStatusLog for status change
+        await tx.customerStatusLog.create({
+          data: {
+            customerId: id,
+            userId: userId,
+            oldStatus: oldStatus,
+            newStatus: status,
+            reason: 'Customer status updated'
+          }
         });
       }
 
-      return { updatedCustomerMaster, updatedUser };
+      return { updatedCustomer, updatedCustomerUser };
     });
 
     // Fetch updated data with includes
-    const finalResult = await prisma.customerMaster.findUnique({
+    const finalResult = await prisma.customers.findUnique({
       where: { id },
       include: {
-        customer: {
+        user: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
             email: true,
-            phoneNumber: true,
-            businessName: true,
-            businessType: true,
-            address: true,
-            whatsappNumber: true,
-            directChatMessage: true
+            businessName: true
+          }
+        },
+        customerUsers: {
+          where: {
+            userId: userId,
+            isDeleted: false
+          },
+          select: {
+            id: true,
+            status: true,
+            userId: true
           }
         }
       }
@@ -509,72 +536,75 @@ const removeCustomer = async (req, res) => {
       return errorResponse(res, 'User not authenticated. Please login again.', 401);
     }
 
-    let existingCustomer;
+    // Check if customer exists and belongs to user
+    let customer;
+    let customerUser;
 
-    // If admin, can remove any customer
     if (userRole === 'admin') {
-      existingCustomer = await prisma.customerMaster.findUnique({
-        where: { id },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true
-            }
-          }
-        }
+      customer = await prisma.customers.findUnique({
+        where: { id }
       });
+      if (customer) {
+        customerUser = await prisma.customerUser.findFirst({
+          where: {
+            customerId: id,
+            userId: customer.userId || userId
+          }
+        });
+      }
     } else {
-      // For non-admin users, check if customer belongs to them
-      existingCustomer = await prisma.customerMaster.findFirst({
+      // For non-admin users, check if customer belongs to them through CustomerUser
+      customerUser = await prisma.customerUser.findFirst({
         where: {
-          id,
-          userId
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true
-            }
-          }
+          customerId: id,
+          userId: userId,
+          isDeleted: false
         }
       });
+
+      if (customerUser) {
+        customer = await prisma.customers.findUnique({
+          where: { id }
+        });
+      }
     }
 
-    if (!existingCustomer) {
+    if (!customer || !customerUser) {
       return errorResponse(res, 'Customer not found', 404);
     }
 
     // Store customer info for response
     const customerInfo = {
-      firstName: existingCustomer.customer.firstName,
-      lastName: existingCustomer.customer.lastName,
-      email: existingCustomer.customer.email
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      email: customer.email
     };
 
-    // Start transaction to delete from both tables
-    await prisma.$transaction(async (tx) => {
-      // First, delete from CustomerMaster table
-      await tx.customerMaster.delete({
-        where: { id }
-      });
+    // Soft delete CustomerUser relation (don't delete customer itself)
+    await prisma.customerUser.update({
+      where: { id: customerUser.id },
+      data: {
+        isDeleted: true,
+        status: 'inactive'
+      }
+    });
 
-      // Then, delete the customer user from User table
-      await tx.user.delete({
-        where: { id: existingCustomer.customerId }
-      });
+    // Create CustomerStatusLog for deletion
+    await prisma.customerStatusLog.create({
+      data: {
+        customerId: id,
+        userId: userId,
+        oldStatus: customerUser.status,
+        newStatus: 'inactive',
+        reason: 'Customer removed from business owner list'
+      }
     });
 
     return successResponse(res, {
-      message: `Customer ${customerInfo.firstName} ${customerInfo.lastName} completely removed from the system`,
+      message: `Customer ${customerInfo.firstName} ${customerInfo.lastName} removed from your customer list`,
       customerInfo: customerInfo,
-      note: "Customer user account has been permanently deleted from both CustomerMaster and User tables"
-    }, 'Customer completely removed successfully');
+      note: "Customer relation has been soft deleted. Customer data remains in the system."
+    }, 'Customer removed successfully');
   } catch (error) {
     console.error('Remove customer error:', error);
     return errorResponse(res, 'Internal server error', 500);
@@ -597,64 +627,69 @@ const getCustomerById = async (req, res) => {
 
     // If admin, can view any customer
     if (userRole === 'admin') {
-      customer = await prisma.customerMaster.findUnique({
+      customer = await prisma.customers.findUnique({
         where: { id },
         include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phoneNumber: true,
-              businessName: true,
-              businessType: true,
-              address: true,
-              whatsappNumber: true,
-              directChatMessage: true,
-              role: true,
-              createdAt: true,
-              updatedAt: true
-            }
-          },
           user: {
             select: {
               id: true,
               firstName: true,
               lastName: true,
               email: true,
-              role: true
+              businessName: true
+            }
+          },
+          customerUsers: {
+            where: {
+              isDeleted: false
+            },
+            select: {
+              id: true,
+              status: true,
+              userId: true,
+              createdAt: true
             }
           }
         }
       });
     } else {
-      // For non-admin users, only their own customers
-      customer = await prisma.customerMaster.findFirst({
+      // For non-admin users, only their own customers through CustomerUser
+      const customerUser = await prisma.customerUser.findFirst({
         where: {
-          id,
-          userId
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phoneNumber: true,
-              businessName: true,
-              businessType: true,
-              address: true,
-              whatsappNumber: true,
-              directChatMessage: true,
-              role: true,
-              createdAt: true,
-              updatedAt: true
-            }
-          }
+          customerId: id,
+          userId: userId,
+          isDeleted: false
         }
       });
+
+      if (customerUser) {
+        customer = await prisma.customers.findUnique({
+          where: { id },
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                businessName: true
+              }
+            },
+            customerUsers: {
+              where: {
+                userId: userId,
+                isDeleted: false
+              },
+              select: {
+                id: true,
+                status: true,
+                userId: true,
+                createdAt: true
+              }
+            }
+          }
+        });
+      }
     }
 
     if (!customer) {
@@ -681,56 +716,62 @@ const recordCustomerVisit = async (req, res) => {
       return errorResponse(res, 'User not authenticated. Please login again.', 401);
     }
 
-    let existingCustomer;
+    // Check if customer exists and belongs to user
+    let customer;
+    let customerUser;
 
-    // If admin, can record visit for any customer
     if (userRole === 'admin') {
-      existingCustomer = await prisma.customerMaster.findUnique({
+      customer = await prisma.customers.findUnique({
         where: { id }
       });
     } else {
-      // For non-admin users, check if customer belongs to them
-      existingCustomer = await prisma.customerMaster.findFirst({
+      // For non-admin users, check if customer belongs to them through CustomerUser
+      customerUser = await prisma.customerUser.findFirst({
         where: {
-          id,
-          userId
+          customerId: id,
+          userId: userId,
+          isDeleted: false
         }
       });
+
+      if (customerUser) {
+        customer = await prisma.customers.findUnique({
+          where: { id }
+        });
+      }
     }
 
-    if (!existingCustomer) {
+    if (!customer) {
       return errorResponse(res, 'Customer not found', 404);
     }
 
-    // Update customer visit information
-    const updatedCustomer = await prisma.customerMaster.update({
+    // Update customer visit information (increment appointmentCount)
+    const updatedCustomer = await prisma.customers.update({
       where: { id },
       data: {
-        totalVisits: {
+        appointmentCount: {
           increment: 1
-        },
-        lastVisit: new Date(),
-        totalSpent: {
-          increment: amount || 0
-        },
-        notes: notes ? `${existingCustomer.notes || ''}\n${new Date().toLocaleDateString()}: ${notes}`.trim() : existingCustomer.notes
+        }
       },
       include: {
-        customer: {
+        user: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
             email: true,
-            phoneNumber: true,
-            businessName: true,
-            businessType: true,
-            address: true,
-            whatsappNumber: true,
-            directChatMessage: true,
-            role: true,
-            createdAt: true,
-            updatedAt: true
+            businessName: true
+          }
+        },
+        customerUsers: {
+          where: {
+            userId: userId,
+            isDeleted: false
+          },
+          select: {
+            id: true,
+            status: true,
+            userId: true
           }
         }
       }
@@ -741,22 +782,6 @@ const recordCustomerVisit = async (req, res) => {
     console.error('Record customer visit error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
-};
-
-// Helper function to format phone number
-const formatPhoneNumber = (phoneNumber) => {
-  if (!phoneNumber) return phoneNumber;
-  
-  // Remove all non-digit characters
-  let cleanNumber = phoneNumber.replace(/\D/g, '');
-  
-  // If number starts with 0, remove it
-  if (cleanNumber.startsWith('0')) {
-    cleanNumber = cleanNumber.substring(1);
-  }
-  
-  // Add +972 prefix
-  return `+972${cleanNumber}`;
 };
 
 module.exports = {

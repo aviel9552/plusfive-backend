@@ -67,6 +67,8 @@ model User {
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages  whatsappMessage[] // WhatsApp messages sent by business owner
    customerStatusLogs CustomerStatusLog[] // Customer status change logs
+   staff              Staff[]           // Staff members for this business
+   services           Service[]         // Services for this business
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -240,19 +242,25 @@ model Appointment {
   businessId      Int?
   byCustomer      Boolean  @default(false)
   createDate      DateTime?
-  employeeId      Int?
+  employeeId      Int?     // Legacy field - keep for backward compatibility
   businessName    String?
   employeeName    String?
   customerPhone   String?
   appointmentCount Int     @default(0)
   customerFullName String?
-  selectedServices String?
+  selectedServices String? // Legacy field - keep for backward compatibility
   
   // Relations
   customerId      String?  // Reference to Customers table
   customer        Customers? @relation(fields: [customerId], references: [id])
   userId          String?  // Reference to User table (business owner)
   user            User?    @relation(fields: [userId], references: [id])
+  
+  // New relations for Staff and Service
+  staffId         String?  // Reference to Staff table
+  staff           Staff?   @relation(fields: [staffId], references: [id])
+  serviceId       String?   // Reference to Service table
+  service        Service?  @relation(fields: [serviceId], references: [id])
   
   // Related payments
   payments        PaymentWebhook[] // Payments for this appointment
@@ -477,4 +485,64 @@ model PaymentHistory {
   updatedAt         DateTime  @updatedAt
   
   @@map("paymentHistory")
+}
+
+// Staff table - Store staff/employee information for businesses
+model Staff {
+  id          String   @id @default(cuid())
+  
+  // Staff details
+  fullName    String   // Full name of the staff member
+  phone       String   // Phone number (required)
+  email       String?  // Email address (optional)
+  city        String?  // City (optional)
+  address     String?  // Address (optional)
+  
+  // Business relation
+  businessId  String   // Reference to User table (business owner)
+  user        User     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  // Appointments relation
+  appointments Appointment[] // Appointments assigned to this staff member
+  
+  // Status
+  isActive    Boolean  @default(true)
+  isDeleted   Boolean  @default(false) // Soft delete flag
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("staff")
+}
+
+// Service table - Store services/offerings for businesses
+model Service {
+  id                String   @id @default(cuid())
+  
+  // Service details
+  name              String   // Service name (required)
+  notes             String?  // Service notes/description (optional)
+  category          String?  // Service category (optional)
+  price             Float    // Service price (required)
+  duration          Int      // Duration in minutes (required)
+  color             String?  // Color code for display (optional, default: #FF257C)
+  hideFromClients   Boolean  @default(false) // Hide from client booking (optional)
+  
+  // Business relation
+  businessId        String   // Reference to User table (business owner)
+  user              User     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  // Appointments relation
+  appointments      Appointment[] // Appointments using this service
+  
+  // Status
+  isActive          Boolean  @default(true)
+  isDeleted         Boolean  @default(false) // Soft delete flag
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@map("services")
 } 

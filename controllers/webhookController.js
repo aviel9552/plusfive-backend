@@ -1071,6 +1071,413 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
   }
 };
 
+// Create payment (authenticated users only) - similar to createAppointment
+const createPayment = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if user is authenticated
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const {
+      customerId,
+      customerPhone,
+      total,
+      totalWithoutVAT,
+      totalVAT,
+      employeeId,
+      businessId,
+      paymentDate
+    } = req.body;
+
+    // Validate required fields
+    if (!customerId && !customerPhone) {
+      return errorResponse(res, 'Either customerId or customerPhone is required', 400);
+    }
+
+    if (!total && total !== 0) {
+      return errorResponse(res, 'Total amount is required', 400);
+    }
+
+    // Get customer data
+    let finalCustomerId = customerId;
+    let finalUserId = userId;
+
+    // If customerPhone is provided but no customerId, find customer
+    if (!finalCustomerId && customerPhone) {
+      const formattedPhone = formatIsraeliPhone(customerPhone);
+      
+      // Find existing customer by phone
+      let existingCustomer = await prisma.customers.findFirst({
+        where: {
+          customerPhone: formattedPhone
+        }
+      });
+
+      if (existingCustomer) {
+        finalCustomerId = existingCustomer.id;
+        finalUserId = existingCustomer.userId || userId;
+      } else {
+        return errorResponse(res, 'Customer not found. Please create customer first.', 404);
+      }
+    } else if (finalCustomerId) {
+      // Verify customer exists and belongs to user
+      const customer = await prisma.customers.findUnique({
+        where: { id: finalCustomerId },
+        select: { id: true, userId: true }
+      });
+
+      if (!customer) {
+        return errorResponse(res, 'Customer not found', 404);
+      }
+
+      // Verify customer belongs to the same business (unless admin)
+      if (userRole !== 'admin' && customer.userId !== userId) {
+        return errorResponse(res, 'Customer does not belong to your business', 403);
+      }
+
+      finalUserId = customer.userId || userId;
+    }
+
+    // Check subscription for the user
+    const user = await prisma.user.findUnique({
+      where: { id: finalUserId },
+      select: {
+        id: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const subscriptionCheck = await checkUserSubscription(user);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+        ? 'Subscription expired. Payment cannot be processed. Please renew subscription to continue.'
+        : 'Active subscription required. Payment cannot be processed without an active subscription.';
+      return errorResponse(res, errorMessage, 403);
+    }
+
+    // Store in WebhookPaymentLog table (raw log data)
+    const paymentLogData = {
+      BusinessName: user.businessName || null,
+      CustomerPhone: customerPhone ? formatIsraeliPhone(customerPhone) : null,
+      Total: parseFloat(total) || 0.00,
+      TotalWithoutVAT: parseFloat(totalWithoutVAT) || 0.00,
+      TotalVAT: parseFloat(totalVAT) || 0.00,
+      EmployeeId: employeeId ? parseInt(employeeId) : null,
+      BusinessId: businessId ? parseInt(businessId) : null,
+      PaymentDate: paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString()
+    };
+
+    const paymentLog = await prisma.webhookPaymentLog.create({
+      data: {
+        data: paymentLogData,
+        type: 'payment_checkout',
+        createdDate: new Date()
+      }
+    });
+
+    // Get customer status from CustomerUser table before creating PaymentWebhook
+    let revenuePaymentStatus = null;
+    let previousStatus = null;
+    if (finalCustomerId) {
+      const customerUser = await prisma.customerUser.findFirst({
+        where: {
+          customerId: finalCustomerId,
+          userId: finalUserId
+        },
+        select: {
+          status: true
+        }
+      });
+
+      if (customerUser && customerUser.status) {
+        previousStatus = customerUser.status;
+        
+        // If customer is already recovered, payment is from recovered customer
+        if (customerUser.status === 'recovered') {
+          revenuePaymentStatus = 'recovered';
+        }
+        // If customer is lost/at_risk/risk, this payment will RECOVER them
+        else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
+          revenuePaymentStatus = 'recovered'; // This payment recovers the customer
+        }
+        // For other statuses (new, active), leave as null
+      }
+    }
+
+    // Store structured data in PaymentWebhook table
+    const paymentWebhook = await prisma.paymentWebhook.create({
+      data: {
+        total: parseFloat(total) || 0.00,
+        totalWithoutVAT: parseFloat(totalWithoutVAT) || 0.00,
+        totalVAT: parseFloat(totalVAT) || 0.00,
+        employeeId: employeeId ? parseInt(employeeId) : null,
+        businessId: businessId ? parseInt(businessId) : null,
+        customerId: finalCustomerId,
+        userId: finalUserId,
+        paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+        status: 'success',
+        customerOldStatus: previousStatus || null,
+        revenuePaymentStatus: revenuePaymentStatus
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    // Update CustomerUser status after payment (same logic as webhook)
+    if (finalCustomerId && finalUserId) {
+      try {
+        const existingCustomerUser = await prisma.customerUser.findFirst({
+          where: {
+            customerId: finalCustomerId,
+            userId: finalUserId
+          },
+          select: {
+            id: true,
+            status: true
+          }
+        });
+
+        if (existingCustomerUser) {
+          const currentPreviousStatus = previousStatus || existingCustomerUser.status;
+          let newStatus = null;
+          let statusChangeReason = null;
+
+          // Handle lost/at_risk to recovered
+          if (currentPreviousStatus === 'lost' || currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk') {
+            newStatus = 'recovered';
+            statusChangeReason = `Payment received after being ${currentPreviousStatus === 'lost' ? 'lost' : 'at risk'}`;
+          }
+          // Handle new to active
+          else if (currentPreviousStatus === 'new') {
+            newStatus = 'active';
+            statusChangeReason = 'First payment received';
+          }
+
+          // Update status if there's a change
+          if (newStatus) {
+            await prisma.customerUser.update({
+              where: {
+                id: existingCustomerUser.id
+              },
+              data: {
+                status: newStatus
+              }
+            });
+
+            // Create CustomerStatusLog for status transition
+            await prisma.customerStatusLog.create({
+              data: {
+                customerId: finalCustomerId,
+                userId: finalUserId,
+                oldStatus: currentPreviousStatus === 'lost' ? 'Lost' : (currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk' ? 'Risk' : 'New'),
+                newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
+                reason: statusChangeReason
+              }
+            });
+
+            console.log(`✅ Customer status updated from '${currentPreviousStatus}' to '${newStatus}' after payment - Customer ID: ${finalCustomerId}`);
+          }
+        }
+      } catch (statusUpdateError) {
+        console.error('❌ Error updating customer status after payment:', statusUpdateError);
+        // Don't fail the payment if status update fails
+      }
+    }
+
+    // Trigger review request if customerId is found (same logic as webhook)
+    if (finalCustomerId) {
+      try {
+        const customer = await prisma.customers.findUnique({
+          where: { id: finalCustomerId },
+          include: {
+            user: {
+              select: {
+                businessName: true,
+                businessType: true,
+                phoneNumber: true,
+                whatsappNumber: true
+              }
+            }
+          }
+        });
+
+        if (customer) {
+          const n8nService = new N8nMessageService();
+          
+          // Determine if customer is new or active based on previous orders/payments
+          const previousPayments = await prisma.paymentWebhook.count({
+            where: {
+              customerId: finalCustomerId,
+              createdAt: {
+                lt: new Date()
+              }
+            }
+          });
+
+          const customerStatus = previousPayments === 0 ? 'new' : 'active';
+
+          const webhookParams = {
+            customer_name: customer.customerFullName,
+            customer_phone: customer.customerPhone,
+            business_name: customer.user?.businessName || 'Business',
+            business_type: customer.user?.businessType || 'general',
+            customer_service: customer.selectedServices || '',
+            business_owner_phone: customer.user?.phoneNumber,
+            last_visit_date: new Date().toISOString().split('T')[0],
+            whatsapp_phone: customer.customerPhone,
+            customer_status: customerStatus
+          };
+
+          // Create review record first, then trigger N8N with review_id
+          try {
+            const reviewRecord = await prisma.review.create({
+              data: {
+                customerId: finalCustomerId,
+                userId: finalUserId,
+                rating: 0,
+                message: `Rating request sent via N8N after payment`,
+                status: 'sent',
+                whatsappMessageId: null,
+                messageStatus: 'pending',
+                paymentWebhookId: paymentWebhook.id
+              }
+            });
+            
+            console.log(`✅ Review record created with ID: ${reviewRecord.id}`);
+            
+            // Store WhatsApp message record BEFORE triggering N8N
+            const whatsappMessageRecord = await createWhatsappMessageRecord(
+              customer.customerFullName,
+              customer.customerPhone,
+              'review_request',
+              finalUserId
+            );
+
+            // Only proceed with N8N trigger and Stripe reporting if WhatsApp message record was created
+            if (!whatsappMessageRecord) {
+              console.log(`⚠️ Review request WhatsApp message not sent - Subscription check failed for user ${finalUserId}`);
+              // Don't trigger N8N or report to Stripe if subscription check failed
+            } else {
+              // Report usage to Stripe meter (same logic as webhook)
+              try {
+                if (finalUserId) {
+                  const userWithStripe = await prisma.user.findUnique({
+                    where: { id: finalUserId },
+                    select: { 
+                      id: true, 
+                      email: true, 
+                      stripeSubscriptionId: true
+                    }
+                  });
+
+                  if (userWithStripe && userWithStripe.stripeSubscriptionId) {
+                    const subscription = await stripe.subscriptions.retrieve(userWithStripe.stripeSubscriptionId, {
+                      expand: ['items.data.price.product']
+                    });
+                    
+                    const meteredItem = subscription.items.data.find(item => 
+                      item.price?.recurring?.usage_type === 'metered'
+                    );
+
+                    if (meteredItem) {
+                      let eventName = "whatsapp_message";
+                      
+                      if (meteredItem.price?.metadata?.event_name) {
+                        eventName = meteredItem.price.metadata.event_name;
+                      } else if (meteredItem.price?.product) {
+                        let product = meteredItem.price.product;
+                        if (typeof product === 'string') {
+                          try {
+                            product = await stripe.products.retrieve(product);
+                          } catch (error) {
+                            console.error(`❌ Error fetching product for event name:`, error.message);
+                          }
+                        }
+                        if (product && typeof product === 'object' && product.metadata?.event_name) {
+                          eventName = product.metadata.event_name;
+                        }
+                      }
+
+                      const stripeCustomerId = subscription.customer;
+                      if (stripeCustomerId) {
+                        const customerId = typeof stripeCustomerId === 'string' 
+                          ? stripeCustomerId 
+                          : stripeCustomerId?.id;
+                        
+                        const usageEvent = await stripe.billing.meterEvents.create({
+                          event_name: eventName,
+                          payload: {
+                            stripe_customer_id: customerId,
+                            subscription_item: meteredItem.id,
+                            value: 1,
+                            timestamp: Math.floor(Date.now() / 1000)
+                          }
+                        });
+
+                        console.log(`✅ Real-time usage reported to Stripe meter: ${eventName} for user ${userWithStripe.email} (payment API)`);
+                      }
+                    }
+                  }
+                }
+              } catch (stripeError) {
+                console.error('❌ Error reporting usage to Stripe (payment API):', stripeError.message);
+              }
+              
+              // Trigger N8N with review_id
+              await n8nService.triggerReviewRequest({
+                ...webhookParams,
+                review_id: reviewRecord.id,
+                payment_webhook_id: paymentWebhook.id
+              });
+              
+              console.log(`✅ Review record, whatsappMessage record created, Stripe usage reported and N8N triggered with paymentWebhookId: ${paymentWebhook.id} and review_id: ${reviewRecord.id}`);
+            }
+          } catch (reviewError) {
+            console.error('❌ Error creating review record or triggering N8N:', reviewError);
+            // Don't fail payment if review record creation or N8N fails
+          }
+        }
+      } catch (webhookError) {
+        console.error('❌ Error triggering n8n review request after payment:', webhookError);
+        // Don't fail the payment if n8n fails
+      }
+    }
+
+    return successResponse(res, paymentWebhook, 'Payment created successfully', 201);
+
+  } catch (error) {
+    console.error('Create payment error:', error);
+    return errorResponse(res, 'Failed to create payment', 500);
+  }
+};
+
 // Get all webhook logs (admin only)
 const getAllWebhookLogs = async (req, res) => {
   try {
@@ -1364,15 +1771,69 @@ const getPaymentWebhooksByCustomerId = async (req, res) => {
 // Get all appointments
 const getAllAppointments = async (req, res) => {
   try {
-    const { userId, customerId, employeeId, page = 1, limit = 50 } = req.query;
+    const loggedInUserId = req.user.userId;
+    const userRole = req.user.role;
+    
+    // Check if user is authenticated
+    if (!loggedInUserId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const { userId, customerId, employeeId, start, end, page = 1, limit = 1000 } = req.query;
 
     const skip = (page - 1) * limit;
 
     // Build where clause
     const where = {};
-    if (userId) where.userId = userId;
+    
+    // Filter by userId - if admin, can see all, otherwise only own appointments
+    if (userRole === 'admin' && userId) {
+      where.userId = userId;
+    } else {
+      // Non-admin users can only see their own appointments
+      where.userId = loggedInUserId;
+    }
+    
     if (customerId) where.customerId = customerId;
-    if (employeeId) where.employeeId = parseInt(employeeId);
+    if (employeeId) where.employeeId = parseInt(employeeId); // Legacy filter
+    // New filter by staffId
+    const { staffId } = req.query;
+    if (staffId) where.staffId = staffId;
+
+    // Add date range filtering if provided
+    // Filter by startDate range (appointments that overlap with the requested range)
+    // An appointment overlaps if: startDate < end AND (endDate > start OR endDate is null)
+    if (start && end) {
+      where.AND = [
+        {
+          startDate: {
+            lt: new Date(end) // Appointment starts before range ends
+          }
+        },
+        {
+          OR: [
+            {
+              endDate: {
+                gt: new Date(start) // Appointment ends after range starts
+              }
+            },
+            {
+              endDate: null // Include appointments without endDate
+            }
+          ]
+        }
+      ];
+    } else if (start) {
+      // Only start date provided - get appointments after this date
+      where.startDate = {
+        gte: new Date(start)
+      };
+    } else if (end) {
+      // Only end date provided - get appointments before this date
+      where.startDate = {
+        lte: new Date(end)
+      };
+    }
 
     // Get appointments with pagination
     const appointments = await prisma.appointment.findMany({
@@ -1395,6 +1856,23 @@ const getAllAppointments = async (req, res) => {
             phoneNumber: true
           }
         },
+        staff: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            duration: true,
+            price: true,
+            color: true
+          }
+        },
         payments: {
           select: {
             id: true,
@@ -1402,17 +1880,9 @@ const getAllAppointments = async (req, res) => {
             status: true,
             paymentDate: true
           }
-        },
-        reviews: {
-          select: {
-            id: true,
-            rating: true,
-            message: true,
-            status: true
-          }
         }
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { startDate: 'asc' }, // Order by startDate instead of createdAt
       skip: parseInt(skip),
       take: parseInt(limit)
     });
@@ -1432,7 +1902,8 @@ const getAllAppointments = async (req, res) => {
 
   } catch (error) {
     console.error('Get appointments error:', error);
-    return errorResponse(res, 'Failed to retrieve appointments', 500);
+    console.error('Error details:', error.message, error.stack);
+    return errorResponse(res, `Failed to retrieve appointments: ${error.message}`, 500);
   }
 };
 
@@ -1461,6 +1932,23 @@ const getAppointmentById = async (req, res) => {
             email: true,
             phoneNumber: true,
             whatsappNumber: true
+          }
+        },
+        staff: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            duration: true,
+            price: true,
+            color: true
           }
         },
         payments: {
@@ -1522,6 +2010,23 @@ const getAppointmentsByCustomerId = async (req, res) => {
             email: true,
             phoneNumber: true,
             whatsappNumber: true
+          }
+        },
+        staff: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            duration: true,
+            price: true,
+            color: true
           }
         },
         payments: {
@@ -1598,6 +2103,497 @@ const getAppointmentsByCustomerId = async (req, res) => {
   } catch (error) {
     console.error('Get appointments by customer ID error:', error);
     return errorResponse(res, 'Failed to retrieve appointments', 500);
+  }
+};
+
+// Create appointment (authenticated users only)
+const createAppointment = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if user is authenticated
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const {
+      customerId,
+      customerPhone,
+      customerFullName,
+      startDate,
+      endDate,
+      duration,
+      selectedServices,
+      employeeId, // Legacy field
+      employeeName,
+      staffId, // New field - Staff table ID (String)
+      serviceId, // New field - Service table ID (String)
+      source,
+      byCustomer
+    } = req.body;
+
+    // Validate required fields
+    if (!customerId && !customerPhone) {
+      return errorResponse(res, 'Either customerId or customerPhone is required', 400);
+    }
+
+    if (!startDate || !endDate) {
+      return errorResponse(res, 'startDate and endDate are required', 400);
+    }
+
+    // Helper function to parse date safely
+    const parseDateSafely = (dateString) => {
+      if (!dateString) return null;
+      if (dateString instanceof Date) return dateString;
+      
+      try {
+        const parsedDate = new Date(dateString);
+        if (isNaN(parsedDate.getTime())) {
+          return null;
+        }
+        return parsedDate;
+      } catch (error) {
+        return null;
+      }
+    };
+
+    let finalCustomerId = customerId;
+    let finalUserId = userId;
+
+    // Get customer data to populate customerFullName
+    let finalCustomerFullName = customerFullName || null;
+    
+    // If customerPhone is provided but no customerId, find or create customer
+    if (!finalCustomerId && customerPhone) {
+      const formattedPhone = formatIsraeliPhone(customerPhone);
+      
+      // Find existing customer by phone
+      let existingCustomer = await prisma.customers.findFirst({
+        where: {
+          customerPhone: formattedPhone
+        }
+      });
+
+      if (existingCustomer) {
+        finalCustomerId = existingCustomer.id;
+        finalUserId = existingCustomer.userId || userId;
+        // Use customer's full name if not provided in request
+        if (!finalCustomerFullName && existingCustomer.customerFullName) {
+          finalCustomerFullName = existingCustomer.customerFullName;
+        }
+      } else {
+        // Create new customer if not found
+        const nameParts = customerFullName ? customerFullName.split(' ') : ['', ''];
+        const newCustomer = await prisma.customers.create({
+          data: {
+            firstName: nameParts[0] || null,
+            lastName: nameParts.slice(1).join(' ') || null,
+            customerPhone: formattedPhone,
+            customerFullName: customerFullName || null,
+            appointmentCount: 0,
+            userId: userId
+          }
+        });
+        finalCustomerId = newCustomer.id;
+        finalUserId = userId;
+        finalCustomerFullName = newCustomer.customerFullName;
+
+        // Create CustomerUser relation
+        await prisma.customerUser.create({
+          data: {
+            customerId: finalCustomerId,
+            userId: userId,
+            status: 'new'
+          }
+        });
+
+        // Create CustomerStatusLog
+        await prisma.customerStatusLog.create({
+          data: {
+            customerId: finalCustomerId,
+            userId: userId,
+            oldStatus: null,
+            newStatus: 'New',
+            reason: 'New appointment created from calendar'
+          }
+        });
+      }
+    } else if (finalCustomerId && !finalCustomerFullName) {
+      // If customerId is provided but customerFullName is not, fetch it from customer
+      const customer = await prisma.customers.findUnique({
+        where: { id: finalCustomerId },
+        select: { customerFullName: true }
+      });
+      if (customer && customer.customerFullName) {
+        finalCustomerFullName = customer.customerFullName;
+      }
+    }
+
+    // Check subscription BEFORE processing appointment
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        role: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const subscriptionCheck = await checkUserSubscription(user);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      const errorMessage = subscriptionCheck.reason === 'Subscription expired'
+        ? 'Subscription expired. Appointment cannot be created. Please renew subscription to continue.'
+        : 'Active subscription required. Appointment cannot be created without an active subscription.';
+      return errorResponse(res, errorMessage, 403);
+    }
+
+    // Parse dates
+    const parsedStartDate = parseDateSafely(startDate);
+    const parsedEndDate = parseDateSafely(endDate);
+
+    if (!parsedStartDate || !parsedEndDate) {
+      return errorResponse(res, 'Invalid date format for startDate or endDate', 400);
+    }
+
+    // Validate staffId if provided
+    let finalStaffId = staffId || null;
+    if (finalStaffId) {
+      const staffExists = await prisma.staff.findUnique({
+        where: { id: finalStaffId },
+        select: { id: true, businessId: true }
+      });
+      if (!staffExists) {
+        return errorResponse(res, 'Staff not found', 404);
+      }
+      // Verify staff belongs to the same business
+      if (staffExists.businessId !== userId) {
+        return errorResponse(res, 'Staff does not belong to your business', 403);
+      }
+    } else if (employeeId) {
+      // Legacy: Try to find staff by employeeId (if it's a staff ID from old system)
+      // This is for backward compatibility
+      // Note: employeeId is Int, staffId is String, so we can't directly map
+      // For now, we'll keep employeeId as is for legacy support
+    }
+
+    // Validate serviceId if provided
+    let finalServiceId = serviceId || null;
+    if (finalServiceId) {
+      const serviceExists = await prisma.service.findUnique({
+        where: { id: finalServiceId },
+        select: { id: true, businessId: true }
+      });
+      if (!serviceExists) {
+        return errorResponse(res, 'Service not found', 404);
+      }
+      // Verify service belongs to the same business
+      if (serviceExists.businessId !== userId) {
+        return errorResponse(res, 'Service does not belong to your business', 403);
+      }
+    }
+
+    // Create appointment
+    const appointmentData = {
+      source: source || 'calendar',
+      endDate: parsedEndDate,
+      duration: duration || null,
+      startDate: parsedStartDate,
+      businessId: null,
+      byCustomer: byCustomer || false,
+      createDate: new Date(),
+      employeeId: employeeId ? parseInt(employeeId) : null, // Legacy field
+      businessName: null,
+      employeeName: employeeName || null,
+      customerPhone: customerPhone ? formatIsraeliPhone(customerPhone) : null,
+      appointmentCount: 0,
+      customerFullName: finalCustomerFullName, // Use the resolved customerFullName
+      selectedServices: selectedServices || null, // Legacy field
+      customerId: finalCustomerId,
+      userId: finalUserId,
+      staffId: finalStaffId, // New field
+      serviceId: finalServiceId // New field
+    };
+
+    const newAppointment = await prisma.appointment.create({
+      data: appointmentData,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        },
+        staff: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            duration: true,
+            price: true,
+            color: true
+          }
+        }
+      }
+    });
+
+    // Update customer appointment count
+    if (finalCustomerId) {
+      await prisma.customers.update({
+        where: { id: finalCustomerId },
+        data: {
+          appointmentCount: {
+            increment: 1
+          }
+        }
+      });
+    }
+
+    // Create webhook log entry for this appointment (similar to handleAppointmentWebhook)
+    const webhookLogData = {
+      BusinessName: newAppointment.user?.businessName || null,
+      CustomerPhone: customerPhone ? formatIsraeliPhone(customerPhone) : null,
+      CustomerFullName: customerFullName || newAppointment.customer?.customerFullName || null,
+      CustomerEmail: newAppointment.customer?.email || null,
+      StartDate: parsedStartDate ? parsedStartDate.toISOString() : null,
+      EndDate: parsedEndDate ? parsedEndDate.toISOString() : null,
+      Duration: duration || null,
+      SelectedServices: selectedServices || null,
+      EmployeeId: employeeId ? parseInt(employeeId) : null,
+      EmployeeName: employeeName || null,
+      Source: source || 'calendar',
+      ByCustomer: byCustomer || false,
+      AppointmentCount: newAppointment.customer?.appointmentCount || 0
+    };
+
+    await prisma.webhookLog.create({
+      data: {
+        data: webhookLogData,
+        type: 'appointment',
+        status: 'processed' // Mark as processed since it's created by authenticated user
+      }
+    });
+
+    return successResponse(res, newAppointment, 'Appointment created successfully', 201);
+
+  } catch (error) {
+    console.error('Create appointment error:', error);
+    return errorResponse(res, 'Failed to create appointment', 500);
+  }
+};
+
+// Update appointment (authenticated users only)
+const updateAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if user is authenticated
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const {
+      customerId,
+      customerPhone,
+      customerFullName,
+      startDate,
+      endDate,
+      duration,
+      selectedServices,
+      employeeId,
+      employeeName,
+      source,
+      byCustomer
+    } = req.body;
+
+    // Check if appointment exists and belongs to user
+    let appointment;
+    if (userRole === 'admin') {
+      appointment = await prisma.appointment.findUnique({
+        where: { id }
+      });
+    } else {
+      appointment = await prisma.appointment.findFirst({
+        where: {
+          id,
+          userId: userId
+        }
+      });
+    }
+
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    // Helper function to parse date safely
+    const parseDateSafely = (dateString) => {
+      if (!dateString) return null;
+      if (dateString instanceof Date) return dateString;
+      
+      try {
+        const parsedDate = new Date(dateString);
+        if (isNaN(parsedDate.getTime())) {
+          return null;
+        }
+        return parsedDate;
+      } catch (error) {
+        return null;
+      }
+    };
+
+    // Build update data
+    const updateData = {};
+    
+    if (startDate !== undefined) {
+      const parsedStartDate = parseDateSafely(startDate);
+      if (parsedStartDate) {
+        updateData.startDate = parsedStartDate;
+      }
+    }
+    
+    if (endDate !== undefined) {
+      const parsedEndDate = parseDateSafely(endDate);
+      if (parsedEndDate) {
+        updateData.endDate = parsedEndDate;
+      }
+    }
+    
+    if (duration !== undefined) updateData.duration = duration;
+    if (selectedServices !== undefined) updateData.selectedServices = selectedServices;
+    if (employeeId !== undefined) updateData.employeeId = employeeId ? parseInt(employeeId) : null;
+    if (employeeName !== undefined) updateData.employeeName = employeeName;
+    if (source !== undefined) updateData.source = source;
+    if (byCustomer !== undefined) updateData.byCustomer = byCustomer;
+    if (customerPhone !== undefined) updateData.customerPhone = customerPhone ? formatIsraeliPhone(customerPhone) : null;
+    if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
+
+    // Update customer if customerId changed
+    if (customerId !== undefined && customerId !== appointment.customerId) {
+      updateData.customerId = customerId;
+    }
+
+    // Update appointment
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            customerFullName: true,
+            customerPhone: true,
+            selectedServices: true,
+            email: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    return successResponse(res, updatedAppointment, 'Appointment updated successfully');
+  } catch (error) {
+    console.error('Update appointment error:', error);
+    return errorResponse(res, 'Failed to update appointment', 500);
+  }
+};
+
+// Delete appointment (authenticated users only)
+const deleteAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if user is authenticated
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    // Check if appointment exists and belongs to user
+    let appointment;
+    if (userRole === 'admin') {
+      appointment = await prisma.appointment.findUnique({
+        where: { id },
+        include: {
+          customer: {
+            select: {
+              id: true
+            }
+          }
+        }
+      });
+    } else {
+      appointment = await prisma.appointment.findFirst({
+        where: {
+          id,
+          userId: userId
+        },
+        include: {
+          customer: {
+            select: {
+              id: true
+            }
+          }
+        }
+      });
+    }
+
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    // Delete appointment
+    await prisma.appointment.delete({
+      where: { id }
+    });
+
+    // Decrement customer appointment count if customer exists
+    if (appointment.customerId && appointment.customer) {
+      await prisma.customers.update({
+        where: { id: appointment.customerId },
+        data: {
+          appointmentCount: {
+            decrement: 1
+          }
+        }
+      });
+    }
+
+    return successResponse(res, { id, message: 'Appointment deleted successfully' }, 'Appointment deleted successfully');
+  } catch (error) {
+    console.error('Delete appointment error:', error);
+    return errorResponse(res, 'Failed to delete appointment', 500);
   }
 };
 
@@ -1973,6 +2969,10 @@ module.exports = {
   getAllAppointments,
   getAppointmentById,
   getAppointmentsByCustomerId,
+  createAppointment,
+  updateAppointment,
+  deleteAppointment,
+  createPayment,
   createWhatsappMessageWithValidation
 };
 

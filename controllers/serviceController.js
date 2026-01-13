@@ -1,0 +1,413 @@
+const prisma = require('../lib/prisma');
+const { successResponse, errorResponse } = require('../lib/utils');
+const stripe = require('../lib/stripe').stripe;
+
+// Helper function to check if user has active subscription (Stripe API only)
+const checkUserSubscription = async (user) => {
+  // Admin users don't need subscription
+  if (user.role === 'admin') {
+    return { hasActiveSubscription: true };
+  }
+
+  // Check Stripe API directly - no database fallback
+  if (!user.stripeSubscriptionId) {
+    return { hasActiveSubscription: false, reason: 'No subscription found. Please subscribe to continue.' };
+  }
+
+  try {
+    const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+    
+    // Check subscription status from Stripe
+    const stripeStatus = subscription.status?.toLowerCase();
+    if (!stripeStatus || 
+        stripeStatus === 'canceled' || 
+        stripeStatus === 'unpaid' ||
+        stripeStatus === 'past_due' ||
+        stripeStatus === 'incomplete' ||
+        stripeStatus === 'incomplete_expired') {
+      return { hasActiveSubscription: false, reason: 'Subscription not active' };
+    }
+
+    // Check current_period_end from Stripe (Unix timestamp in seconds)
+    if (subscription.current_period_end) {
+      const expiryTimestamp = subscription.current_period_end * 1000; // Convert to milliseconds
+      const now = Date.now();
+      if (expiryTimestamp < now) {
+        return { hasActiveSubscription: false, reason: 'Subscription expired' };
+      }
+    }
+
+    // Stripe subscription is active and not expired
+    return { hasActiveSubscription: true };
+  } catch (stripeError) {
+    // If Stripe API call fails, return false
+    console.error('Error checking Stripe subscription:', stripeError.message);
+    return { hasActiveSubscription: false, reason: 'Failed to verify subscription. Please try again.' };
+  }
+};
+
+// Get all services for the logged-in user
+const getAllServices = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Build where clause based on role
+    const where = {
+      isDeleted: false,
+      ...(userRole !== 'admin' && { businessId: userId })
+    };
+
+    const services = await prisma.service.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    return successResponse(res, {
+      services,
+      total: services.length
+    });
+
+  } catch (error) {
+    console.error('Get all services error:', error);
+    return errorResponse(res, 'Failed to fetch services', 500);
+  }
+};
+
+// Get service by ID
+const getServiceById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    const where = {
+      id,
+      isDeleted: false,
+      ...(userRole !== 'admin' && { businessId: userId })
+    };
+
+    const service = await prisma.service.findFirst({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    if (!service) {
+      return errorResponse(res, 'Service not found', 404);
+    }
+
+    return successResponse(res, service);
+
+  } catch (error) {
+    console.error('Get service by ID error:', error);
+    return errorResponse(res, 'Failed to fetch service', 500);
+  }
+};
+
+// Create new service
+const createService = async (req, res) => {
+  try {
+    const { name, notes, category, price, duration, color, hideFromClients } = req.body;
+    const userId = req.user.userId;
+
+    // Validate required fields
+    if (!name || !name.trim()) {
+      return errorResponse(res, 'Service name is required', 400);
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return errorResponse(res, 'Valid price is required', 400);
+    }
+
+    if (!duration || duration <= 0) {
+      return errorResponse(res, 'Valid duration (in minutes) is required', 400);
+    }
+
+    // Check if user exists and fetch subscription info
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check subscription status
+    const { hasActiveSubscription, message: subscriptionMessage } = await checkUserSubscription(user);
+
+    if (!hasActiveSubscription) {
+      return errorResponse(res, subscriptionMessage || 'No active subscription found. Please subscribe to create services.', 403);
+    }
+
+    // Create service
+    const service = await prisma.service.create({
+      data: {
+        name: name.trim(),
+        notes: notes?.trim() || null,
+        category: category?.trim() || null,
+        price: parseFloat(price),
+        duration: parseInt(duration),
+        color: color || '#FF257C',
+        hideFromClients: hideFromClients || false,
+        businessId: userId
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    return successResponse(res, service, 'Service created successfully', 201);
+
+  } catch (error) {
+    console.error('Create service error:', error);
+    return errorResponse(res, 'Failed to create service', 500);
+  }
+};
+
+// Update service
+const updateService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, notes, category, price, duration, color, hideFromClients, isActive } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if service exists and belongs to user
+    const where = {
+      id,
+      isDeleted: false,
+      ...(userRole !== 'admin' && { businessId: userId })
+    };
+
+    const existingService = await prisma.service.findFirst({ where });
+
+    if (!existingService) {
+      return errorResponse(res, 'Service not found', 404);
+    }
+
+    // Fetch user to check subscription status
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check subscription status
+    const { hasActiveSubscription, message: subscriptionMessage } = await checkUserSubscription(user);
+
+    if (!hasActiveSubscription) {
+      return errorResponse(res, subscriptionMessage || 'No active subscription found. Please subscribe to update services.', 403);
+    }
+
+    // Validate required fields if provided
+    if (name !== undefined && !name.trim()) {
+      return errorResponse(res, 'Service name cannot be empty', 400);
+    }
+
+    if (price !== undefined && (price < 0 || isNaN(price))) {
+      return errorResponse(res, 'Price must be a valid positive number', 400);
+    }
+
+    if (duration !== undefined && (duration <= 0 || isNaN(duration))) {
+      return errorResponse(res, 'Duration must be a valid positive number', 400);
+    }
+
+    // Build update data
+    const updateData = {};
+    if (name !== undefined) updateData.name = name.trim();
+    if (notes !== undefined) updateData.notes = notes?.trim() || null;
+    if (category !== undefined) updateData.category = category?.trim() || null;
+    if (price !== undefined) updateData.price = parseFloat(price);
+    if (duration !== undefined) updateData.duration = parseInt(duration);
+    if (color !== undefined) updateData.color = color || '#FF257C';
+    if (hideFromClients !== undefined) updateData.hideFromClients = hideFromClients;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    // Update service
+    const service = await prisma.service.update({
+      where: { id },
+      data: updateData,
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    return successResponse(res, service, 'Service updated successfully');
+
+  } catch (error) {
+    console.error('Update service error:', error);
+    return errorResponse(res, 'Failed to update service', 500);
+  }
+};
+
+// Delete service (soft delete)
+const deleteService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // Check if service exists and belongs to user
+    const where = {
+      id,
+      isDeleted: false,
+      ...(userRole !== 'admin' && { businessId: userId })
+    };
+
+    const existingService = await prisma.service.findFirst({ where });
+
+    if (!existingService) {
+      return errorResponse(res, 'Service not found', 404);
+    }
+
+    // Fetch user to check subscription status
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check subscription status
+    const { hasActiveSubscription, message: subscriptionMessage } = await checkUserSubscription(user);
+
+    if (!hasActiveSubscription) {
+      return errorResponse(res, subscriptionMessage || 'No active subscription found. Please subscribe to delete services.', 403);
+    }
+
+    // Soft delete
+    await prisma.service.update({
+      where: { id },
+      data: {
+        isDeleted: true,
+        isActive: false
+      }
+    });
+
+    return successResponse(res, null, 'Service deleted successfully');
+
+  } catch (error) {
+    console.error('Delete service error:', error);
+    return errorResponse(res, 'Failed to delete service', 500);
+  }
+};
+
+// Delete multiple services (bulk delete)
+const deleteMultipleServices = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return errorResponse(res, 'Service IDs array is required', 400);
+    }
+
+    // Fetch user to check subscription status
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        subscriptionStatus: true,
+        subscriptionExpirationDate: true,
+        stripeSubscriptionId: true
+      }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    // Check subscription status
+    const { hasActiveSubscription, message: subscriptionMessage } = await checkUserSubscription(user);
+
+    if (!hasActiveSubscription) {
+      return errorResponse(res, subscriptionMessage || 'No active subscription found. Please subscribe to delete services.', 403);
+    }
+
+    // Build where clause
+    const where = {
+      id: { in: ids },
+      isDeleted: false,
+      ...(userRole !== 'admin' && { businessId: userId })
+    };
+
+    // Soft delete all
+    await prisma.service.updateMany({
+      where,
+      data: {
+        isDeleted: true,
+        isActive: false
+      }
+    });
+
+    return successResponse(res, { deletedCount: ids.length }, 'Services deleted successfully');
+
+  } catch (error) {
+    console.error('Delete multiple services error:', error);
+    return errorResponse(res, 'Failed to delete services', 500);
+  }
+};
+
+module.exports = {
+  getAllServices,
+  getServiceById,
+  createService,
+  updateService,
+  deleteService,
+  deleteMultipleServices
+};

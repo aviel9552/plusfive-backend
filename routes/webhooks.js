@@ -30,6 +30,10 @@ const {
   getAllAppointments,
   getAppointmentById,
   getAppointmentsByCustomerId,
+  createAppointment,
+  updateAppointment,
+  deleteAppointment,
+  createPayment,
   createWhatsappMessageWithValidation,
 } = require('../controllers/webhookController');
 
@@ -62,6 +66,7 @@ router.patch('/logs/:id/status', authenticateToken, updateWebhookLogStatus);
 /**
  * Payment webhook records
  */
+router.post('/payments', authenticateToken, createPayment);
 router.get('/payment-webhooks', authenticateToken, getAllPaymentWebhooks);
 router.get('/payment-webhooks/:id', authenticateToken, getPaymentWebhookById);
 router.get(
@@ -73,8 +78,11 @@ router.get(
 /**
  * Appointments
  */
+router.post('/appointments', authenticateToken, createAppointment);
 router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
+router.put('/appointments/:id', authenticateToken, updateAppointment);
+router.delete('/appointments/:id', authenticateToken, deleteAppointment);
 router.get(
   '/appointments/customer/:customerId',
   authenticateToken,
