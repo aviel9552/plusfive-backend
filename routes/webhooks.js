@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const { authenticateToken } = require('../middleware/auth');
+const { checkSubscription } = require('../middleware/subscription');
 
 /**
  * IMPORTANT:
@@ -78,7 +79,9 @@ router.get(
 /**
  * Appointments
  */
-router.post('/appointments', authenticateToken, createAppointment);
+// POST, PUT, DELETE routes - Require active subscription (checked directly from Stripe)
+router.post('/appointments', authenticateToken, checkSubscription, createAppointment);
+// GET routes - No subscription check required
 router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
 router.put('/appointments/:id', authenticateToken, updateAppointment);

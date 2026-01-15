@@ -207,10 +207,17 @@ model Customers {
   employeeId      Int?     // Employee ID
   businessName    String?     // Business Name
   
+  // Location fields
+  address         String?  // Customer address
+  city            String?  // Customer city
+  
   // Image fields
   profileImage    String?  // Profile image URL
   coverImage      String?  // Cover image URL
   documentImage   String?  // Document image URL
+  
+  // Status
+  isActive        Boolean  @default(true) // Customer active status
   
   // Relations
   userId          String?  // Reference to User table (business owner)

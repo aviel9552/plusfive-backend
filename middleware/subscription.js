@@ -1,38 +1,25 @@
-const prisma = require('../lib/prisma');
 const { errorResponse } = require('../lib/utils');
+const { checkUserSubscription } = require('../lib/subscriptionUtils');
 
 const checkSubscription = async (req, res, next) => {
   try {
-    const userId = req.user?.userId;
-
-    if (!userId) {
-      return errorResponse(res, 'User not authenticated', 401);
+    // Check if user exists in request (from auth middleware)
+    if (!req.user || !req.user.userId) {
+      return errorResponse(res, 'Authentication required', 401);
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        subscriptionStatus: true,
-        role: true,
-      },
-    });
+    // Check subscription status directly from Stripe using reusable utility
+    const subscriptionCheck = await checkUserSubscription(req.user.userId);
 
-    if (!user) {
-      return errorResponse(res, 'User not found', 404);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      return errorResponse(
+        res,
+        subscriptionCheck.reason || 'Subscription required. Please subscribe to continue.',
+        403
+      );
     }
 
-    if (user.role === 'admin') {
-      console.log('👑 Admin passed subscription check:', user.email);
-      return next();
-    }
-
-    const subscriptionStatus = user.subscriptionStatus?.toLowerCase() || 'unknown';
-
-    console.log('🔓 BYPASS SUB CHECK for user:', user.email, '| status:', subscriptionStatus);
-    return next();   // ← אין יותר קוד אחרי זה
-
+    next();
   } catch (error) {
     console.error('Subscription check error:', error);
     return errorResponse(res, 'Failed to verify subscription status', 500);

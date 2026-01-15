@@ -1,50 +1,7 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const stripe = require('../lib/stripe').stripe;
-
-// Helper function to check if user has active subscription (Stripe API only)
-const checkUserSubscription = async (user) => {
-  // Admin users don't need subscription
-  if (user.role === 'admin') {
-    return { hasActiveSubscription: true };
-  }
-
-  // Check Stripe API directly - no database fallback
-  if (!user.stripeSubscriptionId) {
-    return { hasActiveSubscription: false, reason: 'No subscription found. Please subscribe to continue.' };
-  }
-
-  try {
-    const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-    
-    // Check subscription status from Stripe
-    const stripeStatus = subscription.status?.toLowerCase();
-    if (!stripeStatus || 
-        stripeStatus === 'canceled' || 
-        stripeStatus === 'unpaid' ||
-        stripeStatus === 'past_due' ||
-        stripeStatus === 'incomplete' ||
-        stripeStatus === 'incomplete_expired') {
-      return { hasActiveSubscription: false, reason: 'Subscription not active' };
-    }
-
-    // Check current_period_end from Stripe (Unix timestamp in seconds)
-    if (subscription.current_period_end) {
-      const expiryTimestamp = subscription.current_period_end * 1000; // Convert to milliseconds
-      const now = Date.now();
-      if (expiryTimestamp < now) {
-        return { hasActiveSubscription: false, reason: 'Subscription expired' };
-      }
-    }
-
-    // Stripe subscription is active and not expired
-    return { hasActiveSubscription: true };
-  } catch (stripeError) {
-    // If Stripe API call fails, return false
-    console.error('Error checking Stripe subscription:', stripeError.message);
-    return { hasActiveSubscription: false, reason: 'Failed to verify subscription. Please try again.' };
-  }
-};
+const { checkUserSubscription } = require('../lib/subscriptionUtils');
 
 // Get all staff for the logged-in user
 const getAllStaff = async (req, res) => {

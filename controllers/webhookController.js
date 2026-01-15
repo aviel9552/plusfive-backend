@@ -26,69 +26,8 @@ const formatIsraeliPhone = (phoneNumber) => {
 };
 
 // Helper function to check if user has active subscription
-// Checks Stripe API first (most reliable), then falls back to database
-const checkUserSubscription = async (user) => {
-  // Admin users don't need subscription
-  if (user.role === 'admin') {
-    return { hasActiveSubscription: true };
-  }
-
-  // FIRST: Check Stripe API if stripeSubscriptionId is available (most reliable source)
-  if (user.stripeSubscriptionId) {
-    try {
-      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-      
-      // Check subscription status from Stripe
-      const stripeStatus = subscription.status?.toLowerCase();
-      if (!stripeStatus || 
-          stripeStatus === 'canceled' || 
-          stripeStatus === 'unpaid' ||
-          stripeStatus === 'past_due' ||
-          stripeStatus === 'incomplete' ||
-          stripeStatus === 'incomplete_expired') {
-        return { hasActiveSubscription: false, reason: 'Subscription not active' };
-      }
-
-      // Check current_period_end from Stripe (Unix timestamp in seconds)
-      if (subscription.current_period_end) {
-        const expiryTimestamp = subscription.current_period_end * 1000; // Convert to milliseconds
-        const now = Date.now();
-        if (expiryTimestamp < now) {
-          return { hasActiveSubscription: false, reason: 'Subscription expired' };
-        }
-      }
-
-      // Stripe subscription is active and not expired
-      return { hasActiveSubscription: true };
-    } catch (stripeError) {
-      // If Stripe API call fails, fall back to database check
-      console.error('Error checking Stripe subscription:', stripeError.message);
-    }
-  }
-
-  // SECOND: Fallback to database fields if Stripe check failed or no stripeSubscriptionId
-  const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
-  
-  // Block if subscription is not active
-  if (!subscriptionStatus || 
-      subscriptionStatus === 'pending' || 
-      subscriptionStatus === 'canceled' || 
-      subscriptionStatus === 'inactive' ||
-      subscriptionStatus === 'expired') {
-    return { hasActiveSubscription: false, reason: 'Subscription not active' };
-  }
-
-  // Check expiration date from database
-  if (user.subscriptionExpirationDate) {
-    const now = new Date();
-    const expirationDate = new Date(user.subscriptionExpirationDate);
-    if (expirationDate < now) {
-      return { hasActiveSubscription: false, reason: 'Subscription expired' };
-    }
-  }
-
-  return { hasActiveSubscription: true };
-};
+// Import reusable subscription check utility
+const { checkUserSubscription } = require('../lib/subscriptionUtils');
 
 // Handle appointment webhook - store any data without validation
 const handleAppointmentWebhook = async (req, res) => {
