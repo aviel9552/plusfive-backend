@@ -229,9 +229,10 @@ class AdminDashboardController {
   // Get revenue impact over months
   getRevenueImpact = async (req, res) => {
     try {
-      const { months = 7 } = req.query;
+      const { months = 7, year } = req.query;
       const authenticatedUser = req.user;
       const currentDate = new Date();
+      const targetYear = year ? parseInt(year) : currentDate.getFullYear();
       const revenueData = [];
 
       // Build where clause based on user role
@@ -244,7 +245,10 @@ class AdminDashboardController {
       }
 
       for (let i = months - 1; i >= 0; i--) {
-        const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        // Calculate target date based on targetYear if provided, otherwise use current year
+        const baseYear = targetYear || currentDate.getFullYear();
+        const baseMonth = currentDate.getMonth();
+        const targetDate = new Date(baseYear, baseMonth - i, 1);
         const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
         const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
 

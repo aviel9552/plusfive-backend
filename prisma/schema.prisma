@@ -552,4 +552,20 @@ model Service {
   updatedAt         DateTime @updatedAt
   
   @@map("services")
+}
+
+// Category table - Store service categories
+model Category {
+  id          String   @id @default(cuid())
+  
+  // Category details
+  title       String   // Category title (required)
+  status      String   @default("active") // active, inactive
+  isDeleted   Boolean  @default(false) // Soft delete flag
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("categories")
 } 

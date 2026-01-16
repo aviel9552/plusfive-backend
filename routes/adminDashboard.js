@@ -28,7 +28,7 @@ router.get('/admin-summary', adminDashboardController.getAdminSummary);
 router.get('/overview', adminDashboardController.getDashboardOverview);
 
 // Get QR Code Analytics with ScanCount and ShareCount
-// GET /api/admin-dashboard/qr-analytics?period=monthly
+// GET /api/admin-dashboard/qr-analytics?period=monthly&year=2026
 router.get('/qr-analytics', adminDashboardController.getQRCodeAnalytics);
 
 // Get revenue impact over months

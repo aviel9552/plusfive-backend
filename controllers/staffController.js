@@ -145,7 +145,7 @@ const createStaff = async (req, res) => {
 const updateStaff = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phone, email, city, address } = req.body;
+    const { fullName, phone, email, city, address, isActive } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -202,7 +202,8 @@ const updateStaff = async (req, res) => {
         ...(phone !== undefined && { phone }),
         ...(email !== undefined && { email: email || null }),
         ...(city !== undefined && { city: city || null }),
-        ...(address !== undefined && { address: address || null })
+        ...(address !== undefined && { address: address || null }),
+        ...(isActive !== undefined && { isActive })
       },
       include: {
         user: {
