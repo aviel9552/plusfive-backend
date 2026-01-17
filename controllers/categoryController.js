@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { constants } = require('../config');
 
 // Get all categories
 const getAllCategories = async (req, res) => {
@@ -58,7 +59,7 @@ const createCategory = async (req, res) => {
     const userRole = req.user.role;
 
     // Only admin users can create categories
-    if (userRole !== 'admin') {
+    if (userRole !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Access denied. Only admin users can create categories.', 403);
     }
 
@@ -83,7 +84,7 @@ const createCategory = async (req, res) => {
     const category = await prisma.category.create({
       data: {
         title: title.trim(),
-        status: status || 'active'
+        status: status || constants.STATUS.ACTIVE
       }
     });
 
@@ -103,7 +104,7 @@ const updateCategory = async (req, res) => {
     const userRole = req.user.role;
 
     // Only admin users can update categories
-    if (userRole !== 'admin') {
+    if (userRole !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Access denied. Only admin users can update categories.', 403);
     }
 
@@ -165,7 +166,7 @@ const deleteCategory = async (req, res) => {
     const userRole = req.user.role;
 
     // Only admin users can delete categories
-    if (userRole !== 'admin') {
+    if (userRole !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Access denied. Only admin users can delete categories.', 403);
     }
 
@@ -207,7 +208,7 @@ const deleteMultipleCategories = async (req, res) => {
     const userRole = req.user.role;
 
     // Only admin users can delete categories
-    if (userRole !== 'admin') {
+    if (userRole !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Access denied. Only admin users can delete categories.', 403);
     }
 

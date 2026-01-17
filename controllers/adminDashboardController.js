@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { constants } = require('../config');
 
 class AdminDashboardController {
   // Get monthly performance metrics
@@ -26,11 +27,11 @@ class AdminDashboardController {
         LEFT JOIN "customer_users" cu ON c.id = cu."customerId" 
           AND cu."userId" = c."userId" 
           AND cu."isDeleted" = false
-        ${authenticatedUser.role === 'user' ? 'WHERE c."userId" = $1' : 'WHERE 1=1'}
+        ${authenticatedUser.role === constants.ROLES.USER ? 'WHERE c."userId" = $1' : 'WHERE 1=1'}
         GROUP BY COALESCE(cu.status, 'active')
       `;
 
-      const statusParams = authenticatedUser.role === 'user' ? [authenticatedUser.userId] : [];
+      const statusParams = authenticatedUser.role === constants.ROLES.USER ? [authenticatedUser.userId] : [];
       const statusResults = await prisma.$queryRawUnsafe(statusCountsQuery, ...statusParams);
 
       // Process status counts
@@ -58,7 +59,7 @@ class AdminDashboardController {
       // Recovered Customers (customers with recovered status)
       const recoveredCustomers = await prisma.customerUser.count({
         where: {
-          status: 'recovered',
+          status: constants.CUSTOMER_STATUS.RECOVERED,
           updatedAt: {
             gte: startDate,
             lte: endDate
@@ -68,7 +69,7 @@ class AdminDashboardController {
 
       const prevRecoveredCustomers = await prisma.customerUser.count({
         where: {
-          status: 'recovered',
+          status: constants.CUSTOMER_STATUS.RECOVERED,
           updatedAt: {
             gte: prevStartDate,
             lte: prevEndDate
@@ -78,10 +79,10 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {
-        status: 'success' // Only count successful payments
+        status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
       };
       
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -93,7 +94,7 @@ class AdminDashboardController {
             gte: startDate,
             lte: endDate
           },
-          revenuePaymentStatus: 'recovered'
+          revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
         },
         _sum: {
           total: true
@@ -107,7 +108,7 @@ class AdminDashboardController {
             gte: prevStartDate,
             lte: prevEndDate
           },
-          revenuePaymentStatus: 'recovered'
+          revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
         },
         _sum: {
           total: true
@@ -124,7 +125,7 @@ class AdminDashboardController {
             gte: startDate,
             lte: endDate
           },
-          revenuePaymentStatus: 'lost'
+          revenuePaymentStatus: constants.CUSTOMER_STATUS.LOST
         },
         _sum: {
           total: true
@@ -138,7 +139,7 @@ class AdminDashboardController {
             gte: prevStartDate,
             lte: prevEndDate
           },
-          revenuePaymentStatus: 'lost'
+          revenuePaymentStatus: constants.CUSTOMER_STATUS.LOST
         },
         _sum: {
           total: true
@@ -237,10 +238,10 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {
-        status: 'success' // Only count successful payments
+        status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
       };
       
-      if (authenticatedUser && authenticatedUser.role === 'user') {
+      if (authenticatedUser && authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -292,7 +293,7 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {};
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -309,14 +310,14 @@ class AdminDashboardController {
         WHERE rating > 0 
         AND "createdAt" >= $1 
         AND "createdAt" <= $2
-        ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+        ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
         GROUP BY EXTRACT(MONTH FROM "createdAt")
         ORDER BY month
       `;
 
       const yearStart = new Date(currentYear, 0, 1);
       const yearEnd = new Date(currentYear, 11, 31, 23, 59, 59);
-      const queryParams = authenticatedUser.role === 'user' 
+      const queryParams = authenticatedUser.role === constants.ROLES.USER 
         ? [yearStart, yearEnd, authenticatedUser.userId]
         : [yearStart, yearEnd];
 
@@ -373,16 +374,16 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {};
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
       // Calculate recovered revenue directly from payment_webhooks using revenuePaymentStatus flag
       const recoveredPayments = await prisma.paymentWebhook.findMany({
         where: {
-          status: 'success',
-          revenuePaymentStatus: 'recovered',
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          status: constants.PAYMENT_STATUS.SUCCESS,
+          revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED,
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
         },
         select: {
           customerId: true,
@@ -411,9 +412,9 @@ class AdminDashboardController {
       // This ensures that only customers who are CURRENTLY at_risk/lost are counted in Lost Revenue.
       const atRiskAndLostCustomers = await prisma.customerUser.findMany({
         where: {
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId }),
           status: {
-            in: ['lost', 'at_risk', 'risk'] // ONLY these statuses are included in Lost Revenue
+            in: [constants.CUSTOMER_STATUS.LOST, constants.CUSTOMER_STATUS.AT_RISK, constants.CUSTOMER_STATUS.RISK] // ONLY these statuses are included in Lost Revenue
             // EXCLUDED: 'recovered', 'active', 'new' - these customers are NOT in Lost Revenue calculation
           },
           isDeleted: false // Only active customer-user relationships
@@ -441,7 +442,7 @@ class AdminDashboardController {
       // Only include: active, recovered, lost, at_risk, risk customers
       const allCustomers = await prisma.customers.findMany({
         where: {
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
         },
         select: {
           id: true,
@@ -452,9 +453,9 @@ class AdminDashboardController {
       // Get customers with status 'new' to exclude them from LTV calculation
       const newStatusCustomers = await prisma.customerUser.findMany({
         where: {
-          status: 'new',
+          status: constants.CUSTOMER_STATUS.NEW,
           isDeleted: false,
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
         },
         select: {
           customerId: true
@@ -484,10 +485,10 @@ class AdminDashboardController {
       
       // Build where conditions for user role filtering
       const userId = authenticatedUser.userId;
-      const userWhereCondition = authenticatedUser.role === 'user' 
+      const userWhereCondition = authenticatedUser.role === constants.ROLES.USER 
         ? `AND a."userId" = '${userId}'` 
         : '';
-      const paymentUserWhereCondition = authenticatedUser.role === 'user' 
+      const paymentUserWhereCondition = authenticatedUser.role === constants.ROLES.USER 
         ? `AND pw."userId" = '${userId}'` 
         : '';
       
@@ -496,7 +497,7 @@ class AdminDashboardController {
         ? `AND c.id NOT IN (${Array.from(newStatusCustomerIds).map(id => `'${id}'`).join(', ')})`
         : '';
       
-      const customerUserWhereCondition = authenticatedUser.role === 'user' 
+      const customerUserWhereCondition = authenticatedUser.role === constants.ROLES.USER 
         ? `WHERE c."userId" = '${userId}' ${excludeNewStatusCondition}`
         : excludeNewStatusCondition ? `WHERE ${excludeNewStatusCondition.replace('AND ', '')}` : '';
 
@@ -523,7 +524,7 @@ class AdminDashboardController {
             COUNT(*) as total_payments
           FROM "payment_webhooks" pw
           WHERE pw."customerId" IS NOT NULL 
-            AND pw.status = 'success' ${paymentUserWhereCondition}
+            AND pw.status = '${constants.PAYMENT_STATUS.SUCCESS}' ${paymentUserWhereCondition}
           GROUP BY pw."customerId"
         ) payment_counts ON c.id = payment_counts."customerId"
         ${customerUserWhereCondition}
@@ -584,8 +585,8 @@ class AdminDashboardController {
           by: ['customerId'],
           where: {
             customerId: { in: customerIds },
-            status: 'success',
-            ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            status: constants.PAYMENT_STATUS.SUCCESS,
+            ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
           },
           _sum: {
             total: true
@@ -672,14 +673,14 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {};
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
       // Get all customers based on user role
       const lostCustomers = await prisma.customerUser.findMany({
         where: {
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
         },
         include: {
           customer: {
@@ -709,7 +710,7 @@ class AdminDashboardController {
         const customerPayments = await prisma.paymentWebhook.findMany({
           where: {
             customerId: customerId,
-            status: 'success'
+            status: constants.PAYMENT_STATUS.SUCCESS
           },
           select: {
             total: true
@@ -802,7 +803,7 @@ class AdminDashboardController {
       let where = {};
       
       // If user role is 'user', only show their data
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -826,16 +827,16 @@ class AdminDashboardController {
               SUM("totalVAT") as total_vat,
               COUNT(*) as transaction_count
             FROM "payment_webhooks"
-            WHERE status = 'success'
-            AND "revenuePaymentStatus" = 'recovered'
+            WHERE status = '${constants.PAYMENT_STATUS.SUCCESS}'
+            AND "revenuePaymentStatus" = '${constants.CUSTOMER_STATUS.RECOVERED}'
             AND "paymentDate" >= $1
             AND "paymentDate" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(YEAR FROM "paymentDate"), EXTRACT(MONTH FROM "paymentDate")
             ORDER BY year, month
           `;
           
-          const monthlyParams = authenticatedUser.role === 'user' 
+          const monthlyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [sixMonthsAgo, monthlyEndDate, authenticatedUser.userId]
             : [sixMonthsAgo, monthlyEndDate];
             
@@ -873,8 +874,8 @@ class AdminDashboardController {
             where: {
               ...where,
               paymentDate: { gte: currentMonthStart, lte: currentMonthEnd },
-              status: 'success',
-              revenuePaymentStatus: 'recovered'
+              status: constants.PAYMENT_STATUS.SUCCESS,
+              revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
             },
             select: {
               total: true,
@@ -948,8 +949,8 @@ class AdminDashboardController {
             where: {
               ...where,
               paymentDate: { gte: lastMonthStart, lte: lastMonthEnd },
-              status: 'success',
-              revenuePaymentStatus: 'recovered'
+              status: constants.PAYMENT_STATUS.SUCCESS,
+              revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
             },
             select: {
               total: true,
@@ -1026,16 +1027,16 @@ class AdminDashboardController {
               SUM("totalVAT") as total_vat,
               COUNT(*) as transaction_count
             FROM "payment_webhooks"
-            WHERE status = 'success'
-            AND "revenuePaymentStatus" = 'recovered'
+            WHERE status = '${constants.PAYMENT_STATUS.SUCCESS}'
+            AND "revenuePaymentStatus" = '${constants.CUSTOMER_STATUS.RECOVERED}'
             AND "paymentDate" >= $1
             AND "paymentDate" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(YEAR FROM "paymentDate")
             ORDER BY year
           `;
           
-          const yearlyParams = authenticatedUser.role === 'user' 
+          const yearlyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [threeYearsAgo, currentYearEnd, authenticatedUser.userId]
             : [threeYearsAgo, currentYearEnd];
             
@@ -1081,7 +1082,7 @@ class AdminDashboardController {
       // Get all customers for this user
       const allCustomers = await prisma.customers.findMany({
         where: {
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
         },
         select: {
           id: true,
@@ -1096,8 +1097,8 @@ class AdminDashboardController {
       // This includes payments from all time to calculate actual LTV
       const allPayments = await prisma.paymentWebhook.findMany({
         where: {
-          status: 'success',
-          ...(authenticatedUser.role === 'user' && { userId: authenticatedUser.userId }),
+          status: constants.PAYMENT_STATUS.SUCCESS,
+          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId }),
           customerId: {
             in: allCustomers.map(c => c.id)
           }
@@ -1278,7 +1279,7 @@ class AdminDashboardController {
 
       // Build where clause based on user role
       let where = {};
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -1293,7 +1294,7 @@ class AdminDashboardController {
       const activeCustomers = await prisma.customerUser.count({
         where: {
           ...where,
-          status: 'active',
+          status: constants.STATUS.ACTIVE,
         }
       });
 
@@ -1301,7 +1302,7 @@ class AdminDashboardController {
       const atRiskCustomers = await prisma.customerUser.count({
         where: {
           ...where,
-          status: 'at_risk'
+          status: constants.CUSTOMER_STATUS.AT_RISK
         }
       });
 
@@ -1309,7 +1310,7 @@ class AdminDashboardController {
       const lostCustomers = await prisma.customerUser.count({
         where: {
           ...where,
-          status: 'lost'
+          status: constants.CUSTOMER_STATUS.LOST
         }
       });
 
@@ -1317,7 +1318,7 @@ class AdminDashboardController {
       const recoveredCustomers = await prisma.customerUser.count({
         where: {
           ...where,
-          status: 'recovered'
+          status: constants.CUSTOMER_STATUS.RECOVERED
         }
       });
 
@@ -1325,7 +1326,7 @@ class AdminDashboardController {
       const newCustomers = await prisma.customerUser.count({
         where: {
           ...where,
-          status: 'new'
+          status: constants.CUSTOMER_STATUS.NEW
         }
       });
 
@@ -1384,13 +1385,13 @@ class AdminDashboardController {
     try {
       const totalAdmins = await prisma.user.count({
         where: {
-          role: 'admin'
+          role: constants.ROLES.ADMIN
         }
       });
 
       const totalBusinessOwners = await prisma.user.count({
         where: {
-          role: 'user'
+          role: constants.ROLES.USER
         }
       });
 
@@ -1398,7 +1399,7 @@ class AdminDashboardController {
 
       const totalRevenue = await prisma.paymentWebhook.aggregate({
         where: {
-          status: 'success' // Only count successful payments
+          status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
         },
         _sum: {
           total: true
@@ -1494,10 +1495,10 @@ class AdminDashboardController {
 
     // Build where clause based on user role
     let where = {
-      status: 'success' // Only count successful payments
+      status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
     };
     
-    if (authenticatedUser && authenticatedUser.role === 'user') {
+    if (authenticatedUser && authenticatedUser.role === constants.ROLES.USER) {
       where.userId = authenticatedUser.userId;
     }
 
@@ -1505,23 +1506,23 @@ class AdminDashboardController {
       lostRevenue, prevLostRevenue, customerLTV, prevCustomerLTV] = await Promise.all([
         prisma.customerUser.count({
           where: {
-            status: 'recovered',
+            status: constants.CUSTOMER_STATUS.RECOVERED,
             updatedAt: { gte: startDate, lte: endDate },
-            ...(authenticatedUser && authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            ...(authenticatedUser && authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
           }
         }),
         prisma.customerUser.count({
           where: {
-            status: 'recovered',
+            status: constants.CUSTOMER_STATUS.RECOVERED,
             updatedAt: { gte: prevStartDate, lte: prevEndDate },
-            ...(authenticatedUser && authenticatedUser.role === 'user' && { userId: authenticatedUser.userId })
+            ...(authenticatedUser && authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
           }
         }),
         prisma.paymentWebhook.aggregate({
           where: {
             ...where,
             paymentDate: { gte: startDate, lte: endDate },
-            revenuePaymentStatus: 'recovered'
+            revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
           },
           _sum: { total: true }
         }),
@@ -1529,7 +1530,7 @@ class AdminDashboardController {
           where: {
             ...where,
             paymentDate: { gte: prevStartDate, lte: prevEndDate },
-            revenuePaymentStatus: 'recovered'
+            revenuePaymentStatus: constants.CUSTOMER_STATUS.RECOVERED
           },
           _sum: { total: true }
         }),
@@ -1537,7 +1538,7 @@ class AdminDashboardController {
           where: {
             ...where,
             paymentDate: { gte: startDate, lte: endDate },
-            revenuePaymentStatus: 'lost'
+            revenuePaymentStatus: constants.CUSTOMER_STATUS.LOST
           },
           _sum: { total: true }
         }),
@@ -1545,7 +1546,7 @@ class AdminDashboardController {
           where: {
             ...where,
             paymentDate: { gte: prevStartDate, lte: prevEndDate },
-            revenuePaymentStatus: 'lost'
+            revenuePaymentStatus: constants.CUSTOMER_STATUS.LOST
           },
           _sum: { total: true }
         }),
@@ -1666,19 +1667,19 @@ class AdminDashboardController {
       //   }
       // }),
       prisma.customerUser.count({
-        where: { status: 'active' }
+        where: { status: constants.STATUS.ACTIVE }
       }),
       prisma.customerUser.count({
-        where: { status: 'risk' || 'at_risk' || 'at risk' || 'risk' }
+        where: { status: { in: [constants.CUSTOMER_STATUS.RISK, constants.CUSTOMER_STATUS.AT_RISK] } }
       }),
       prisma.customerUser.count({
-        where: { status: 'lost' }
+        where: { status: constants.CUSTOMER_STATUS.LOST }
       }),
       prisma.customerUser.count({
-        where: { status: 'recovered' }
+        where: { status: constants.CUSTOMER_STATUS.RECOVERED }
       }),
       prisma.customerUser.count({
-        where: { status: 'new' }
+        where: { status: constants.CUSTOMER_STATUS.NEW }
       })
     ]);
 
@@ -1724,18 +1725,18 @@ class AdminDashboardController {
     
     // Build where clause based on user role
     let where = {
-      status: 'success' // Only count successful payments
+      status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
     };
     
-    if (authenticatedUser && authenticatedUser.role === 'user') {
+    if (authenticatedUser && authenticatedUser.role === constants.ROLES.USER) {
       where.userId = authenticatedUser.userId;
     }
 
     const [totalAdmins, totalBusinessOwners, totalCustomers, totalRevenue] = await Promise.all([
-      prisma.user.count({ where: { role: 'admin' } }),
-      prisma.user.count({ where: { role: 'user' } }),
+      prisma.user.count({ where: { role: constants.ROLES.ADMIN } }),
+      prisma.user.count({ where: { role: constants.ROLES.USER } }),
       prisma.customers.count({
-        where: authenticatedUser && authenticatedUser.role === 'user' 
+        where: authenticatedUser && authenticatedUser.role === constants.ROLES.USER 
           ? { userId: authenticatedUser.userId }
           : {}
       }),
@@ -1813,10 +1814,10 @@ class AdminDashboardController {
             SUM(CASE WHEN "sharedata" IS NOT NULL AND "scanData" IS NULL THEN 1 ELSE 0 END) as actual_shares
           FROM "qr_code_scans"
           WHERE "scanTime" >= $1 AND "scanTime" <= $2
-          ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+          ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
           GROUP BY "qrCodeId"
         ) scan_stats ON qr.id = scan_stats."qrCodeId"
-        ${authenticatedUser.role === 'user' ? 'WHERE qr."userId" = $' + (authenticatedUser.role === 'user' ? '3' : '1') : 'WHERE 1=1'}
+        ${authenticatedUser.role === constants.ROLES.USER ? 'WHERE qr."userId" = $' + (authenticatedUser.role === constants.ROLES.USER ? '3' : '1') : 'WHERE 1=1'}
         AND qr."createdAt" >= $1 AND qr."createdAt" <= $2
         ORDER BY qr."createdAt" DESC
       `;
@@ -1825,7 +1826,7 @@ class AdminDashboardController {
       const startDate = new Date(currentYear, currentDate.getMonth(), 1);
       const endDate = new Date(currentYear, currentDate.getMonth() + 1, 0, 23, 59, 59);
       
-      const qrParams = authenticatedUser.role === 'user' 
+      const qrParams = authenticatedUser.role === constants.ROLES.USER 
         ? [startDate, endDate, authenticatedUser.userId]
         : [startDate, endDate];
 
@@ -1914,7 +1915,7 @@ class AdminDashboardController {
       let where = {};
       
       // If user role is 'user', only show their data
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
       
@@ -1997,7 +1998,7 @@ class AdminDashboardController {
       let where = {};
       
       // If user role is 'user', only show their data
-      if (authenticatedUser.role === 'user') {
+      if (authenticatedUser.role === constants.ROLES.USER) {
         where.userId = authenticatedUser.userId;
       }
 
@@ -2020,12 +2021,12 @@ class AdminDashboardController {
               SUM(CASE WHEN "sharedata" IS NOT NULL AND "scanData" IS NULL THEN 1 ELSE 0 END) as share_count
             FROM "qr_code_scans"
             WHERE "scanTime" >= $1 AND "scanTime" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(YEAR FROM "scanTime"), EXTRACT(MONTH FROM "scanTime")
             ORDER BY year, month
           `;
           
-          const monthlyParams = authenticatedUser.role === 'user' 
+          const monthlyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [sixMonthsAgo, currentMonthEnd, authenticatedUser.userId]
             : [sixMonthsAgo, currentMonthEnd];
             
@@ -2063,12 +2064,12 @@ class AdminDashboardController {
               SUM(CASE WHEN "sharedata" IS NOT NULL AND "scanData" IS NULL THEN 1 ELSE 0 END) as share_count
             FROM "qr_code_scans"
             WHERE "scanTime" >= $1 AND "scanTime" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(QUARTER FROM "scanTime")
             ORDER BY quarter
           `;
           
-          const quarterlyParams = authenticatedUser.role === 'user' 
+          const quarterlyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [yearStart, yearEnd, authenticatedUser.userId]
             : [yearStart, yearEnd];
             
@@ -2098,12 +2099,12 @@ class AdminDashboardController {
               SUM(CASE WHEN "sharedata" IS NOT NULL AND "scanData" IS NULL THEN 1 ELSE 0 END) as share_count
             FROM "qr_code_scans"
             WHERE "scanTime" >= $1 AND "scanTime" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(YEAR FROM "scanTime")
             ORDER BY year
           `;
           
-          const yearlyParams = authenticatedUser.role === 'user' 
+          const yearlyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [threeYearsAgo, currentYearEnd, authenticatedUser.userId]
             : [threeYearsAgo, currentYearEnd];
             
@@ -2137,12 +2138,12 @@ class AdminDashboardController {
               SUM(CASE WHEN "sharedata" IS NOT NULL AND "scanData" IS NULL THEN 1 ELSE 0 END) as share_count
             FROM "qr_code_scans"
             WHERE "scanTime" >= $1 AND "scanTime" <= $2
-            ${authenticatedUser.role === 'user' ? 'AND "userId" = $3' : ''}
+            ${authenticatedUser.role === constants.ROLES.USER ? 'AND "userId" = $3' : ''}
             GROUP BY EXTRACT(DOW FROM "scanTime")
             ORDER BY day_of_week
           `;
           
-          const weeklyParams = authenticatedUser.role === 'user' 
+          const weeklyParams = authenticatedUser.role === constants.ROLES.USER 
             ? [weekStart, weekEnd, authenticatedUser.userId]
             : [weekStart, weekEnd];
             

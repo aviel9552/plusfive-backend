@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const QRCode = require('qrcode');
 const { stripe } = require('../lib/stripe');
+const { constants } = require('../config');
 
 // Helper function to check if user has active subscription
 // Checks Stripe API first (most reliable), then falls back to database
@@ -15,7 +16,7 @@ const getAllQRCodes = async (req, res) => {
     
     // If user is admin, show all QR codes, otherwise show only user's QR codes
     const where = {
-      ...(req.user.role !== 'admin' && { userId: req.user.userId }),
+      ...(req.user.role !== constants.ROLES.ADMIN && { userId: req.user.userId }),
       ...(isActive !== undefined && { isActive: isActive === 'true' })
     };
     
@@ -116,7 +117,7 @@ const getAllQRCodes = async (req, res) => {
       qrCodes: qrCodesWithActualCounts,
       total: qrCodesWithActualCounts.length,
       userRole: req.user.role,
-      isAdmin: req.user.role === 'admin'
+      isAdmin: req.user.role === constants.ROLES.ADMIN
     };
     
     return successResponse(res, responseData);
@@ -303,7 +304,7 @@ const getQRCodeById = async (req, res) => {
     // If user is admin, can access any QR code, otherwise only user's own QR codes
     // const where = {
     //   id: req.params.id,
-    //   ...(req.user.role !== 'admin' && { userId: req.user.userId })
+    //   ...(req.user.role !== constants.ROLES.ADMIN && { userId: req.user.userId })
     // };
     
     const qrCode = await prisma.qRCode.findFirst({
@@ -360,7 +361,7 @@ const getQRCodeById = async (req, res) => {
     return successResponse(res, {
       ...qrCode,
       userRole: req.user.role,
-      isAdmin: req.user.role === 'admin'
+      isAdmin: req.user.role === constants.ROLES.ADMIN
     });
     
   } catch (error) {
@@ -529,7 +530,7 @@ const incrementShareCount = async (req, res) => {
     // If user is admin, can access any QR code, otherwise only user's own QR codes
     const where = {
       id,
-      ...(req.user.role !== 'admin' && { userId: req.user.userId })
+      ...(req.user.role !== constants.ROLES.ADMIN && { userId: req.user.userId })
     };
     
     const qrCode = await prisma.qRCode.findFirst({
@@ -569,7 +570,7 @@ const serveQRCodeImage = async (req, res) => {
     // If user is admin, can access any QR code, otherwise only user's own QR codes
     const where = {
       id,
-      ...(req.user.role !== 'admin' && { userId: req.user.userId })
+      ...(req.user.role !== constants.ROLES.ADMIN && { userId: req.user.userId })
     };
     
     const qrCode = await prisma.qRCode.findFirst({
@@ -747,7 +748,7 @@ const getQRAnalytics = async (req, res) => {
     // Build where clause based on role
     const whereClause = {
       id,
-      ...(userRole === 'user' ? { userId } : {})
+      ...(userRole === constants.ROLES.USER ? { userId } : {})
     };
 
     // Get QR code with scan analytics
@@ -810,7 +811,7 @@ const getQRPerformance = async (req, res) => {
     const userId = req.user.userId;
 
     // Build where clause based on role
-    const whereClause = userRole === 'user' ? { userId } : {};
+    const whereClause = userRole === constants.ROLES.USER ? { userId } : {};
 
     // Get performance metrics
     const [totalQRCodes, totalScans, totalShares] = await Promise.all([
@@ -848,7 +849,7 @@ const getQRCodesWithAnalytics = async (req, res) => {
     const userId = req.user.userId;
 
     // Build where clause based on role
-    const whereClause = userRole === 'user' ? { userId } : {};
+    const whereClause = userRole === constants.ROLES.USER ? { userId } : {};
 
     // Get QR codes with analytics
     const qrCodes = await prisma.qRCode.findMany({

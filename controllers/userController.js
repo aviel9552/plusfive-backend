@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { hashPassword, verifyPassword } = require('../lib/utils');
+const { constants } = require('../config');
 
 // Create user (admin only)
 const createUser = async (req, res) => {
@@ -182,7 +183,7 @@ const getAllUsers = async (req, res) => {
     const users = await prisma.user.findMany({
       where: {
         role: {
-          not: 'admin'
+          not: constants.ROLES.ADMIN
         },
         isDeleted: false // Exclude deleted users
       },
@@ -409,7 +410,7 @@ const softDeleteUser = async (req, res) => {
     }
 
     // Prevent admin users from being deleted
-    if (existingUser.role === 'admin') {
+    if (existingUser.role === constants.ROLES.ADMIN) {
       return errorResponse(res, 'Admin users cannot be deleted', 403);
     }
 

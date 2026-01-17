@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { stripe } = require('../lib/stripe');
+const { constants } = require('../config');
 
 // Create WhatsApp message record for usage tracking
 async function createWhatsappMessageRecord(customerName, phoneNumber, messageType, userId = null) {
@@ -45,15 +46,15 @@ async function createWhatsappMessageRecord(customerName, phoneNumber, messageTyp
         }
 
         // Allow admin users to bypass subscription check
-        if (user.role !== 'admin') {
+        if (user.role !== constants.ROLES.ADMIN) {
             const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
             
             // Block if subscription is not active
             if (!subscriptionStatus || 
-                subscriptionStatus === 'pending' || 
-                subscriptionStatus === 'canceled' || 
-                subscriptionStatus === 'inactive' ||
-                subscriptionStatus === 'expired') {
+                subscriptionStatus === constants.SUBSCRIPTION_STATUS.PENDING || 
+                subscriptionStatus === constants.SUBSCRIPTION_STATUS.CANCELED || 
+                subscriptionStatus === constants.SUBSCRIPTION_STATUS.INACTIVE ||
+                subscriptionStatus === constants.SUBSCRIPTION_STATUS.EXPIRED) {
                 console.error(`❌ Subscription check failed for user ${businessUserId} - Status: ${subscriptionStatus} - Message not sent`);
                 return null;
             }

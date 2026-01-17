@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { constants } = require('../config');
 
 // Helper function to format Israeli phone numbers (same as webhookController)
 const formatIsraeliPhone = (phoneNumber) => {
@@ -128,7 +129,7 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
       data: {
         customerId: customerId,
         userId: userId,
-        status: status || 'active'
+        status: status || constants.CUSTOMER_STATUS.ACTIVE
       }
     });
 
@@ -138,7 +139,7 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
         customerId: customerId,
         userId: userId,
         oldStatus: null,
-        newStatus: status || 'active',
+        newStatus: status || constants.CUSTOMER_STATUS.ACTIVE,
         reason: 'Customer added to business owner list'
       }
     });
@@ -328,7 +329,7 @@ const getMyCustomers = async (req, res) => {
     let customers;
 
     // If admin, show all customers from all users
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       customers = await prisma.customers.findMany({
         include: {
           user: {
@@ -427,7 +428,7 @@ const updateCustomer = async (req, res) => {
     let customer;
     let customerUser;
 
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       customer = await prisma.customers.findUnique({
         where: { id }
       });
@@ -478,9 +479,9 @@ const updateCustomer = async (req, res) => {
       } else if (status !== undefined) {
         // Map status to isActive: "active" or "פעיל" = true, "חסום" or "לא פעיל" or "inactive" = false
         const statusLower = status.toLowerCase();
-        if (statusLower === 'active' || statusLower === 'פעיל') {
+        if (statusLower === constants.STATUS.ACTIVE || statusLower === 'פעיל') {
           updateData.isActive = true;
-        } else if (statusLower === 'חסום' || statusLower === 'לא פעיל' || statusLower === 'inactive' || statusLower === 'blocked') {
+        } else if (statusLower === 'חסום' || statusLower === 'לא פעיל' || statusLower === constants.STATUS.INACTIVE || statusLower === 'blocked') {
           updateData.isActive = false;
         }
       }
@@ -555,7 +556,7 @@ const removeCustomer = async (req, res) => {
       return errorResponse(res, 'Customer not found', 404);
     }
 
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       // Admin can delete any customer
       // Try to find customerUser relation, but it's optional for admin
       customerUser = await prisma.customerUser.findFirst({
@@ -601,7 +602,7 @@ const removeCustomer = async (req, res) => {
     };
 
     // Record deletion in log first (before deleting)
-    const oldStatus = customerUser ? customerUser.status : 'active';
+    const oldStatus = customerUser ? customerUser.status : constants.CUSTOMER_STATUS.ACTIVE;
     
     // Create CustomerStatusLog for deletion (record the deletion)
     await prisma.customerStatusLog.create({
@@ -609,7 +610,7 @@ const removeCustomer = async (req, res) => {
         customerId: id,
         userId: userId,
         oldStatus: oldStatus,
-        newStatus: 'inactive',
+        newStatus: constants.STATUS.INACTIVE,
         reason: customerUser 
           ? 'Customer removed from business owner list' 
           : 'Customer removed from business owner list (direct ownership)'
@@ -1005,11 +1006,11 @@ const getCustomersStatusCount = async (req, res) => {
 
     // Initialize counters
     const statusCounts = {
-      active: 0,
-      at_risk: 0,
-      lost: 0,
-      recovered: 0,
-      new: 0
+      [constants.CUSTOMER_STATUS.ACTIVE]: 0,
+      [constants.CUSTOMER_STATUS.AT_RISK]: 0,
+      [constants.CUSTOMER_STATUS.LOST]: 0,
+      [constants.CUSTOMER_STATUS.RECOVERED]: 0,
+      [constants.CUSTOMER_STATUS.NEW]: 0
     };
 
     // Process results
@@ -1028,25 +1029,25 @@ const getCustomersStatusCount = async (req, res) => {
       statusCounts,
       total,
       breakdown: {
-        active: {
-          count: statusCounts.active,
-          percentage: total > 0 ? ((statusCounts.active / total) * 100).toFixed(1) : 0
+        [constants.CUSTOMER_STATUS.ACTIVE]: {
+          count: statusCounts[constants.CUSTOMER_STATUS.ACTIVE],
+          percentage: total > 0 ? ((statusCounts[constants.CUSTOMER_STATUS.ACTIVE] / total) * 100).toFixed(1) : 0
         },
-        at_risk: {
-          count: statusCounts.at_risk,
-          percentage: total > 0 ? ((statusCounts.at_risk / total) * 100).toFixed(1) : 0
+        [constants.CUSTOMER_STATUS.AT_RISK]: {
+          count: statusCounts[constants.CUSTOMER_STATUS.AT_RISK],
+          percentage: total > 0 ? ((statusCounts[constants.CUSTOMER_STATUS.AT_RISK] / total) * 100).toFixed(1) : 0
         },
-        lost: {
-          count: statusCounts.lost,
-          percentage: total > 0 ? ((statusCounts.lost / total) * 100).toFixed(1) : 0
+        [constants.CUSTOMER_STATUS.LOST]: {
+          count: statusCounts[constants.CUSTOMER_STATUS.LOST],
+          percentage: total > 0 ? ((statusCounts[constants.CUSTOMER_STATUS.LOST] / total) * 100).toFixed(1) : 0
         },
-        recovered: {
-          count: statusCounts.recovered,
-          percentage: total > 0 ? ((statusCounts.recovered / total) * 100).toFixed(1) : 0
+        [constants.CUSTOMER_STATUS.RECOVERED]: {
+          count: statusCounts[constants.CUSTOMER_STATUS.RECOVERED],
+          percentage: total > 0 ? ((statusCounts[constants.CUSTOMER_STATUS.RECOVERED] / total) * 100).toFixed(1) : 0
         },
-        new: {
-          count: statusCounts.new,
-          percentage: total > 0 ? ((statusCounts.new / total) * 100).toFixed(1) : 0
+        [constants.CUSTOMER_STATUS.NEW]: {
+          count: statusCounts[constants.CUSTOMER_STATUS.NEW],
+          percentage: total > 0 ? ((statusCounts[constants.CUSTOMER_STATUS.NEW] / total) * 100).toFixed(1) : 0
         }
       }
     }, 'Customer status counts retrieved successfully');
@@ -1203,7 +1204,7 @@ const getCustomerById = async (req, res) => {
     const customerWithDetails = {
       ...customer,
       totalAppointmentCount: totalAppointments,
-      customerStatus: customerUserStatus?.status || 'active',
+      customerStatus: customerUserStatus?.status || constants.CUSTOMER_STATUS.ACTIVE,
       customerStatusDetails: customerUserStatus,
       reviews: customerReviews,
       lastRating: lastRating,
@@ -1252,7 +1253,7 @@ const removeMultipleCustomers = async (req, res) => {
     // Get all customer users that belong to this user
     let customerUsers = [];
 
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       // Admin can delete any customers
       customerUsers = await prisma.customerUser.findMany({
         where: {
@@ -1310,7 +1311,7 @@ const removeMultipleCustomers = async (req, res) => {
             customerId: customerUser.customerId,
             userId: userId,
             oldStatus: customerUser.status,
-            newStatus: 'inactive',
+            newStatus: constants.STATUS.INACTIVE,
             reason: 'Customer removed from business owner list (bulk delete)'
           }
         });
@@ -1565,7 +1566,7 @@ const recordCustomerVisit = async (req, res) => {
     let customer;
     let customerUser;
 
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       customer = await prisma.customers.findUnique({
         where: { id }
       });

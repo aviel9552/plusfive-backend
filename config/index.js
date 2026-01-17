@@ -1,5 +1,6 @@
 const { dbConfig, getCurrentEnvironment, getDbConfig, createPrismaClient, testConnection, closeConnection } = require('./dbconfig');
 const { appConfig, getConfig, getConfigSection, validateConfig } = require('./appconfig');
+const constants = require('./constants');
 
 // Export all configurations
 module.exports = {
@@ -16,6 +17,9 @@ module.exports = {
   getConfig,
   getConfigSection,
   validateConfig,
+  
+  // Constants
+  constants,
   
   // Combined configuration
   config: {

@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { constants } = require('../config');
 
 // Create referral when user registers with referral code
 const createReferral = async (req, res) => {
@@ -36,7 +37,7 @@ const createReferral = async (req, res) => {
       data: {
         referrerId: referrer.id,        // ID from user table based on referrerCode
         referredUserId: referredUserId, // ID of newly registered user
-        status: 'pending',
+        status: constants.STATUS.PENDING,
         commission: 0
       },
       include: {
@@ -93,8 +94,8 @@ const getReferralStats = async (req, res) => {
     const totalCommission = referralsGiven.reduce((sum, ref) => sum + ref.commission, 0);
 
     // Get pending referrals
-    const pendingReferrals = referralsGiven.filter(ref => ref.status === 'pending').length;
-    const activeReferrals = referralsGiven.filter(ref => ref.status === 'active').length;
+    const pendingReferrals = referralsGiven.filter(ref => ref.status === constants.STATUS.PENDING).length;
+    const activeReferrals = referralsGiven.filter(ref => ref.status === constants.STATUS.ACTIVE).length;
 
     const stats = {
       totalReferrals: referralsGiven.length,
@@ -176,7 +177,7 @@ const getUserReferrals = async (req, res) => {
 // Get all referrals (admin only)
 const getAllReferrals = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Admin access required', 403);
     }
 
@@ -234,15 +235,15 @@ const getAllReferrals = async (req, res) => {
 // Update referral status (admin only)
 const updateReferralStatus = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== constants.ROLES.ADMIN) {
       return errorResponse(res, 'Admin access required', 403);
     }
 
     const { id } = req.params;
     const { status, commission } = req.body;
 
-    if (!status || !['pending', 'active', 'cancelled'].includes(status)) {
-      return errorResponse(res, 'Valid status required: pending, active, or cancelled', 400);
+    if (!status || ![constants.STATUS.PENDING, constants.STATUS.ACTIVE, constants.STATUS.INACTIVE].includes(status)) {
+      return errorResponse(res, `Valid status required: ${constants.STATUS.PENDING}, ${constants.STATUS.ACTIVE}, or ${constants.STATUS.INACTIVE}`, 400);
     }
 
     const referral = await prisma.referral.update({

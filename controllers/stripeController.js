@@ -1,6 +1,7 @@
 const { stripe, getStripePrices, getOrCreateStripeCustomer, reportUsageForMonth, calculateCommissionFromInvoice } = require('../lib/stripe');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { constants } = require('../config');
 
 /**
  * Create Stripe checkout session
@@ -54,7 +55,7 @@ const createCheckoutSession = async (req, res) => {
       where: { id: userId },
       data: {
         subscriptionStartDate: new Date(),
-        subscriptionStatus: 'pending', // Will be 'active' after payment success
+        subscriptionStatus: constants.SUBSCRIPTION_STATUS.PENDING, // Will be 'active' after payment success
         subscriptionExpirationDate: null, // Will be set by webhook with actual Stripe data
         subscriptionPlan: planName
       }
@@ -63,7 +64,7 @@ const createCheckoutSession = async (req, res) => {
     // Guard: prevent mixed-currency subscriptions for the same customer
     const existingSubs = await stripe.subscriptions.list({
       customer: stripeCustomerId,
-      status: 'active',
+      status: constants.SUBSCRIPTION_STATUS.ACTIVE,
       limit: 1
     });
 
@@ -179,7 +180,7 @@ const createSimpleCheckout = async (req, res) => {
       description: description,
       stripeSessionId: checkoutSession.id,
       stripeCustomerId: customer.id,
-      status: 'pending',
+      status: constants.STATUS.PENDING,
       source: 'simple_checkout',
       metadata: {
         checkoutUrl: checkoutSession.url,
@@ -375,7 +376,7 @@ const cancelSubscription = async (req, res) => {
     await prisma.user.update({
       where: { id: userId },
       data: {
-        subscriptionStatus: 'canceled',
+        subscriptionStatus: constants.SUBSCRIPTION_STATUS.CANCELED,
         subscriptionPlan: null,
         subscriptionStartDate: null,
         subscriptionExpirationDate: null,
@@ -498,7 +499,7 @@ const reactivateSubscription = async (req, res) => {
     await prisma.user.update({
       where: { id: userId },
       data: {
-        subscriptionStatus: 'active'
+        subscriptionStatus: constants.SUBSCRIPTION_STATUS.ACTIVE
       }
     });
 
@@ -703,7 +704,7 @@ const trackPayment = async (paymentData) => {
       stripePaymentId,
       stripeSubscriptionId,
       stripeCustomerId,
-      status = 'pending',
+      status = constants.STATUS.PENDING,
       paymentMethod,
       source = 'api',
       metadata = {}
@@ -788,7 +789,7 @@ const handleSubscriptionChange = async (customerId, subscription) => {
         // role: status === 'active' ? 'subscriber' : 'user', // Commented out - role update disabled
         subscriptionPlan: planName,
         // subscriptionStatus: status === 'active' ? 'active' : 'inactive',
-        subscriptionStatus: status === 'active' ? 'active' : subscription.status, // Activate account when payment succeeds
+        subscriptionStatus: status === constants.SUBSCRIPTION_STATUS.ACTIVE ? constants.SUBSCRIPTION_STATUS.ACTIVE : subscription.status, // Activate account when payment succeeds
         subscriptionStartDate: periodStart,
         subscriptionExpirationDate: subscriptionExpirationDate,
         stripeSubscriptionId: subscription.id,
@@ -807,7 +808,7 @@ const handleSubscriptionChange = async (customerId, subscription) => {
       stripeSessionId: null,
       stripeSubscriptionId: subscription.id,
       stripeCustomerId: customerId,
-      status: status === 'active' ? 'succeeded' : 'failed',
+      status: status === constants.SUBSCRIPTION_STATUS.ACTIVE ? constants.PAYMENT_STATUS.SUCCEEDED : constants.PAYMENT_STATUS.FAILED,
       source: 'webhook',
       metadata: {
         subscriptionStatus: status,
@@ -924,7 +925,7 @@ const getBillingDashboard = async (req, res) => {
       stripe.customers.retrieve(user.stripeCustomerId),
       stripe.subscriptions.list({
         customer: user.stripeCustomerId,
-        status: 'active',
+        status: constants.SUBSCRIPTION_STATUS.ACTIVE,
         limit: 1
       }),
       stripe.invoices.list({
@@ -1046,7 +1047,7 @@ const getBillingDashboard = async (req, res) => {
         next_billing_date: nextBillingDate,
         amount_to_be_charged: amountToBeCharged,
         payment_method: defaultPaymentMethod,
-        subscription_status: activeSubscription ? activeSubscription.status : 'inactive',
+        subscription_status: activeSubscription ? activeSubscription.status : constants.SUBSCRIPTION_STATUS.INACTIVE,
         subscription_plan: activeSubscription?.items?.data[0]?.price?.nickname || 'No active plan',
         // Additional billing details
         has_active_payment_method: !!defaultPaymentMethod,
@@ -1371,7 +1372,7 @@ const removePaymentMethod = async (req, res) => {
     // Check if this payment method is used in active subscriptions
     const subscriptions = await stripe.subscriptions.list({
       customer: user.stripeCustomerId,
-      status: 'active'
+      status: constants.SUBSCRIPTION_STATUS.ACTIVE
     });
 
     const isUsedInSubscription = subscriptions.data.some(sub => 

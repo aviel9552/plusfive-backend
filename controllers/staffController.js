@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const stripe = require('../lib/stripe').stripe;
 const { checkUserSubscription } = require('../lib/subscriptionUtils');
+const { constants } = require('../config');
 
 // Get all staff for the logged-in user
 const getAllStaff = async (req, res) => {
@@ -12,7 +13,7 @@ const getAllStaff = async (req, res) => {
     // Build where clause based on role
     const where = {
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const staff = await prisma.staff.findMany({
@@ -50,7 +51,7 @@ const getStaffById = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const staff = await prisma.staff.findFirst({
@@ -153,7 +154,7 @@ const updateStaff = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const existingStaff = await prisma.staff.findFirst({ where });
@@ -235,7 +236,7 @@ const deleteStaff = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const existingStaff = await prisma.staff.findFirst({ where });
@@ -322,7 +323,7 @@ const deleteMultipleStaff = async (req, res) => {
     const where = {
       id: { in: ids },
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     // Soft delete all

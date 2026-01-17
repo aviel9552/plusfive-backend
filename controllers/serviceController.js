@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const stripe = require('../lib/stripe').stripe;
 const { checkUserSubscription } = require('../lib/subscriptionUtils');
+const { constants } = require('../config');
 
 // Get all services for the logged-in user
 const getAllServices = async (req, res) => {
@@ -12,7 +13,7 @@ const getAllServices = async (req, res) => {
     // Build where clause based on role
     const where = {
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const services = await prisma.service.findMany({
@@ -50,7 +51,7 @@ const getServiceById = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const service = await prisma.service.findFirst({
@@ -163,7 +164,7 @@ const updateService = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const existingService = await prisma.service.findFirst({ where });
@@ -253,7 +254,7 @@ const deleteService = async (req, res) => {
     const where = {
       id,
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     const existingService = await prisma.service.findFirst({ where });
@@ -340,7 +341,7 @@ const deleteMultipleServices = async (req, res) => {
     const where = {
       id: { in: ids },
       isDeleted: false,
-      ...(userRole !== 'admin' && { businessId: userId })
+      ...(userRole !== constants.ROLES.ADMIN && { businessId: userId })
     };
 
     // Soft delete all

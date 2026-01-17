@@ -3,6 +3,7 @@ const { successResponse, errorResponse } = require('../lib/utils');
 const N8nMessageService = require('../services/N8nMessageService');
 const { createWhatsappMessageRecord } = require('./whatsappMessageController');
 const { stripe } = require('../lib/stripe');
+const { constants } = require('../config');
 
 // Helper function to format Israeli phone numbers
 const formatIsraeliPhone = (phoneNumber) => {
@@ -84,8 +85,8 @@ const handleAppointmentWebhook = async (req, res) => {
     const webhookLog = await prisma.webhookLog.create({
       data: {
         data: webhookData,
-        type: 'appointment',
-        status: 'pending'
+        type: constants.WEBHOOK_TYPES.APPOINTMENT,
+        status: constants.WEBHOOK_STATUS.PENDING
       }
     });
 
@@ -219,7 +220,7 @@ const handleAppointmentWebhook = async (req, res) => {
           data: {
             customerId: customerId,
             userId: userId,
-            status: 'new'
+            status: constants.CUSTOMER_STATUS.NEW
           }
         });
         customerUserId = newCustomerUser.id;
@@ -240,7 +241,7 @@ const handleAppointmentWebhook = async (req, res) => {
           data: {
             customerId: customerId,
             userId: userId,
-            status: 'new'
+            status: constants.CUSTOMER_STATUS.NEW
           }
         });
         customerUserId = newCustomerUser.id;
@@ -588,7 +589,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
     const paymentLog = await prisma.webhookPaymentLog.create({
       data: {
         data: webhookData,
-        type: 'payment_checkout',
+        type: constants.WEBHOOK_TYPES.PAYMENT_CHECKOUT,
         createdDate: new Date()
       }
     });
@@ -611,13 +612,13 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
         previousStatus = customerUser.status;
         
         // If customer is already recovered, payment is from recovered customer
-        if (customerUser.status === 'recovered') {
-          revenuePaymentStatus = 'recovered';
+        if (customerUser.status === constants.CUSTOMER_STATUS.RECOVERED) {
+          revenuePaymentStatus = constants.CUSTOMER_STATUS.RECOVERED;
         }
         // If customer is lost/at_risk/risk, this payment will RECOVER them
         // So set revenuePaymentStatus = 'recovered' (this payment is recovery revenue)
-        else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
-          revenuePaymentStatus = 'recovered'; // This payment recovers the customer
+        else if (customerUser.status === constants.CUSTOMER_STATUS.LOST || customerUser.status === constants.CUSTOMER_STATUS.AT_RISK || customerUser.status === constants.CUSTOMER_STATUS.RISK) {
+          revenuePaymentStatus = constants.CUSTOMER_STATUS.RECOVERED; // This payment recovers the customer
         }
         // For other statuses (new, active), leave as null
       }
@@ -664,13 +665,13 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
           let statusChangeReason = null;
 
           // Handle lost/at_risk to recovered
-          if (currentPreviousStatus === 'lost' || currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk') {
-            newStatus = 'recovered';
-            statusChangeReason = `Payment received after being ${currentPreviousStatus === 'lost' ? 'lost' : 'at risk'}`;
+          if (currentPreviousStatus === constants.CUSTOMER_STATUS.LOST || currentPreviousStatus === constants.CUSTOMER_STATUS.AT_RISK || currentPreviousStatus === constants.CUSTOMER_STATUS.RISK) {
+            newStatus = constants.CUSTOMER_STATUS.RECOVERED;
+            statusChangeReason = `Payment received after being ${currentPreviousStatus === constants.CUSTOMER_STATUS.LOST ? 'lost' : 'at risk'}`;
           }
           // Handle new to active
-          else if (currentPreviousStatus === 'new') {
-            newStatus = 'active';
+          else if (currentPreviousStatus === constants.CUSTOMER_STATUS.NEW) {
+            newStatus = constants.CUSTOMER_STATUS.ACTIVE;
             statusChangeReason = 'First payment received';
           }
 
@@ -690,8 +691,8 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               data: {
                 customerId: customerId,
                 userId: userId,
-                oldStatus: currentPreviousStatus === 'lost' ? 'Lost' : (currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk' ? 'Risk' : 'New'),
-                newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
+                oldStatus: currentPreviousStatus === constants.CUSTOMER_STATUS.LOST ? 'Lost' : (currentPreviousStatus === constants.CUSTOMER_STATUS.AT_RISK || currentPreviousStatus === constants.CUSTOMER_STATUS.RISK ? 'Risk' : 'New'),
+                newStatus: newStatus === constants.CUSTOMER_STATUS.RECOVERED ? 'Recovered' : 'Active',
                 reason: statusChangeReason
               }
             });
@@ -699,7 +700,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             console.log(`✅ Customer status updated from '${currentPreviousStatus}' to '${newStatus}' after payment - Customer ID: ${customerId}`);
 
             // Send recovered customer notification if status changed to recovered
-            if (newStatus === 'recovered') {
+            if (newStatus === constants.CUSTOMER_STATUS.RECOVERED) {
               try {
                 const businessOwner = await prisma.user.findUnique({
                   where: { id: userId },
@@ -788,7 +789,7 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
             }
           });
 
-          const customerStatus = previousPayments === 0 ? 'new' : 'active';
+          const customerStatus = previousPayments === 0 ? constants.CUSTOMER_STATUS.NEW : constants.CUSTOMER_STATUS.ACTIVE;
 
           const webhookParams = {
             customer_name: customer.customerFullName,
@@ -814,15 +815,15 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
               }
             });
 
-            if (user && user.role !== 'admin') {
+            if (user && user.role !== constants.ROLES.ADMIN) {
               const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
               
               // Block if subscription is not active
               if (!subscriptionStatus || 
-                  subscriptionStatus === 'pending' || 
-                  subscriptionStatus === 'canceled' || 
-                  subscriptionStatus === 'inactive' ||
-                  subscriptionStatus === 'expired') {
+                  subscriptionStatus === constants.SUBSCRIPTION_STATUS.PENDING || 
+                  subscriptionStatus === constants.SUBSCRIPTION_STATUS.CANCELED || 
+                  subscriptionStatus === constants.SUBSCRIPTION_STATUS.INACTIVE ||
+                  subscriptionStatus === constants.SUBSCRIPTION_STATUS.EXPIRED) {
                 console.error(`❌ Subscription check failed for user ${userId} - Status: ${subscriptionStatus} - Review request WhatsApp message NOT sent`);
                 // Don't create review record or send message if subscription is not active
                 return successResponse(res, {
@@ -857,9 +858,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
                 userId: userId,
                 rating: 0, // Placeholder - will be updated when customer responds
                 message: `Rating request sent via N8N after payment`,
-                status: 'sent', // sent, received, responded
+                status: constants.REVIEW_STATUS.SENT, // sent, received, responded
                 whatsappMessageId: null, // Will be updated by N8N if needed
-                messageStatus: 'pending', // pending, sent, delivered, read
+                messageStatus: constants.WEBHOOK_STATUS.PENDING, // pending, sent, delivered, read
                 paymentWebhookId: paymentWebhook.id // Link to payment webhook
               }
             });
@@ -1074,7 +1075,7 @@ const createPayment = async (req, res) => {
       }
 
       // Verify customer belongs to the same business (unless admin)
-      if (userRole !== 'admin' && customer.userId !== userId) {
+      if (userRole !== constants.ROLES.ADMIN && customer.userId !== userId) {
         return errorResponse(res, 'Customer does not belong to your business', 403);
       }
 
@@ -1120,7 +1121,7 @@ const createPayment = async (req, res) => {
     const paymentLog = await prisma.webhookPaymentLog.create({
       data: {
         data: paymentLogData,
-        type: 'payment_checkout',
+        type: constants.WEBHOOK_TYPES.PAYMENT_CHECKOUT,
         createdDate: new Date()
       }
     });
@@ -1143,12 +1144,12 @@ const createPayment = async (req, res) => {
         previousStatus = customerUser.status;
         
         // If customer is already recovered, payment is from recovered customer
-        if (customerUser.status === 'recovered') {
-          revenuePaymentStatus = 'recovered';
+        if (customerUser.status === constants.CUSTOMER_STATUS.RECOVERED) {
+          revenuePaymentStatus = constants.CUSTOMER_STATUS.RECOVERED;
         }
         // If customer is lost/at_risk/risk, this payment will RECOVER them
-        else if (customerUser.status === 'lost' || customerUser.status === 'at_risk' || customerUser.status === 'risk') {
-          revenuePaymentStatus = 'recovered'; // This payment recovers the customer
+        else if (customerUser.status === constants.CUSTOMER_STATUS.LOST || customerUser.status === constants.CUSTOMER_STATUS.AT_RISK || customerUser.status === constants.CUSTOMER_STATUS.RISK) {
+          revenuePaymentStatus = constants.CUSTOMER_STATUS.RECOVERED; // This payment recovers the customer
         }
         // For other statuses (new, active), leave as null
       }
@@ -1209,13 +1210,13 @@ const createPayment = async (req, res) => {
           let statusChangeReason = null;
 
           // Handle lost/at_risk to recovered
-          if (currentPreviousStatus === 'lost' || currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk') {
-            newStatus = 'recovered';
-            statusChangeReason = `Payment received after being ${currentPreviousStatus === 'lost' ? 'lost' : 'at risk'}`;
+          if (currentPreviousStatus === constants.CUSTOMER_STATUS.LOST || currentPreviousStatus === constants.CUSTOMER_STATUS.AT_RISK || currentPreviousStatus === constants.CUSTOMER_STATUS.RISK) {
+            newStatus = constants.CUSTOMER_STATUS.RECOVERED;
+            statusChangeReason = `Payment received after being ${currentPreviousStatus === constants.CUSTOMER_STATUS.LOST ? 'lost' : 'at risk'}`;
           }
           // Handle new to active
-          else if (currentPreviousStatus === 'new') {
-            newStatus = 'active';
+          else if (currentPreviousStatus === constants.CUSTOMER_STATUS.NEW) {
+            newStatus = constants.CUSTOMER_STATUS.ACTIVE;
             statusChangeReason = 'First payment received';
           }
 
@@ -1235,8 +1236,8 @@ const createPayment = async (req, res) => {
               data: {
                 customerId: finalCustomerId,
                 userId: finalUserId,
-                oldStatus: currentPreviousStatus === 'lost' ? 'Lost' : (currentPreviousStatus === 'at_risk' || currentPreviousStatus === 'risk' ? 'Risk' : 'New'),
-                newStatus: newStatus === 'recovered' ? 'Recovered' : 'Active',
+                oldStatus: currentPreviousStatus === constants.CUSTOMER_STATUS.LOST ? 'Lost' : (currentPreviousStatus === constants.CUSTOMER_STATUS.AT_RISK || currentPreviousStatus === constants.CUSTOMER_STATUS.RISK ? 'Risk' : 'New'),
+                newStatus: newStatus === constants.CUSTOMER_STATUS.RECOVERED ? 'Recovered' : 'Active',
                 reason: statusChangeReason
               }
             });
@@ -1280,7 +1281,7 @@ const createPayment = async (req, res) => {
             }
           });
 
-          const customerStatus = previousPayments === 0 ? 'new' : 'active';
+          const customerStatus = previousPayments === 0 ? constants.CUSTOMER_STATUS.NEW : constants.CUSTOMER_STATUS.ACTIVE;
 
           const webhookParams = {
             customer_name: customer.customerFullName,
@@ -1304,7 +1305,7 @@ const createPayment = async (req, res) => {
                 message: `Rating request sent via N8N after payment`,
                 status: 'sent',
                 whatsappMessageId: null,
-                messageStatus: 'pending',
+                messageStatus: constants.WEBHOOK_STATUS.PENDING,
                 paymentWebhookId: paymentWebhook.id
               }
             });
@@ -1483,8 +1484,8 @@ const updateWebhookLogStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!status || !['pending', 'processed', 'failed'].includes(status)) {
-      return errorResponse(res, 'Invalid status. Must be pending, processed, or failed', 400);
+    if (!status || ![constants.WEBHOOK_STATUS.PENDING, constants.WEBHOOK_STATUS.PROCESSED, constants.WEBHOOK_STATUS.FAILED].includes(status)) {
+      return errorResponse(res, `Invalid status. Must be ${constants.WEBHOOK_STATUS.PENDING}, ${constants.WEBHOOK_STATUS.PROCESSED}, or ${constants.WEBHOOK_STATUS.FAILED}`, 400);
     }
 
     const updatedWebhookLog = await prisma.webhookLog.update({
@@ -1726,7 +1727,7 @@ const getAllAppointments = async (req, res) => {
     const where = {};
     
     // Filter by userId - if admin, can see all, otherwise only own appointments
-    if (userRole === 'admin' && userId) {
+    if (userRole === constants.ROLES.ADMIN && userId) {
       where.userId = userId;
     } else {
       // Non-admin users can only see their own appointments
@@ -2143,7 +2144,7 @@ const createAppointment = async (req, res) => {
           data: {
             customerId: finalCustomerId,
             userId: userId,
-            status: 'new'
+            status: constants.CUSTOMER_STATUS.NEW
           }
         });
 
@@ -2331,8 +2332,8 @@ const createAppointment = async (req, res) => {
     await prisma.webhookLog.create({
       data: {
         data: webhookLogData,
-        type: 'appointment',
-        status: 'processed' // Mark as processed since it's created by authenticated user
+        type: constants.WEBHOOK_TYPES.APPOINTMENT,
+        status: constants.WEBHOOK_STATUS.PROCESSED // Mark as processed since it's created by authenticated user
       }
     });
 
@@ -2372,7 +2373,7 @@ const updateAppointment = async (req, res) => {
 
     // Check if appointment exists and belongs to user
     let appointment;
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       appointment = await prisma.appointment.findUnique({
         where: { id }
       });
@@ -2481,7 +2482,7 @@ const deleteAppointment = async (req, res) => {
 
     // Check if appointment exists and belongs to user
     let appointment;
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       appointment = await prisma.appointment.findUnique({
         where: { id },
         include: {
@@ -2740,15 +2741,15 @@ const createWhatsappMessageWithValidation = async (req, res) => {
     }
 
     // Check if user has active subscription before creating WhatsApp message record
-    if (user.role !== 'admin') {
+    if (user.role !== constants.ROLES.ADMIN) {
       const subscriptionStatus = user.subscriptionStatus?.toLowerCase();
       
       // Block if subscription is not active
       if (!subscriptionStatus || 
-          subscriptionStatus === 'pending' || 
-          subscriptionStatus === 'canceled' || 
-          subscriptionStatus === 'inactive' ||
-          subscriptionStatus === 'expired') {
+          subscriptionStatus === constants.SUBSCRIPTION_STATUS.PENDING || 
+          subscriptionStatus === constants.SUBSCRIPTION_STATUS.CANCELED || 
+          subscriptionStatus === constants.SUBSCRIPTION_STATUS.INACTIVE ||
+          subscriptionStatus === constants.SUBSCRIPTION_STATUS.EXPIRED) {
         return errorResponse(res, 'Active subscription required. WhatsApp message cannot be created without an active subscription.', 403);
       }
 

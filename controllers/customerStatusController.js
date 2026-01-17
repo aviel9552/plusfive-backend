@@ -1,5 +1,6 @@
 const { successResponse, errorResponse } = require('../lib/utils');
 const CustomerStatusService = require('../services/CustomerStatusService');
+const { constants } = require('../config');
 
 // Initialize services
 const customerStatusService = new CustomerStatusService();
@@ -28,8 +29,8 @@ const getCustomersByStatus = async (req, res) => {
     const { status } = req.params;
     const { userId, page = 1, limit = 10 } = req.query;
 
-    if (!['new', 'active', 'at_risk', 'lost', 'recovered'].includes(status)) {
-      return errorResponse(res, 'Invalid status. Must be: new, active, at_risk, lost, recovered', 400);
+    if (![constants.CUSTOMER_STATUS.NEW, constants.CUSTOMER_STATUS.ACTIVE, constants.CUSTOMER_STATUS.AT_RISK, constants.CUSTOMER_STATUS.LOST, constants.CUSTOMER_STATUS.RECOVERED].includes(status)) {
+      return errorResponse(res, `Invalid status. Must be: ${constants.CUSTOMER_STATUS.NEW}, ${constants.CUSTOMER_STATUS.ACTIVE}, ${constants.CUSTOMER_STATUS.AT_RISK}, ${constants.CUSTOMER_STATUS.LOST}, ${constants.CUSTOMER_STATUS.RECOVERED}`, 400);
     }
 
     const customers = await customerStatusService.getCustomersByStatus(status, userId);

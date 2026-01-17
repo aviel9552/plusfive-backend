@@ -3,6 +3,7 @@ const { successResponse, errorResponse, hashPassword, verifyPassword } = require
 const { generateToken } = require('../middleware/auth');
 const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../lib/emailService');
 const { getOrCreateStripeCustomer, createAffiliateCoupon, createAffiliatePromotionCode } = require('../lib/stripe');
+const { constants } = require('../config');
 const crypto = require('crypto');
 
 // Register user
@@ -71,7 +72,7 @@ const register = async (req, res) => {
         lastName,
         referralCode: userReferralCode,
         emailVerified: new Date(), // Auto-verify email on registration
-        subscriptionStatus: 'pending', // New users don't have active subscription
+        subscriptionStatus: constants.SUBSCRIPTION_STATUS.PENDING, // New users don't have active subscription
         subscriptionPlan: null, // No subscription plan yet
         subscriptionExpirationDate: null, // No expiration date yet
         ...validUserFields
@@ -142,7 +143,7 @@ const register = async (req, res) => {
             data: {
               referrerId: referrer.id,
               referredUserId: user.id,
-              status: affiliateData ? 'active' : 'pending',
+              status: affiliateData ? constants.STATUS.ACTIVE : constants.STATUS.PENDING,
               commission: 0,
               ...(affiliateData || {})
             }
@@ -470,7 +471,7 @@ const accountSoftDelete = async (req, res) => {
     const userRole = req.user.role;
     
     // Prevent admin from soft deleting their account
-    if (userRole === 'admin') {
+    if (userRole === constants.ROLES.ADMIN) {
       return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
     }
     
@@ -485,7 +486,7 @@ const accountSoftDelete = async (req, res) => {
     }
 
     // Double check admin role from database
-    if (currentUser.role === 'admin') {
+    if (currentUser.role === constants.ROLES.ADMIN) {
       return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
     }
 
