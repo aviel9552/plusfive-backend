@@ -82,7 +82,7 @@ const getServiceById = async (req, res) => {
 // Create new service
 const createService = async (req, res) => {
   try {
-    const { name, notes, category, price, duration, color, hideFromClients } = req.body;
+    const { name, notes, category, price, duration, color, hideFromClients, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
     const userId = req.user.userId;
 
     // Validate required fields
@@ -131,6 +131,9 @@ const createService = async (req, res) => {
         duration: parseInt(duration),
         color: color || '#FF257C',
         hideFromClients: hideFromClients || false,
+        earliestTimeToBook: earliestTimeToBook?.trim() || null,
+        latestTimeToBook: latestTimeToBook?.trim() || null,
+        availableDays: Array.isArray(availableDays) ? availableDays : [],
         businessId: userId
       },
       include: {
@@ -156,7 +159,7 @@ const createService = async (req, res) => {
 const updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, notes, category, price, duration, color, hideFromClients, isActive } = req.body;
+    const { name, notes, category, price, duration, color, hideFromClients, isActive, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -219,6 +222,9 @@ const updateService = async (req, res) => {
     if (color !== undefined) updateData.color = color || '#FF257C';
     if (hideFromClients !== undefined) updateData.hideFromClients = hideFromClients;
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (earliestTimeToBook !== undefined) updateData.earliestTimeToBook = earliestTimeToBook?.trim() || null;
+    if (latestTimeToBook !== undefined) updateData.latestTimeToBook = latestTimeToBook?.trim() || null;
+    if (availableDays !== undefined) updateData.availableDays = Array.isArray(availableDays) ? availableDays : [];
 
     // Update service
     const service = await prisma.service.update({

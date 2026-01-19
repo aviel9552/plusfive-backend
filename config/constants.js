@@ -80,5 +80,27 @@ module.exports = {
     SUCCEEDED: 'succeeded',
     FAILED: 'failed',
     PENDING: 'pending'
-  }
+  },
+
+  // Cloudinary Folders
+  CLOUDINARY_FOLDERS: {
+    STAFF: 'Staff',
+    CUSTOMER: 'Customer'
+  },
+
+  // Days of the week (Hebrew abbreviations: א'-ש')
+  DAYS_OF_WEEK: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
+
+  // Time Options - Generate time options from 00:00 to 23:55 in 5-minute intervals
+  TIME_OPTIONS: (() => {
+    const times = [];
+    for (let hour = 0; hour < 24; hour++) {
+      for (let minute = 0; minute < 60; minute += 5) {
+        const hourStr = hour.toString().padStart(2, '0');
+        const minuteStr = minute.toString().padStart(2, '0');
+        times.push(`${hourStr}:${minuteStr}`);
+      }
+    }
+    return times;
+  })()
 };

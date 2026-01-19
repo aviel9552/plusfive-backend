@@ -13,6 +13,7 @@ const {
 } = require('../controllers/customerController');
 const { authenticateToken } = require('../middleware/auth');
 const { checkSubscription } = require('../middleware/subscription');
+const upload = require('../middleware/upload');
 
 // All customer routes require authentication
 router.use(authenticateToken);
@@ -37,8 +38,8 @@ router.post('/', checkSubscription, addCustomer);
 // POST /api/customers/bulk-import - Bulk import customers from CSV data
 router.post('/bulk-import', checkSubscription, bulkImportCustomers);
 
-// PUT /api/customers/:id - Update customer information
-router.put('/:id', checkSubscription, updateCustomer);
+// PUT /api/customers/:id - Update customer information (with optional profileImage upload)
+router.put('/:id', checkSubscription, upload.single('profileImage'), updateCustomer);
 
 // DELETE /api/customers/bulk - Remove multiple customers from business owner's list
 router.delete('/bulk', checkSubscription, removeMultipleCustomers);

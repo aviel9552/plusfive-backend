@@ -504,6 +504,7 @@ model Staff {
   email       String?  // Email address (optional)
   city        String?  // City (optional)
   address     String?  // Address (optional)
+  image       String?  // Profile image URL from Cloudinary (optional)
   
   // Business relation
   businessId  String   // Reference to User table (business owner)
@@ -511,6 +512,9 @@ model Staff {
   
   // Appointments relation
   appointments Appointment[] // Appointments assigned to this staff member
+  
+  // Operating hours relation
+  operatingHours StaffOperatingHours[] // Staff operating hours
   
   // Status
   isActive    Boolean  @default(true)
@@ -521,6 +525,27 @@ model Staff {
   updatedAt   DateTime @updatedAt
   
   @@map("staff")
+}
+
+// Staff Operating Hours table - Store staff hours of operation
+model StaffOperatingHours {
+  id          String   @id @default(cuid())
+  
+  // Staff relation
+  staffId     String   // Reference to Staff table
+  staff       Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  
+  // Operating hours details
+  day         String?   // Day of the week (e.g., "א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'")
+  startTime   String?   // Start time (format: "HH:MM")
+  endTime     String?   // End time (format: "HH:MM")
+  isActive    Boolean?  @default(true) // Active/Inactive toggle
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("staff_operating_hours")
 }
 
 // Service table - Store services/offerings for businesses
@@ -535,6 +560,11 @@ model Service {
   duration          Int      // Duration in minutes (required)
   color             String?  // Color code for display (optional, default: #FF257C)
   hideFromClients   Boolean  @default(false) // Hide from client booking (optional)
+  
+  // Advanced appointment settings
+  earliestTimeToBook String? // Earliest time to make an appointment (format: "HH:MM")
+  latestTimeToBook   String? // Latest time to make an appointment (format: "HH:MM")
+  availableDays      String[] @default([]) // Days when you can make an appointment (array of day names)
   
   // Business relation
   businessId        String   // Reference to User table (business owner)

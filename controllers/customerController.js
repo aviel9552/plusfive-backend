@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { constants } = require('../config');
+const { uploadImage, deleteImage, extractPublicId } = require('../lib/cloudinary');
 
 // Helper function to format Israeli phone numbers (same as webhookController)
 const formatIsraeliPhone = (phoneNumber) => {
@@ -413,6 +414,9 @@ const updateCustomer = async (req, res) => {
       address,
       city,
       isActive,
+      profileImage,
+      coverImage,
+      documentImage,
       // CustomerUser status
       status
     } = req.body;
@@ -461,6 +465,81 @@ const updateCustomer = async (req, res) => {
       return errorResponse(res, 'Customer not found', 404);
     }
 
+    // Handle profileImage upload if file is present
+    let profileImageUrl = customer.profileImage; // Keep existing image by default
+    let shouldUpdateProfileImage = false;
+    
+    console.log('Update customer - req.file:', req.file ? 'File present' : 'No file');
+    console.log('Update customer - profileImage from body:', profileImage);
+    
+    if (req.file) {
+      try {
+        // Delete old image from Cloudinary if it exists
+        if (customer.profileImage) {
+          const oldPublicId = extractPublicId(customer.profileImage);
+          if (oldPublicId) {
+            try {
+              await deleteImage(oldPublicId);
+              console.log('Old profile image deleted from Cloudinary');
+            } catch (deleteError) {
+              console.error('Error deleting old profile image:', deleteError);
+              // Continue even if deletion fails
+            }
+          }
+        }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await uploadImage(req.file.buffer, constants.CLOUDINARY_FOLDERS.CUSTOMER);
+        profileImageUrl = uploadResult.secure_url;
+        shouldUpdateProfileImage = true;
+        console.log('Profile image uploaded successfully to Cloudinary:', profileImageUrl);
+      } catch (uploadError) {
+        console.error('Profile image upload error:', uploadError);
+        return errorResponse(res, 'Failed to upload profile image', 500);
+      }
+    } else if (profileImage !== undefined && profileImage !== null && profileImage !== '') {
+      // Check if profileImage is a base64 string
+      if (typeof profileImage === 'string' && profileImage.startsWith('data:image/')) {
+        try {
+          // Extract base64 data
+          const base64Data = profileImage.split(',')[1];
+          const imageBuffer = Buffer.from(base64Data, 'base64');
+          
+          // Delete old image from Cloudinary if it exists
+          if (customer.profileImage) {
+            const oldPublicId = extractPublicId(customer.profileImage);
+            if (oldPublicId) {
+              try {
+                await deleteImage(oldPublicId);
+                console.log('Old profile image deleted from Cloudinary');
+              } catch (deleteError) {
+                console.error('Error deleting old profile image:', deleteError);
+              }
+            }
+          }
+          
+          // Upload base64 image to Cloudinary
+          const uploadResult = await uploadImage(imageBuffer, constants.CLOUDINARY_FOLDERS.CUSTOMER);
+          profileImageUrl = uploadResult.secure_url;
+          shouldUpdateProfileImage = true;
+          console.log('Base64 profile image uploaded successfully to Cloudinary:', profileImageUrl);
+        } catch (uploadError) {
+          console.error('Base64 profile image upload error:', uploadError);
+          return errorResponse(res, 'Failed to upload profile image from base64', 500);
+        }
+      } else {
+        // If profileImage is provided as a URL string (not a file), use it
+        profileImageUrl = profileImage;
+        shouldUpdateProfileImage = true;
+        console.log('Using profileImage URL from request:', profileImageUrl);
+      }
+    } else if (profileImage === null || profileImage === '') {
+      // Explicitly set to null/empty if provided
+      profileImageUrl = null;
+      shouldUpdateProfileImage = true;
+      console.log('Profile image set to null');
+    }
+
     // Start a transaction to update both tables
     const result = await prisma.$transaction(async (tx) => {
       // Update Customers table
@@ -472,13 +551,25 @@ const updateCustomer = async (req, res) => {
       if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
       if (address !== undefined) updateData.address = address;
       if (city !== undefined) updateData.city = city;
+      // Only update profileImage if a file was uploaded or explicitly provided
+      if (shouldUpdateProfileImage) {
+        updateData.profileImage = profileImageUrl;
+      }
+      if (coverImage !== undefined) updateData.coverImage = coverImage;
+      if (documentImage !== undefined) updateData.documentImage = documentImage;
       
       // Handle isActive: if provided directly, use it; otherwise map from status
+      // Convert string booleans to actual booleans (FormData sends everything as strings)
       if (isActive !== undefined) {
-        updateData.isActive = isActive;
+        // Handle string booleans from FormData
+        if (typeof isActive === 'string') {
+          updateData.isActive = isActive === 'true' || isActive === '1';
+        } else {
+          updateData.isActive = Boolean(isActive);
+        }
       } else if (status !== undefined) {
         // Map status to isActive: "active" or "פעיל" = true, "חסום" or "לא פעיל" or "inactive" = false
-        const statusLower = status.toLowerCase();
+        const statusLower = typeof status === 'string' ? status.toLowerCase() : String(status).toLowerCase();
         if (statusLower === constants.STATUS.ACTIVE || statusLower === 'פעיל') {
           updateData.isActive = true;
         } else if (statusLower === 'חסום' || statusLower === 'לא פעיל' || statusLower === constants.STATUS.INACTIVE || statusLower === 'blocked') {
@@ -683,10 +774,19 @@ const getAllCustomers = async (req, res) => {
         u."businessType" as "userBusinessType",
         COALESCE(cu.status, 'active') as "customerStatus",
         COALESCE(appointment_counts.total, 0) as "totalAppointments",
+        appointment_counts.last_appointment_date as "lastAppointmentDate",
+        appointment_counts.first_appointment_date as "firstAppointmentDate",
+        last_appointment_service.last_appointment_service as "lastAppointmentService",
+        COALESCE(appointment_intervals.avg_days_between_appointments, 0) as "avgDaysBetweenAppointments",
         COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
         COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
         payment_data.last_payment_date as "lastPaymentDate",
         COALESCE(payment_data.payment_count, 0) as "paymentCount",
+        COALESCE(payment_data.min_payment, 0) as "minPayment",
+        COALESCE(payment_data.max_payment, 0) as "maxPayment",
+        COALESCE(payment_data.avg_payment, 0) as "avgPayment",
+        COALESCE(payment_data.lost_revenue, 0) as "lostRevenue",
+        COALESCE(payment_data.recovered_revenue, 0) as "recoveredRevenue",
         COALESCE(review_stats.total_reviews, 0) as "totalReviews",
         COALESCE(review_stats.avg_rating, 0) as "averageRating",
         COALESCE(review_stats.min_rating, 0) as "minRating",
@@ -700,10 +800,37 @@ const getAllCustomers = async (req, res) => {
       LEFT JOIN (
         SELECT 
           "customerId", 
-          COUNT(*) as total
+          COUNT(*) as total,
+          MAX("updatedAt") as last_appointment_date,
+          MIN("createdAt") as first_appointment_date
         FROM "appointments" 
         GROUP BY "customerId"
       ) appointment_counts ON c.id = appointment_counts."customerId"
+      LEFT JOIN (
+        SELECT DISTINCT ON ("customerId")
+          "customerId",
+          "selectedServices" as last_appointment_service
+        FROM "appointments"
+        ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
+      ) last_appointment_service ON c.id = last_appointment_service."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          CASE 
+            WHEN COUNT(*) > 1 THEN
+              AVG(EXTRACT(EPOCH FROM (next_appt - "createdAt")) / 86400)
+            ELSE NULL
+          END as avg_days_between_appointments
+        FROM (
+          SELECT 
+            "customerId",
+            "createdAt",
+            LEAD("createdAt") OVER (PARTITION BY "customerId" ORDER BY "createdAt") as next_appt
+          FROM "appointments"
+        ) appt_with_next
+        WHERE next_appt IS NOT NULL
+        GROUP BY "customerId"
+      ) appointment_intervals ON c.id = appointment_intervals."customerId"
       LEFT JOIN (
         SELECT 
           pw."customerId",
@@ -715,7 +842,12 @@ const getAllCustomers = async (req, res) => {
            ORDER BY pw2."paymentDate" DESC, pw2."createdAt" DESC
            LIMIT 1) as last_payment_amount,
           MAX(pw."paymentDate") as last_payment_date,
-          COUNT(*) as payment_count
+          COUNT(*) as payment_count,
+          MIN(pw.total) as min_payment,
+          MAX(pw.total) as max_payment,
+          AVG(pw.total) as avg_payment,
+          COALESCE(SUM(CASE WHEN pw."customerOldStatus" = '${constants.CUSTOMER_STATUS.LOST}' OR pw."customerOldStatus" = '${constants.CUSTOMER_STATUS.AT_RISK}' THEN pw.total ELSE 0 END), 0) as lost_revenue,
+          COALESCE(SUM(CASE WHEN pw."revenuePaymentStatus" = '${constants.CUSTOMER_STATUS.RECOVERED}' THEN pw.total ELSE 0 END), 0) as recovered_revenue
         FROM "payment_webhooks" pw
         WHERE pw.status = 'success'
         GROUP BY pw."customerId"
@@ -741,6 +873,68 @@ const getAllCustomers = async (req, res) => {
 
     // Process the results - all data already fetched in single query
     const customersWithTotalCount = customersData.map((customer) => {
+      // Calculate days since last appointment
+      let daysSinceLastAppointment = null;
+      if (customer.lastAppointmentDate) {
+        const lastApptDate = new Date(customer.lastAppointmentDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        lastApptDate.setHours(0, 0, 0, 0);
+        const diffTime = today - lastApptDate;
+        daysSinceLastAppointment = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      }
+
+      // Calculate years since customer creation
+      let yearsSinceCreation = null;
+      if (customer.createdAt) {
+        const customerCreatedDate = new Date(customer.createdAt);
+        const today = new Date();
+        const diffTime = today - customerCreatedDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        const totalYears = diffDays / 365.25;
+        
+        if (diffDays >= 0) {
+          yearsSinceCreation = parseFloat(totalYears.toFixed(2));
+        }
+      }
+
+      // Calculate average number of visits per year
+      // Formula: totalAppointments / totalYears (from customer creation date to today)
+      // If yearsSinceCreation < 1, use 1 year as minimum for calculation
+      let avgVisitsPerYear = null;
+      let totalYear = null;
+      const totalAppointments = Number(customer.totalAppointments) || 0;
+      if (totalAppointments > 0 && customer.createdAt) {
+        const customerCreatedDate = new Date(customer.createdAt);
+        const today = new Date();
+        
+        // Calculate time difference from customer creation to today (in days)
+        const diffTime = today - customerCreatedDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        const totalYears = diffDays / 365.25;
+        
+        // Minimum threshold: at least 1 day to avoid unrealistic calculations
+        const MIN_DAYS_THRESHOLD = 1;
+        
+        if (diffDays >= MIN_DAYS_THRESHOLD) {
+          // Use at least 1 year for calculation (if less than 1 year, treat as 1 year)
+          const yearsForCalculation = Math.max(1, totalYears);
+          totalYear = yearsForCalculation;
+          // Calculate average visits per year: total appointments / years (minimum 1 year)
+          avgVisitsPerYear = parseFloat((totalAppointments / yearsForCalculation).toFixed(2));
+        } else {
+          // If less than 1 day has passed since customer creation, don't calculate (return null)
+          // This prevents unrealistic projections for very recent customers
+          avgVisitsPerYear = null;
+          totalYear = null;
+        }
+      }
+
+      // Average time between appointments (in days)
+      const avgTimeBetweenAppointments = customer.avgDaysBetweenAppointments 
+        ? Math.round(Number(customer.avgDaysBetweenAppointments))
+        : null;
+
       return {
         // Basic customer data
         id: customer.id,
@@ -775,10 +969,17 @@ const getAllCustomers = async (req, res) => {
         },
         
         // Aggregated data from joins
-        totalAppointmentCount: Number(customer.totalAppointments),
+        totalAppointmentCount: totalAppointments,
         customerStatus: customer.customerStatus,
         lastRating: Number(customer.lastRating) || 0,
-        lastVisit: customer.lastPaymentDate,
+        lastVisit: customer.lastAppointmentDate || customer.lastPaymentDate,
+        lastAppointmentDate: customer.lastAppointmentDate,
+        lastAppointmentService: customer.lastAppointmentService || null,
+        daysSinceLastAppointment: daysSinceLastAppointment,
+        avgTimeBetweenAppointments: avgTimeBetweenAppointments,
+        avgVisitsPerYear: avgVisitsPerYear,
+        yearsSinceCreation: yearsSinceCreation,
+        totalYear: totalYear,
         
         // Payment data
         totalPaidAmount: Number(customer.totalPaidAmount),
@@ -794,6 +995,17 @@ const getAllCustomers = async (req, res) => {
           minRating: Number(customer.minRating),
           maxRating: Number(customer.maxRating),
           lastRating: Number(customer.lastRating) || 0
+        },
+        // Revenue statistics
+        revenueStatistics: {
+          totalRevenue: Number(customer.totalPaidAmount),
+          averagePayment: customer.avgPayment ? parseFloat(Number(customer.avgPayment).toFixed(2)) : 0,
+          minPayment: Number(customer.minPayment),
+          maxPayment: Number(customer.maxPayment),
+          lastPayment: Number(customer.lastPaymentAmount) || 0,
+          totalPayments: Number(customer.paymentCount),
+          lostRevenue: Number(customer.lostRevenue) || 0,
+          recoveredRevenue: Number(customer.recoveredRevenue) || 0
         }
       };
     });
@@ -839,10 +1051,19 @@ const getTenCustomers = async (req, res) => {
         u."businessType" as "userBusinessType",
         COALESCE(cu.status, 'active') as "customerStatus",
         COALESCE(appointment_counts.total, 0) as "totalAppointments",
+        appointment_counts.last_appointment_date as "lastAppointmentDate",
+        appointment_counts.first_appointment_date as "firstAppointmentDate",
+        last_appointment_service.last_appointment_service as "lastAppointmentService",
+        COALESCE(appointment_intervals.avg_days_between_appointments, 0) as "avgDaysBetweenAppointments",
         COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
         COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
         payment_data.last_payment_date as "lastPaymentDate",
         COALESCE(payment_data.payment_count, 0) as "paymentCount",
+        COALESCE(payment_data.min_payment, 0) as "minPayment",
+        COALESCE(payment_data.max_payment, 0) as "maxPayment",
+        COALESCE(payment_data.avg_payment, 0) as "avgPayment",
+        COALESCE(payment_data.lost_revenue, 0) as "lostRevenue",
+        COALESCE(payment_data.recovered_revenue, 0) as "recoveredRevenue",
         COALESCE(review_stats.total_reviews, 0) as "totalReviews",
         COALESCE(review_stats.avg_rating, 0) as "averageRating",
         COALESCE(review_stats.min_rating, 0) as "minRating",
@@ -856,10 +1077,37 @@ const getTenCustomers = async (req, res) => {
       LEFT JOIN (
         SELECT 
           "customerId", 
-          COUNT(*) as total
+          COUNT(*) as total,
+          MAX("updatedAt") as last_appointment_date,
+          MIN("createdAt") as first_appointment_date
         FROM "appointments" 
         GROUP BY "customerId"
       ) appointment_counts ON c.id = appointment_counts."customerId"
+      LEFT JOIN (
+        SELECT DISTINCT ON ("customerId")
+          "customerId",
+          "selectedServices" as last_appointment_service
+        FROM "appointments"
+        ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
+      ) last_appointment_service ON c.id = last_appointment_service."customerId"
+      LEFT JOIN (
+        SELECT 
+          "customerId",
+          CASE 
+            WHEN COUNT(*) > 1 THEN
+              AVG(EXTRACT(EPOCH FROM (next_appt - "createdAt")) / 86400)
+            ELSE NULL
+          END as avg_days_between_appointments
+        FROM (
+          SELECT 
+            "customerId",
+            "createdAt",
+            LEAD("createdAt") OVER (PARTITION BY "customerId" ORDER BY "createdAt") as next_appt
+          FROM "appointments"
+        ) appt_with_next
+        WHERE next_appt IS NOT NULL
+        GROUP BY "customerId"
+      ) appointment_intervals ON c.id = appointment_intervals."customerId"
       LEFT JOIN (
         SELECT 
           pw."customerId",
@@ -871,7 +1119,12 @@ const getTenCustomers = async (req, res) => {
            ORDER BY pw2."paymentDate" DESC, pw2."createdAt" DESC
            LIMIT 1) as last_payment_amount,
           MAX(pw."paymentDate") as last_payment_date,
-          COUNT(*) as payment_count
+          COUNT(*) as payment_count,
+          MIN(pw.total) as min_payment,
+          MAX(pw.total) as max_payment,
+          AVG(pw.total) as avg_payment,
+          COALESCE(SUM(CASE WHEN pw."customerOldStatus" = '${constants.CUSTOMER_STATUS.LOST}' OR pw."customerOldStatus" = '${constants.CUSTOMER_STATUS.AT_RISK}' THEN pw.total ELSE 0 END), 0) as lost_revenue,
+          COALESCE(SUM(CASE WHEN pw."revenuePaymentStatus" = '${constants.CUSTOMER_STATUS.RECOVERED}' THEN pw.total ELSE 0 END), 0) as recovered_revenue
         FROM "payment_webhooks" pw
         WHERE pw.status = 'success'
         GROUP BY pw."customerId"
@@ -909,6 +1162,68 @@ const getTenCustomers = async (req, res) => {
 
     // Process the results - all data already fetched in single query
     const customersWithTotalCount = customersData.map((customer) => {
+      // Calculate days since last appointment
+      let daysSinceLastAppointment = null;
+      if (customer.lastAppointmentDate) {
+        const lastApptDate = new Date(customer.lastAppointmentDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        lastApptDate.setHours(0, 0, 0, 0);
+        const diffTime = today - lastApptDate;
+        daysSinceLastAppointment = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      }
+
+      // Calculate years since customer creation
+      let yearsSinceCreation = null;
+      if (customer.createdAt) {
+        const customerCreatedDate = new Date(customer.createdAt);
+        const today = new Date();
+        const diffTime = today - customerCreatedDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        const totalYears = diffDays / 365.25;
+        
+        if (diffDays >= 0) {
+          yearsSinceCreation = parseFloat(totalYears.toFixed(2));
+        }
+      }
+
+      // Calculate average number of visits per year
+      // Formula: totalAppointments / totalYears (from customer creation date to today)
+      // If yearsSinceCreation < 1, use 1 year as minimum for calculation
+      let avgVisitsPerYear = null;
+      let totalYear = null;
+      const totalAppointments = Number(customer.totalAppointments) || 0;
+      if (totalAppointments > 0 && customer.createdAt) {
+        const customerCreatedDate = new Date(customer.createdAt);
+        const today = new Date();
+        
+        // Calculate time difference from customer creation to today (in days)
+        const diffTime = today - customerCreatedDate;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        const totalYears = diffDays / 365.25;
+        
+        // Minimum threshold: at least 1 day to avoid unrealistic calculations
+        const MIN_DAYS_THRESHOLD = 1;
+        
+        if (diffDays >= MIN_DAYS_THRESHOLD) {
+          // Use at least 1 year for calculation (if less than 1 year, treat as 1 year)
+          const yearsForCalculation = Math.max(1, totalYears);
+          totalYear = yearsForCalculation;
+          // Calculate average visits per year: total appointments / years (minimum 1 year)
+          avgVisitsPerYear = parseFloat((totalAppointments / yearsForCalculation).toFixed(2));
+        } else {
+          // If less than 1 day has passed since customer creation, don't calculate (return null)
+          // This prevents unrealistic projections for very recent customers
+          avgVisitsPerYear = null;
+          totalYear = null;
+        }
+      }
+
+      // Average time between appointments (in days)
+      const avgTimeBetweenAppointments = customer.avgDaysBetweenAppointments 
+        ? Math.round(Number(customer.avgDaysBetweenAppointments))
+        : null;
+
       return {
         // Basic customer data
         id: customer.id,
@@ -943,10 +1258,17 @@ const getTenCustomers = async (req, res) => {
         },
         
         // Aggregated data from joins
-        totalAppointmentCount: Number(customer.totalAppointments),
+        totalAppointmentCount: totalAppointments,
         customerStatus: customer.customerStatus,
         lastRating: Number(customer.lastRating) || 0,
-        lastVisit: customer.lastPaymentDate,
+        lastVisit: customer.lastAppointmentDate || customer.lastPaymentDate,
+        lastAppointmentDate: customer.lastAppointmentDate,
+        lastAppointmentService: customer.lastAppointmentService || null,
+        daysSinceLastAppointment: daysSinceLastAppointment,
+        avgTimeBetweenAppointments: avgTimeBetweenAppointments,
+        avgVisitsPerYear: avgVisitsPerYear,
+        yearsSinceCreation: yearsSinceCreation,
+        totalYear: totalYear,
         
         // Payment data
         totalPaidAmount: Number(customer.totalPaidAmount),
@@ -962,6 +1284,17 @@ const getTenCustomers = async (req, res) => {
           minRating: Number(customer.minRating),
           maxRating: Number(customer.maxRating),
           lastRating: Number(customer.lastRating) || 0
+        },
+        // Revenue statistics
+        revenueStatistics: {
+          totalRevenue: Number(customer.totalPaidAmount),
+          averagePayment: customer.avgPayment ? parseFloat(Number(customer.avgPayment).toFixed(2)) : 0,
+          minPayment: Number(customer.minPayment),
+          maxPayment: Number(customer.maxPayment),
+          lastPayment: Number(customer.lastPaymentAmount) || 0,
+          totalPayments: Number(customer.paymentCount),
+          lostRevenue: Number(customer.lostRevenue) || 0,
+          recoveredRevenue: Number(customer.recoveredRevenue) || 0
         }
       };
     });
@@ -1209,6 +1542,7 @@ const getCustomerById = async (req, res) => {
       reviews: customerReviews,
       lastRating: lastRating,
       lastVisit: lastVisit?.updatedAt || null,
+      lastAppointmentService: lastVisit?.selectedServices || null,
       lastAppointmentDetails: lastVisit,
       appointments: appointments,
       paymentHistory: paymentHistory,
@@ -1591,39 +1925,70 @@ const recordCustomerVisit = async (req, res) => {
       return errorResponse(res, 'Customer not found', 404);
     }
 
-    // Update customer visit information (increment appointmentCount)
-    const updatedCustomer = await prisma.customers.update({
-      where: { id },
-      data: {
-        appointmentCount: {
-          increment: 1
-        }
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            businessName: true
+    // Use transaction to update customer count and create appointment record
+    const result = await prisma.$transaction(async (tx) => {
+      // Update customer visit information (increment appointmentCount)
+      const updatedCustomer = await tx.customers.update({
+        where: { id },
+        data: {
+          appointmentCount: {
+            increment: 1
           }
-        },
-        customerUsers: {
-          where: {
-            userId: userId,
-            isDeleted: false
+        }
+      });
+
+      // Create appointment record for this visit
+      const now = new Date();
+      const appointment = await tx.appointment.create({
+        data: {
+          customerId: id,
+          userId: customer.userId || userId,
+          startDate: now,
+          endDate: now,
+          customerFullName: customer.customerFullName || `${customer.firstName} ${customer.lastName}`.trim(),
+          customerPhone: customer.customerPhone,
+          businessName: customer.businessName || null,
+          selectedServices: notes || null, // Use notes as service description if provided
+          createdAt: now,
+          updatedAt: now
+        }
+      });
+
+      // Fetch updated customer with relations
+      const customerWithRelations = await tx.customers.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              businessName: true
+            }
           },
-          select: {
-            id: true,
-            status: true,
-            userId: true
+          customerUsers: {
+            where: {
+              userId: userId,
+              isDeleted: false
+            },
+            select: {
+              id: true,
+              status: true,
+              userId: true
+            }
           }
         }
-      }
+      });
+
+      return { customer: customerWithRelations, appointment };
     });
 
-    return successResponse(res, updatedCustomer, 'Customer visit recorded successfully');
+    return successResponse(res, {
+      ...result.customer,
+      appointmentId: result.appointment.id,
+      message: 'Customer visit recorded successfully and appointment created'
+    }, 'Customer visit recorded successfully');
   } catch (error) {
     console.error('Record customer visit error:', error);
     return errorResponse(res, 'Internal server error', 500);
