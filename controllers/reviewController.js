@@ -94,7 +94,7 @@ const sendRatingRequest = async (req, res) => {
 // Process rating response from customer
 const processRating = async (req, res) => {
   try {
-    const { customerId, rating, feedback = null } = req.body;
+    const { customerId, rating, feedback = null, appointmentId = null, paymentWebhookId = null } = req.body;
 
     if (!customerId || !rating) {
       return errorResponse(res, 'Missing required fields: customerId, rating', 400);
@@ -122,14 +122,28 @@ const processRating = async (req, res) => {
       return errorResponse(res, 'Customer not found', 404);
     }
 
+    // If appointmentId not provided but paymentWebhookId is, get appointment from payment
+    let finalAppointmentId = appointmentId;
+    if (!finalAppointmentId && paymentWebhookId) {
+      const payment = await prisma.paymentWebhook.findUnique({
+        where: { id: paymentWebhookId },
+        select: { appointmentId: true }
+      });
+      if (payment?.appointmentId) {
+        finalAppointmentId = payment.appointmentId;
+      }
+    }
+
     // Create review record
     const review = await prisma.review.create({
       data: {
         rating: ratingNumber,
-        feedback: feedback,
+        message: feedback,
         status: 'received',
         customerId: customerId,
-        userId: customer.userId
+        userId: customer.userId,
+        appointmentId: finalAppointmentId || null,
+        paymentWebhookId: paymentWebhookId || null
       }
     });
 
@@ -253,7 +267,7 @@ const handleButtonInteraction = async (req, res) => {
 };
 
 // Process rating from button click
-const processRatingFromButton = async (customerId, rating, phoneNumber) => {
+const processRatingFromButton = async (customerId, rating, phoneNumber, appointmentId = null, paymentWebhookId = null) => {
   try {
     // Create review record
     const customer = await prisma.customers.findUnique({
@@ -270,13 +284,27 @@ const processRatingFromButton = async (customerId, rating, phoneNumber) => {
 
     if (!customer) return;
 
+    // If appointmentId not provided but paymentWebhookId is, get appointment from payment
+    let finalAppointmentId = appointmentId;
+    if (!finalAppointmentId && paymentWebhookId) {
+      const payment = await prisma.paymentWebhook.findUnique({
+        where: { id: paymentWebhookId },
+        select: { appointmentId: true }
+      });
+      if (payment?.appointmentId) {
+        finalAppointmentId = payment.appointmentId;
+      }
+    }
+
     const review = await prisma.review.create({
       data: {
         rating: rating,
-        feedback: null,
+        message: null,
         status: 'received',
         customerId: customerId,
-        userId: customer.userId
+        userId: customer.userId,
+        appointmentId: finalAppointmentId || null,
+        paymentWebhookId: paymentWebhookId || null
       }
     });
 
@@ -304,7 +332,7 @@ const processRatingFromButton = async (customerId, rating, phoneNumber) => {
 // Add review - Simple API with timer validation
 const addReview = async (req, res) => {
   try {
-    const { customerId, userId, rating, message, timestamp, expires } = req.body;
+    const { customerId, userId, rating, message, timestamp, expires, appointmentId = null, paymentWebhookId = null } = req.body;
 
     if (!customerId || !userId || !rating) {
       return errorResponse(res, 'Missing required fields: customerId, userId, rating', 400);
@@ -313,6 +341,18 @@ const addReview = async (req, res) => {
     const ratingNumber = parseInt(rating);
     if (ratingNumber < 1 || ratingNumber > 5) {
       return errorResponse(res, 'Rating must be between 1 and 5', 400);
+    }
+
+    // If appointmentId not provided but paymentWebhookId is, get appointment from payment
+    let finalAppointmentId = appointmentId;
+    if (!finalAppointmentId && paymentWebhookId) {
+      const payment = await prisma.paymentWebhook.findUnique({
+        where: { id: paymentWebhookId },
+        select: { appointmentId: true }
+      });
+      if (payment?.appointmentId) {
+        finalAppointmentId = payment.appointmentId;
+      }
     }
 
     // Validate timer-based link (if timestamp and expires are provided)
@@ -369,6 +409,8 @@ const addReview = async (req, res) => {
           rating: ratingNumber,
           message: message || null,
           status: 'received',
+          appointmentId: finalAppointmentId || existingReview.appointmentId,
+          paymentWebhookId: paymentWebhookId || existingReview.paymentWebhookId,
           updatedAt: new Date()
         }
       });
@@ -381,7 +423,9 @@ const addReview = async (req, res) => {
           message: message || null,
           status: 'received',
           customerId: customerId,
-          userId: userId
+          userId: userId,
+          appointmentId: finalAppointmentId || null,
+          paymentWebhookId: paymentWebhookId || null
         }
       });
       action = 'created';

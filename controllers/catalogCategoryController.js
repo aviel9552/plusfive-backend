@@ -16,8 +16,8 @@ const ensureMinimumDelay = async (promise, minDelayMs = 2000) => {
   return result;
 };
 
-// Get all categories
-const getAllCategories = async (req, res) => {
+// Get all catalog categories
+const getAllCatalogCategories = async (req, res) => {
   try {
     const userRole = req.user.role;
     const userId = req.user.userId;
@@ -33,7 +33,7 @@ const getAllCategories = async (req, res) => {
     }
 
     const categories = await ensureMinimumDelay(
-      prisma.category.findMany({
+      prisma.catalogCategory.findMany({
         where,
         include: {
           user: {
@@ -56,13 +56,13 @@ const getAllCategories = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get all categories error:', error);
-    return errorResponse(res, 'Failed to fetch categories', 500);
+    console.error('Get all catalog categories error:', error);
+    return errorResponse(res, 'Failed to fetch catalog categories', 500);
   }
 };
 
-// Get category by ID
-const getCategoryById = async (req, res) => {
+// Get catalog category by ID
+const getCatalogCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     const userRole = req.user.role;
@@ -80,36 +80,36 @@ const getCategoryById = async (req, res) => {
     }
 
     const category = await ensureMinimumDelay(
-      prisma.category.findFirst({
+      prisma.catalogCategory.findFirst({
         where
       })
     );
 
     if (!category) {
-      return errorResponse(res, 'Category not found', 404);
+      return errorResponse(res, 'Catalog category not found', 404);
     }
 
     return successResponse(res, category);
 
   } catch (error) {
-    console.error('Get category by ID error:', error);
-    return errorResponse(res, 'Failed to fetch category', 500);
+    console.error('Get catalog category by ID error:', error);
+    return errorResponse(res, 'Failed to fetch catalog category', 500);
   }
 };
 
-// Create new category
-const createCategory = async (req, res) => {
+// Create new catalog category
+const createCatalogCategory = async (req, res) => {
   try {
     const { title, status } = req.body;
     const userId = req.user.userId;
 
     // Validate required fields
     if (!title || !title.trim()) {
-      return errorResponse(res, 'Category title is required', 400);
+      return errorResponse(res, 'Catalog category title is required', 400);
     }
 
     // Check if category with same title already exists for this user (non-deleted)
-    const existingCategory = await prisma.category.findFirst({
+    const existingCategory = await prisma.catalogCategory.findFirst({
       where: {
         title: title.trim(),
         userId: userId,
@@ -118,12 +118,12 @@ const createCategory = async (req, res) => {
     });
 
     if (existingCategory) {
-      return errorResponse(res, 'Category with this title already exists', 400);
+      return errorResponse(res, 'Catalog category with this title already exists', 400);
     }
 
     // Create category associated with the user
     const category = await ensureMinimumDelay(
-      prisma.category.create({
+      prisma.catalogCategory.create({
         data: {
           title: title.trim(),
           status: status || constants.STATUS.ACTIVE,
@@ -132,16 +132,16 @@ const createCategory = async (req, res) => {
       })
     );
 
-    return successResponse(res, category, 'Category created successfully', 201);
+    return successResponse(res, category, 'Catalog category created successfully', 201);
 
   } catch (error) {
-    console.error('Create category error:', error);
-    return errorResponse(res, 'Failed to create category', 500);
+    console.error('Create catalog category error:', error);
+    return errorResponse(res, 'Failed to create catalog category', 500);
   }
 };
 
-// Update category
-const updateCategory = async (req, res) => {
+// Update catalog category
+const updateCatalogCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const { title, status } = req.body;
@@ -160,17 +160,17 @@ const updateCategory = async (req, res) => {
     }
 
     // Check if category exists
-    const existingCategory = await prisma.category.findFirst({
+    const existingCategory = await prisma.catalogCategory.findFirst({
       where
     });
 
     if (!existingCategory) {
-      return errorResponse(res, 'Category not found', 404);
+      return errorResponse(res, 'Catalog category not found', 404);
     }
 
     // Validate required fields if provided
     if (title !== undefined && !title.trim()) {
-      return errorResponse(res, 'Category title cannot be empty', 400);
+      return errorResponse(res, 'Catalog category title cannot be empty', 400);
     }
 
     // Check if another category with same title exists for this user (excluding current category)
@@ -186,12 +186,12 @@ const updateCategory = async (req, res) => {
         duplicateWhere.userId = userId;
       }
 
-      const duplicateCategory = await prisma.category.findFirst({
+      const duplicateCategory = await prisma.catalogCategory.findFirst({
         where: duplicateWhere
       });
 
       if (duplicateCategory) {
-        return errorResponse(res, 'Category with this title already exists', 400);
+        return errorResponse(res, 'Catalog category with this title already exists', 400);
       }
     }
 
@@ -202,22 +202,22 @@ const updateCategory = async (req, res) => {
 
     // Update category
     const category = await ensureMinimumDelay(
-      prisma.category.update({
+      prisma.catalogCategory.update({
         where: { id },
         data: updateData
       })
     );
 
-    return successResponse(res, category, 'Category updated successfully');
+    return successResponse(res, category, 'Catalog category updated successfully');
 
   } catch (error) {
-    console.error('Update category error:', error);
-    return errorResponse(res, 'Failed to update category', 500);
+    console.error('Update catalog category error:', error);
+    return errorResponse(res, 'Failed to update catalog category', 500);
   }
 };
 
-// Delete category (hard delete)
-const deleteCategory = async (req, res) => {
+// Delete catalog category (hard delete)
+const deleteCatalogCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const userRole = req.user.role;
@@ -235,47 +235,34 @@ const deleteCategory = async (req, res) => {
     }
 
     // Check if category exists
-    const category = await prisma.category.findFirst({
+    const category = await prisma.catalogCategory.findFirst({
       where
     });
 
     if (!category) {
-      return errorResponse(res, 'Category not found', 404);
+      return errorResponse(res, 'Catalog category not found', 404);
     }
 
     // Hard delete category - permanently remove from database
     await ensureMinimumDelay(
-      prisma.category.delete({
+      prisma.catalogCategory.delete({
         where: { id }
       })
     );
 
-    // SOFT DELETE CODE (COMMENTED OUT - KEPT FOR REFERENCE)
-    // // Soft delete category
-    // const deletedCategory = await prisma.category.update({
-    //   where: { id },
-    //   data: {
-    //     isDeleted: true
-    //   }
-    // });
-    // return successResponse(res, {
-    //   message: 'Category deleted successfully',
-    //   category: deletedCategory
-    // }, 'Category deleted successfully');
-
     return successResponse(res, {
-      message: 'Category deleted successfully',
+      message: 'Catalog category deleted successfully',
       categoryId: id
-    }, 'Category deleted successfully');
+    }, 'Catalog category deleted successfully');
 
   } catch (error) {
-    console.error('Delete category error:', error);
-    return errorResponse(res, 'Failed to delete category', 500);
+    console.error('Delete catalog category error:', error);
+    return errorResponse(res, 'Failed to delete catalog category', 500);
   }
 };
 
-// Delete multiple categories (bulk hard delete)
-const deleteMultipleCategories = async (req, res) => {
+// Delete multiple catalog categories (bulk hard delete)
+const deleteMultipleCatalogCategories = async (req, res) => {
   try {
     const { categoryIds } = req.body;
     const userRole = req.user.role;
@@ -298,36 +285,27 @@ const deleteMultipleCategories = async (req, res) => {
 
     // Hard delete multiple categories - permanently remove from database
     const result = await ensureMinimumDelay(
-      prisma.category.deleteMany({
+      prisma.catalogCategory.deleteMany({
         where
       })
     );
 
-    // SOFT DELETE CODE (COMMENTED OUT - KEPT FOR REFERENCE)
-    // // Soft delete multiple categories
-    // const result = await prisma.category.updateMany({
-    //   where,
-    //   data: {
-    //     isDeleted: true
-    //   }
-    // });
-
     return successResponse(res, {
-      message: `${result.count} category/categories deleted successfully`,
+      message: `${result.count} catalog category/categories deleted successfully`,
       deletedCount: result.count
-    }, 'Categories deleted successfully');
+    }, 'Catalog categories deleted successfully');
 
   } catch (error) {
-    console.error('Delete multiple categories error:', error);
-    return errorResponse(res, 'Failed to delete categories', 500);
+    console.error('Delete multiple catalog categories error:', error);
+    return errorResponse(res, 'Failed to delete catalog categories', 500);
   }
 };
 
 module.exports = {
-  getAllCategories,
-  getCategoryById,
-  createCategory,
-  updateCategory,
-  deleteCategory,
-  deleteMultipleCategories
+  getAllCatalogCategories,
+  getCatalogCategoryById,
+  createCatalogCategory,
+  updateCatalogCategory,
+  deleteCatalogCategory,
+  deleteMultipleCatalogCategories
 };

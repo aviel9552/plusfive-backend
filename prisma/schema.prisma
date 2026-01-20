@@ -69,6 +69,10 @@ model User {
    customerStatusLogs CustomerStatusLog[] // Customer status change logs
    staff              Staff[]           // Staff members for this business
    services           Service[]         // Services for this business
+   categories         Category[]        // Categories for this business
+   catalogCategories  CatalogCategory[] // Catalog categories for this business
+   suppliers          Supplier[]        // Suppliers for this business
+   products           Product[]         // Products in catalog for this business
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -272,6 +276,9 @@ model Appointment {
   // Related payments
   payments        PaymentWebhook[] // Payments for this appointment
   
+  // Related reviews
+  reviews         Review[] // Reviews for this appointment
+  
   // Timestamps
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -427,6 +434,10 @@ model Review {
   paymentWebhookId  String?  // Reference to PaymentWebhook table (which payment triggered this review)
   paymentWebhook    PaymentWebhook? @relation(fields: [paymentWebhookId], references: [id])
   
+  // Appointment tracking
+  appointmentId     String?  // Reference to Appointment table (which appointment payment this review is for)
+  appointment       Appointment? @relation(fields: [appointmentId], references: [id])
+  
   // WhatsApp message tracking (optional)
   whatsappMessageId String? // WhatsApp message ID if sent via WhatsApp
   messageStatus     String? @default("sent") // sent, delivered, read, failed
@@ -516,6 +527,9 @@ model Staff {
   // Operating hours relation
   operatingHours StaffOperatingHours[] // Staff operating hours
   
+  // Staff services relation
+  staffServices StaffService[] // Services assigned to this staff member
+  
   // Status
   isActive    Boolean  @default(true)
   isDeleted   Boolean  @default(false) // Soft delete flag
@@ -573,6 +587,9 @@ model Service {
   // Appointments relation
   appointments      Appointment[] // Appointments using this service
   
+  // Staff services relation
+  staffServices     StaffService[] // Staff members who provide this service
+  
   // Status
   isActive          Boolean  @default(true)
   isDeleted         Boolean  @default(false) // Soft delete flag
@@ -584,6 +601,34 @@ model Service {
   @@map("services")
 }
 
+// StaffService table - Many-to-many relationship between Staff and Service with price and duration override
+model StaffService {
+  id              String   @id @default(cuid())
+  
+  // Relations
+  staffId         String   // Reference to Staff table
+  staff            Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  serviceId        String   // Reference to Service table
+  service          Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  
+  // Price override (if null, use service base price)
+  priceOverride    Float?   // Custom price for this staff member (optional)
+  
+  // Duration override (if null, use service base duration in minutes)
+  durationOverride String?  // Custom duration string for this staff member (optional, e.g., "30 דק'", "שעה")
+  
+  // Status
+  isActive         Boolean  @default(true) // Soft delete flag - never actually delete rows
+  
+  // Timestamps
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  // Unique constraint: one staff-service combination
+  @@unique([staffId, serviceId])
+  @@map("staff_services")
+}
+
 // Category table - Store service categories
 model Category {
   id          String   @id @default(cuid())
@@ -593,9 +638,102 @@ model Category {
   status      String   @default("active") // active, inactive
   isDeleted   Boolean  @default(false) // Soft delete flag
   
+  // Business relation
+  userId      String   // Reference to User table (business owner)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
   // Timestamps
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
   @@map("categories")
+}
+
+// CatalogCategory table - Store catalog/product categories
+model CatalogCategory {
+  id          String   @id @default(cuid())
+  
+  // Category details
+  title       String   // Category title (required)
+  status      String   @default("active") // active, inactive
+  isDeleted   Boolean  @default(false) // Soft delete flag
+  
+  // Business relation
+  userId      String   // Reference to User table (business owner)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("catalog_categories")
+}
+
+// Supplier table - Store supplier information for businesses
+model Supplier {
+  id          String   @id @default(cuid())
+  
+  // Supplier details
+  name        String   // Supplier name (required)
+  phone       String?  // Phone number (optional)
+  email       String?  // Email address (optional)
+  status      String   @default("פעיל") // "פעיל" (Active) or "לא פעיל" (Inactive)
+  
+  // Business relation
+  userId      String   // Reference to User table (business owner)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Products relation
+  products    Product[] // Products supplied by this supplier
+  
+  // Status
+  isDeleted   Boolean  @default(false) // Soft delete flag
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("suppliers")
+}
+
+// Product table - Store products in catalog
+model Product {
+  id                String   @id @default(cuid())
+  
+  // Product details
+  name              String   // Product name (required)
+  category          String?  // Product category (optional, can be from CatalogCategory or custom)
+  barcode           String?  // Product barcode (optional)
+  
+  // Pricing
+  supplierPrice     Float?   // Price from supplier (optional)
+  customerPrice     Float    // Price for customer (required)
+  grossProfitPercentage Float? // Calculated gross profit percentage (optional)
+  
+  // Inventory
+  currentQuantity   Int      @default(0) // Current stock quantity
+  lowStockThreshold Int      @default(0) // Low stock alert threshold
+  reorderQuantity   Int      @default(0) // Reorder quantity
+  lowStockAlerts    Boolean  @default(false) // Enable low stock alerts
+  
+  // Commission
+  enableCommission  Boolean  @default(false) // Enable commission for this product
+  
+  // Supplier relation
+  supplierId        String?  // Reference to Supplier table (optional - can be null if no supplier)
+  supplier          Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  
+  // Business relation
+  userId            String   // Reference to User table (business owner)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Status
+  status            String   @default("פעיל") // "פעיל" (Active) or "לא פעיל" (Inactive)
+  isDeleted         Boolean  @default(false) // Soft delete flag
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@map("products")
 } 

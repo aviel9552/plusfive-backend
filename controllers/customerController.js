@@ -777,6 +777,7 @@ const getAllCustomers = async (req, res) => {
         appointment_counts.last_appointment_date as "lastAppointmentDate",
         appointment_counts.first_appointment_date as "firstAppointmentDate",
         last_appointment_service.last_appointment_service as "lastAppointmentService",
+        last_appointment_staff.last_appointment_staff_name as "lastAppointmentStaffName",
         COALESCE(appointment_intervals.avg_days_between_appointments, 0) as "avgDaysBetweenAppointments",
         COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
         COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
@@ -813,6 +814,15 @@ const getAllCustomers = async (req, res) => {
         FROM "appointments"
         ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
       ) last_appointment_service ON c.id = last_appointment_service."customerId"
+      LEFT JOIN (
+        SELECT DISTINCT ON (a."customerId")
+          a."customerId",
+          s."fullName" as last_appointment_staff_name
+        FROM "appointments" a
+        LEFT JOIN "staff" s ON a."staffId" = s.id
+        WHERE a."staffId" IS NOT NULL
+        ORDER BY a."customerId", a."updatedAt" DESC, a."createdAt" DESC
+      ) last_appointment_staff ON c.id = last_appointment_staff."customerId"
       LEFT JOIN (
         SELECT 
           "customerId",
@@ -870,6 +880,99 @@ const getAllCustomers = async (req, res) => {
     `;
 
     const customersData = await prisma.$queryRawUnsafe(customersQuery, ...queryParams);
+
+    // Get all customer IDs
+    const customerIds = customersData.map(c => c.id);
+
+    // Fetch all appointments for these customers
+    let appointmentsByCustomer = {};
+    if (customerIds.length > 0) {
+      const appointments = await prisma.appointment.findMany({
+        where: {
+          customerId: { in: customerIds },
+          userId: authenticatedUserId
+        },
+        select: {
+          id: true,
+          customerId: true,
+          selectedServices: true,
+          startDate: true,
+          endDate: true,
+          duration: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      // Helper function to convert duration to minutes
+      const convertDurationToMinutes = (duration) => {
+        if (!duration) return null;
+        
+        // If already a number or numeric string, return as string
+        if (typeof duration === 'number') {
+          return String(duration);
+        }
+        
+        if (typeof duration === 'string') {
+          // If it's already a numeric string, return it
+          if (/^\d+$/.test(duration.trim())) {
+            return duration.trim();
+          }
+          
+          // If it's in time format (HH:MM or HH:MM:SS), convert to minutes
+          const timePattern = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+          const match = duration.trim().match(timePattern);
+          
+          if (match) {
+            const hours = parseInt(match[1], 10) || 0;
+            const minutes = parseInt(match[2], 10) || 0;
+            const seconds = parseInt(match[3], 10) || 0;
+            const totalMinutes = (hours * 60) + minutes + Math.round(seconds / 60);
+            return String(totalMinutes);
+          }
+        }
+        
+        // Return as string if can't convert
+        return String(duration);
+      };
+
+      // Group appointments by customerId and format to only include selectedServices as array
+      appointments.forEach(appointment => {
+        if (!appointmentsByCustomer[appointment.customerId]) {
+          appointmentsByCustomer[appointment.customerId] = [];
+        }
+        
+        // Convert selectedServices to string
+        let selectedServicesString = '';
+        if (appointment.selectedServices) {
+          if (Array.isArray(appointment.selectedServices)) {
+            // Join array items with comma
+            selectedServicesString = appointment.selectedServices.join(', ');
+          } else if (typeof appointment.selectedServices === 'string') {
+            try {
+              // Try to parse as JSON
+              const parsed = JSON.parse(appointment.selectedServices);
+              if (Array.isArray(parsed)) {
+                selectedServicesString = parsed.join(', ');
+              } else {
+                selectedServicesString = appointment.selectedServices;
+              }
+            } catch {
+              // If not JSON, use as string
+              selectedServicesString = appointment.selectedServices;
+            }
+          } else {
+            selectedServicesString = String(appointment.selectedServices);
+          }
+        }
+
+        appointmentsByCustomer[appointment.customerId].push({
+          selectedServices: selectedServicesString,
+          startDate: appointment.startDate,
+          endDate: appointment.endDate,
+          duration: convertDurationToMinutes(appointment.duration)
+        });
+      });
+    }
 
     // Process the results - all data already fetched in single query
     const customersWithTotalCount = customersData.map((customer) => {
@@ -974,7 +1077,9 @@ const getAllCustomers = async (req, res) => {
         lastRating: Number(customer.lastRating) || 0,
         lastVisit: customer.lastAppointmentDate || customer.lastPaymentDate,
         lastAppointmentDate: customer.lastAppointmentDate,
+        firstAppointmentDate: customer.firstAppointmentDate || null,
         lastAppointmentService: customer.lastAppointmentService || null,
+        lastAppointmentStaffName: customer.lastAppointmentStaffName || null,
         daysSinceLastAppointment: daysSinceLastAppointment,
         avgTimeBetweenAppointments: avgTimeBetweenAppointments,
         avgVisitsPerYear: avgVisitsPerYear,
@@ -1006,7 +1111,9 @@ const getAllCustomers = async (req, res) => {
           totalPayments: Number(customer.paymentCount),
           lostRevenue: Number(customer.lostRevenue) || 0,
           recoveredRevenue: Number(customer.recoveredRevenue) || 0
-        }
+        },
+        // Appointments array with only selectedServices
+        appointments: appointmentsByCustomer[customer.id] || []
       };
     });
 
@@ -1054,6 +1161,7 @@ const getTenCustomers = async (req, res) => {
         appointment_counts.last_appointment_date as "lastAppointmentDate",
         appointment_counts.first_appointment_date as "firstAppointmentDate",
         last_appointment_service.last_appointment_service as "lastAppointmentService",
+        last_appointment_staff.last_appointment_staff_name as "lastAppointmentStaffName",
         COALESCE(appointment_intervals.avg_days_between_appointments, 0) as "avgDaysBetweenAppointments",
         COALESCE(payment_data.total_paid, 0) as "totalPaidAmount",
         COALESCE(payment_data.last_payment_amount, 0) as "lastPaymentAmount",
@@ -1090,6 +1198,15 @@ const getTenCustomers = async (req, res) => {
         FROM "appointments"
         ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
       ) last_appointment_service ON c.id = last_appointment_service."customerId"
+      LEFT JOIN (
+        SELECT DISTINCT ON (a."customerId")
+          a."customerId",
+          s."fullName" as last_appointment_staff_name
+        FROM "appointments" a
+        LEFT JOIN "staff" s ON a."staffId" = s.id
+        WHERE a."staffId" IS NOT NULL
+        ORDER BY a."customerId", a."updatedAt" DESC, a."createdAt" DESC
+      ) last_appointment_staff ON c.id = last_appointment_staff."customerId"
       LEFT JOIN (
         SELECT 
           "customerId",
@@ -1263,7 +1380,9 @@ const getTenCustomers = async (req, res) => {
         lastRating: Number(customer.lastRating) || 0,
         lastVisit: customer.lastAppointmentDate || customer.lastPaymentDate,
         lastAppointmentDate: customer.lastAppointmentDate,
+        firstAppointmentDate: customer.firstAppointmentDate || null,
         lastAppointmentService: customer.lastAppointmentService || null,
+        lastAppointmentStaffName: customer.lastAppointmentStaffName || null,
         daysSinceLastAppointment: daysSinceLastAppointment,
         avgTimeBetweenAppointments: avgTimeBetweenAppointments,
         avgVisitsPerYear: avgVisitsPerYear,
@@ -1476,6 +1595,24 @@ const getCustomerById = async (req, res) => {
             businessName: true,
             firstName: true,
             lastName: true
+          }
+        },
+        appointment: {
+          select: {
+            id: true,
+            startDate: true,
+            endDate: true,
+            customerFullName: true,
+            businessName: true,
+            employeeName: true
+          }
+        },
+        paymentWebhook: {
+          select: {
+            id: true,
+            total: true,
+            paymentDate: true,
+            status: true
           }
         }
       },

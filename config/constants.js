@@ -88,6 +88,30 @@ module.exports = {
     CUSTOMER: 'Customer'
   },
 
+  // Supplier Status
+  SUPPLIER_STATUS: {
+    ACTIVE: 'פעיל',
+    INACTIVE: 'לא פעיל'
+  },
+
+  // Supplier Status Boolean
+  SUPPLIER_STATUS_BOOLEAN: {
+    ACTIVE: true,
+    INACTIVE: false
+  },
+
+  // Product Status
+  PRODUCT_STATUS: {
+    ACTIVE: 'פעיל',
+    INACTIVE: 'לא פעיל'
+  },
+
+  // Product Status Boolean
+  PRODUCT_STATUS_BOOLEAN: {
+    ACTIVE: true,
+    INACTIVE: false
+  },
+
   // Days of the week (Hebrew abbreviations: א'-ש')
   DAYS_OF_WEEK: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
 
