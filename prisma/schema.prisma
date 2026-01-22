@@ -215,13 +215,13 @@ model Customers {
   address         String?  // Customer address
   city            String?  // Customer city
   
+  // Personal information
+  birthdate       DateTime? // Customer birthdate
+  
   // Image fields
   profileImage    String?  // Profile image URL
   coverImage      String?  // Cover image URL
   documentImage   String?  // Document image URL
-  
-  // Status
-  isActive        Boolean  @default(true) // Customer active status
   
   // Relations
   userId          String?  // Reference to User table (business owner)
@@ -260,6 +260,7 @@ model Appointment {
   appointmentCount Int     @default(0)
   customerFullName String?
   selectedServices String? // Legacy field - keep for backward compatibility
+  customerNote    String?  // Customer note for the appointment
   
   // Relations
   customerId      String?  // Reference to Customers table
@@ -292,6 +293,7 @@ model CustomerUser {
   customerId  String   // Reference to Customers table
   userId      String   // Reference to User table
   status      String   @default("active") // active, inactive, blocked
+  isActive    Boolean  @default(true) // Customer active status for this user
   isDeleted   Boolean  @default(false) // Soft delete flag for customer-user relation
   
   // Relations

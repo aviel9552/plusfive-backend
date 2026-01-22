@@ -43,7 +43,8 @@ const addCustomer = async (req, res) => {
       address,
       city,
       isActive,
-      customerFullName
+      customerFullName,
+      birthdate
     } = req.body;
     
     const userId = req.user.userId;
@@ -70,6 +71,7 @@ const addCustomer = async (req, res) => {
         city,
         isActive,
         customerFullName,
+        birthdate,
         notes,
         rating,
         lastPayment,
@@ -130,7 +132,8 @@ const addExistingCustomer = async (req, res, customerId, notes, rating, lastPaym
       data: {
         customerId: customerId,
         userId: userId,
-        status: status || constants.CUSTOMER_STATUS.ACTIVE
+        status: status || constants.CUSTOMER_STATUS.ACTIVE,
+        isActive: true // Default to active when adding customer
       }
     });
 
@@ -225,6 +228,18 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
       // Create new customer in Customers table (like webhook)
       const fullName = customerData.customerFullName || `${customerData.firstName} ${customerData.lastName}`.trim();
       
+      // Parse birthdate if provided
+      let birthdateValue = null;
+      if (customerData.birthdate) {
+        birthdateValue = customerData.birthdate instanceof Date 
+          ? customerData.birthdate 
+          : new Date(customerData.birthdate);
+        // Validate date
+        if (isNaN(birthdateValue.getTime())) {
+          birthdateValue = null;
+        }
+      }
+      
       const newCustomer = await prisma.customers.create({
         data: {
           firstName: customerData.firstName,
@@ -234,7 +249,7 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
           customerFullName: fullName,
           address: customerData.address || null,
           city: customerData.city || null,
-          isActive: customerData.isActive !== undefined ? customerData.isActive : true,
+          birthdate: birthdateValue,
           appointmentCount: 0,
           userId: userId, // Reference to User table (business owner)
           businessName: currentUser.businessName || null
@@ -257,11 +272,14 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
       customerUserId = existingCustomerUser.id;
     } else {
       // Create CustomerUser relation (like webhook)
+      // Map isActive: if customerData.isActive is provided, use it; otherwise default to true
+      const isActiveValue = customerData.isActive !== undefined ? customerData.isActive : true;
       const newCustomerUser = await prisma.customerUser.create({
         data: {
           customerId: customerId,
           userId: userId,
-          status: customerData.status || 'new'
+          status: customerData.status || 'new',
+          isActive: isActiveValue
         }
       });
       customerUserId = newCustomerUser.id;
@@ -417,6 +435,7 @@ const updateCustomer = async (req, res) => {
       profileImage,
       coverImage,
       documentImage,
+      birthdate,
       // CustomerUser status
       status
     } = req.body;
@@ -548,42 +567,106 @@ const updateCustomer = async (req, res) => {
       if (lastName !== undefined) updateData.lastName = lastName;
       if (email !== undefined) updateData.email = email;
       if (phoneNumber !== undefined) updateData.customerPhone = formatIsraeliPhone(phoneNumber);
-      if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
+      
+      // Automatically update customerFullName if firstName or lastName is being updated
+      // Use the new values if provided, otherwise use existing values from database
+      const finalFirstName = firstName !== undefined ? firstName : customer.firstName;
+      const finalLastName = lastName !== undefined ? lastName : customer.lastName;
+      
+      // If firstName or lastName is being updated, automatically construct customerFullName
+      if (firstName !== undefined || lastName !== undefined) {
+        const constructedFullName = `${finalFirstName || ''} ${finalLastName || ''}`.trim();
+        updateData.customerFullName = constructedFullName || null;
+      } else if (customerFullName !== undefined) {
+        // Only use customerFullName from request if firstName/lastName are not being updated
+        updateData.customerFullName = customerFullName;
+      }
+      
       if (address !== undefined) updateData.address = address;
       if (city !== undefined) updateData.city = city;
+      
+      // Handle birthdate update
+      if (birthdate !== undefined) {
+        if (birthdate === null || birthdate === '') {
+          updateData.birthdate = null;
+        } else {
+          // Parse birthdate - handle both Date objects and ISO strings
+          const birthdateValue = birthdate instanceof Date 
+            ? birthdate 
+            : new Date(birthdate);
+          // Validate date
+          if (!isNaN(birthdateValue.getTime())) {
+            updateData.birthdate = birthdateValue;
+          }
+        }
+      }
+      
       // Only update profileImage if a file was uploaded or explicitly provided
       if (shouldUpdateProfileImage) {
         updateData.profileImage = profileImageUrl;
       }
       if (coverImage !== undefined) updateData.coverImage = coverImage;
       if (documentImage !== undefined) updateData.documentImage = documentImage;
-      
-      // Handle isActive: if provided directly, use it; otherwise map from status
-      // Convert string booleans to actual booleans (FormData sends everything as strings)
-      if (isActive !== undefined) {
-        // Handle string booleans from FormData
-        if (typeof isActive === 'string') {
-          updateData.isActive = isActive === 'true' || isActive === '1';
-        } else {
-          updateData.isActive = Boolean(isActive);
-        }
-      } else if (status !== undefined) {
-        // Map status to isActive: "active" or "פעיל" = true, "חסום" or "לא פעיל" or "inactive" = false
-        const statusLower = typeof status === 'string' ? status.toLowerCase() : String(status).toLowerCase();
-        if (statusLower === constants.STATUS.ACTIVE || statusLower === 'פעיל') {
-          updateData.isActive = true;
-        } else if (statusLower === 'חסום' || statusLower === 'לא פעיל' || statusLower === constants.STATUS.INACTIVE || statusLower === 'blocked') {
-          updateData.isActive = false;
-        }
-      }
 
       const updatedCustomer = await tx.customers.update({
         where: { id },
         data: updateData
       });
 
-      // Note: We no longer update CustomerUser status, only customers.isActive
+      // Update CustomerUser isActive field (moved from Customers table)
       let updatedCustomerUser = null;
+      if (customerUser) {
+        const customerUserUpdateData = {};
+        
+        // Handle isActive: if provided directly, use it; otherwise map from status
+        // Convert string booleans to actual booleans (FormData sends everything as strings)
+        if (isActive !== undefined) {
+          // Handle string booleans from FormData
+          if (typeof isActive === 'string') {
+            customerUserUpdateData.isActive = isActive === 'true' || isActive === '1';
+          } else {
+            customerUserUpdateData.isActive = Boolean(isActive);
+          }
+        } else if (status !== undefined) {
+          // Map status to isActive: "active" or "פעיל" = true, "חסום" or "לא פעיל" or "inactive" = false
+          const statusLower = typeof status === 'string' ? status.toLowerCase() : String(status).toLowerCase();
+          if (statusLower === constants.STATUS.ACTIVE || statusLower === 'פעיל') {
+            customerUserUpdateData.isActive = true;
+          } else if (statusLower === 'חסום' || statusLower === 'לא פעיל' || statusLower === constants.STATUS.INACTIVE || statusLower === 'blocked') {
+            customerUserUpdateData.isActive = false;
+          }
+        }
+        
+        // Only update if there's data to update
+        if (Object.keys(customerUserUpdateData).length > 0) {
+          updatedCustomerUser = await tx.customerUser.update({
+            where: { id: customerUser.id },
+            data: customerUserUpdateData
+          });
+        } else {
+          updatedCustomerUser = customerUser;
+        }
+      } else if (isActive !== undefined || status !== undefined) {
+        // If customerUser doesn't exist but isActive/status is provided, create it
+        // This handles edge cases where CustomerUser relation might be missing
+        const isActiveValue = isActive !== undefined 
+          ? (typeof isActive === 'string' ? isActive === 'true' || isActive === '1' : Boolean(isActive))
+          : (status !== undefined 
+            ? (() => {
+                const statusLower = typeof status === 'string' ? status.toLowerCase() : String(status).toLowerCase();
+                return statusLower === constants.STATUS.ACTIVE || statusLower === 'פעיל';
+              })()
+            : true);
+        
+        updatedCustomerUser = await tx.customerUser.create({
+          data: {
+            customerId: id,
+            userId: userId,
+            status: status || constants.CUSTOMER_STATUS.ACTIVE,
+            isActive: isActiveValue
+          }
+        });
+      }
 
       return { updatedCustomer, updatedCustomerUser };
     });
@@ -609,6 +692,7 @@ const updateCustomer = async (req, res) => {
           select: {
             id: true,
             status: true,
+            isActive: true,
             userId: true
           }
         }
@@ -773,6 +857,7 @@ const getAllCustomers = async (req, res) => {
         u."businessName" as "userBusinessName",
         u."businessType" as "userBusinessType",
         COALESCE(cu.status, 'active') as "customerStatus",
+        COALESCE(cu."isActive", true) as "isActive",
         COALESCE(appointment_counts.total, 0) as "totalAppointments",
         appointment_counts.last_appointment_date as "lastAppointmentDate",
         appointment_counts.first_appointment_date as "firstAppointmentDate",
@@ -1056,6 +1141,7 @@ const getAllCustomers = async (req, res) => {
         businessName: customer.businessName,
         address: customer.address,
         city: customer.city,
+        birthdate: customer.birthdate || null,
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         profileImage: customer.profileImage,
         coverImage: customer.coverImage,
@@ -1157,6 +1243,7 @@ const getTenCustomers = async (req, res) => {
         u."businessName" as "userBusinessName",
         u."businessType" as "userBusinessType",
         COALESCE(cu.status, 'active') as "customerStatus",
+        COALESCE(cu."isActive", true) as "isActive",
         COALESCE(appointment_counts.total, 0) as "totalAppointments",
         appointment_counts.last_appointment_date as "lastAppointmentDate",
         appointment_counts.first_appointment_date as "firstAppointmentDate",
@@ -1359,6 +1446,7 @@ const getTenCustomers = async (req, res) => {
         businessName: customer.businessName,
         address: customer.address,
         city: customer.city,
+        birthdate: customer.birthdate || null,
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         profileImage: customer.profileImage,
         coverImage: customer.coverImage,
@@ -1912,6 +2000,18 @@ const bulkImportCustomers = async (req, res) => {
             // Create new customer
             const fullName = customerData.customerFullName || `${customerData.firstName} ${customerData.lastName}`.trim();
             
+            // Parse birthdate if provided
+            let birthdateValue = null;
+            if (customerData.birthdate) {
+              birthdateValue = customerData.birthdate instanceof Date 
+                ? customerData.birthdate 
+                : new Date(customerData.birthdate);
+              // Validate date
+              if (isNaN(birthdateValue.getTime())) {
+                birthdateValue = null;
+              }
+            }
+            
             const newCustomer = await tx.customers.create({
               data: {
                 firstName: customerData.firstName,
@@ -1921,7 +2021,7 @@ const bulkImportCustomers = async (req, res) => {
                 customerFullName: fullName,
                 address: customerData.address || null,
                 city: customerData.city || null,
-                isActive: customerData.isActive !== undefined ? customerData.isActive : true,
+                birthdate: birthdateValue,
                 appointmentCount: 0,
                 userId: userId,
                 businessName: currentUser.businessName || null
@@ -1950,11 +2050,14 @@ const bulkImportCustomers = async (req, res) => {
           }
 
           // Create CustomerUser relation
+          // Map isActive: if customerData.isActive is provided, use it; otherwise default to true
+          const isActiveValue = customerData.isActive !== undefined ? customerData.isActive : true;
           const newCustomerUser = await tx.customerUser.create({
             data: {
               customerId: customerId,
               userId: userId,
-              status: customerData.status || 'new'
+              status: customerData.status || 'new',
+              isActive: isActiveValue
             }
           });
 
@@ -2104,17 +2207,19 @@ const recordCustomerVisit = async (req, res) => {
               businessName: true
             }
           },
-          customerUsers: {
-            where: {
-              userId: userId,
-              isDeleted: false
-            },
-            select: {
-              id: true,
-              status: true,
-              userId: true
-            }
-          }
+        customerUsers: {
+          where: {
+            userId: userId,
+            isDeleted: false
+          },
+          select: {
+            id: true,
+            status: true,
+            isActive: true,
+            userId: true
+          },
+          take: 1 // Get only the first (most relevant) customerUser relation
+        }
         }
       });
 

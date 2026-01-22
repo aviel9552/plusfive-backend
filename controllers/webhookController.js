@@ -2368,7 +2368,8 @@ const updateAppointment = async (req, res) => {
       employeeId,
       employeeName,
       source,
-      byCustomer
+      byCustomer,
+      customerNote
     } = req.body;
 
     // Check if appointment exists and belongs to user
@@ -2431,11 +2432,19 @@ const updateAppointment = async (req, res) => {
     if (byCustomer !== undefined) updateData.byCustomer = byCustomer;
     if (customerPhone !== undefined) updateData.customerPhone = customerPhone ? formatIsraeliPhone(customerPhone) : null;
     if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
+    if (customerNote !== undefined) updateData.customerNote = customerNote || null;
 
     // Update customer if customerId changed
     if (customerId !== undefined && customerId !== appointment.customerId) {
       updateData.customerId = customerId;
     }
+
+    // Log update data for debugging
+    if (Object.keys(updateData).length === 0) {
+      return errorResponse(res, 'No fields to update', 400);
+    }
+
+    console.log('Updating appointment:', { id, updateData });
 
     // Update appointment
     const updatedAppointment = await prisma.appointment.update({
@@ -2461,10 +2470,14 @@ const updateAppointment = async (req, res) => {
       }
     });
 
+    console.log('Appointment updated successfully:', { id, customerNote: updatedAppointment.customerNote });
+
     return successResponse(res, updatedAppointment, 'Appointment updated successfully');
   } catch (error) {
     console.error('Update appointment error:', error);
-    return errorResponse(res, 'Failed to update appointment', 500);
+    // Provide more detailed error message
+    const errorMessage = error.message || 'Failed to update appointment';
+    return errorResponse(res, errorMessage, 500);
   }
 };
 
