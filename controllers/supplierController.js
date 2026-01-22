@@ -19,6 +19,12 @@ const ensureMinimumDelay = async (promise, minDelayMs = 2000) => {
 // Get all suppliers
 const getAllSuppliers = async (req, res) => {
   try {
+    // Check if prisma.supplier exists (Prisma client needs to be regenerated)
+    if (!prisma.supplier) {
+      console.error('Prisma client error: supplier model not found. Please run: npx prisma generate');
+      return errorResponse(res, 'Database model not initialized. Please contact support.', 500);
+    }
+
     const userRole = req.user.role;
     const userId = req.user.userId;
 
