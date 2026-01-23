@@ -36,6 +36,8 @@ const stripeRoutes = require('./routes/stripe');
 const cronTestRoutes = require('./routes/cronTest');
 const cronJobRoutes = require('./routes/cronJobs');
 const n8nTestRoutes = require('./routes/n8nTest');
+const waitlistRoutes = require('./routes/waitlist');
+const businessOperatingHoursRoutes = require('./routes/businessOperatingHours');
 
 const app = express();
 
@@ -100,6 +102,7 @@ app.use('/api/referrals', referralRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/staff', staffServiceRoutes);
+app.use('/api/business-operating-hours', businessOperatingHoursRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/catalog-categories', catalogCategoryRoutes);
@@ -116,6 +119,7 @@ app.use('/api/stripe', stripeRoutes);
 app.use('/api/cron-test', cronTestRoutes);
 app.use('/api/cron-jobs', cronJobRoutes);
 app.use('/api/n8n-test', n8nTestRoutes);
+app.use('/api/waitlist', waitlistRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

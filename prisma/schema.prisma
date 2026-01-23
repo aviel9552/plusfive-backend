@@ -73,6 +73,8 @@ model User {
    catalogCategories  CatalogCategory[] // Catalog categories for this business
    suppliers          Supplier[]        // Suppliers for this business
    products           Product[]         // Products in catalog for this business
+   waitlists          Waitlist[]        // Waiting list entries for calendar
+   businessOperatingHours BusinessOperatingHours[] // Business operating hours
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -233,6 +235,7 @@ model Customers {
    conversationStates ConversationState[] // WhatsApp conversation states
    whatsappMessages whatsappMessage[] // WhatsApp messages for this customer
    customerStatusLogs CustomerStatusLog[] // Customer status change logs
+   waitlists         Waitlist[]         // Waiting list entries for this customer
   
   // Timestamps
   createdAt       DateTime @default(now())
@@ -532,6 +535,9 @@ model Staff {
   // Staff services relation
   staffServices StaffService[] // Services assigned to this staff member
   
+  // Waitlist relation
+  waitlists    Waitlist[] // Waitlist entries preferring this staff
+  
   // Status
   isActive    Boolean  @default(true)
   isDeleted   Boolean  @default(false) // Soft delete flag
@@ -564,6 +570,27 @@ model StaffOperatingHours {
   @@map("staff_operating_hours")
 }
 
+// Business Operating Hours table - Store business hours of operation
+model BusinessOperatingHours {
+  id          String   @id @default(cuid())
+  
+  // User relation
+  userId      String   // Reference to User table
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Operating hours details
+  day         String?   // Day of the week (e.g., "א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'")
+  startTime   String?   // Start time (format: "HH:MM")
+  endTime     String?   // End time (format: "HH:MM")
+  isActive    Boolean?  @default(true) // Active/Inactive toggle
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("business_operating_hours")
+}
+
 // Service table - Store services/offerings for businesses
 model Service {
   id                String   @id @default(cuid())
@@ -591,6 +618,9 @@ model Service {
   
   // Staff services relation
   staffServices     StaffService[] // Staff members who provide this service
+  
+  // Waitlist relation
+  waitlists         Waitlist[] // Waiting list entries for this service
   
   // Status
   isActive          Boolean  @default(true)
@@ -738,4 +768,42 @@ model Product {
   updatedAt         DateTime @updatedAt
   
   @@map("products")
+}
+
+// Waiting list - Calendar waitlist entries (ממתינים / פג תוקף / נקבע תור)
+model Waitlist {
+  id              String   @id @default(cuid())
+  
+  // Business owner
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Client (customer)
+  customerId      String
+  customer        Customers @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  // Service requested
+  serviceId       String
+  service         Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  
+  // Preferred staff (optional)
+  staffId         String?
+  staff           Staff?   @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  
+  // Requested date/time - matches frontend add flow
+  requestedDate   DateTime  // Date user wants appointment
+  time            String?   // "any" (כל שעה) or specific e.g. "10:00"
+  startDateTime   DateTime? // Resolved datetime for sorting (when time is specific)
+  
+  // Status: waiting | expired | booked (ממתינים | פג תוקף | נקבע תור)
+  status          String   @default("waiting")
+  
+  // Optional note (e.g. "אחר הצהריים בלבד")
+  note            String?
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("waitlist")
 } 

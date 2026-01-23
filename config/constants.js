@@ -112,6 +112,13 @@ module.exports = {
     INACTIVE: false
   },
 
+  // Waitlist Status
+  WAITLIST_STATUS: {
+    WAITING: 'waiting',
+    EXPIRED: 'expired',
+    BOOKED: 'booked'
+  },
+
   // Days of the week (Hebrew abbreviations: א'-ש')
   DAYS_OF_WEEK: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
 
