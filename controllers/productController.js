@@ -64,7 +64,7 @@ const getAllProducts = async (req, res) => {
       })
     );
 
-    // Format products for frontend
+    // Format products for frontend (include userId and user for admin catalog filter)
     const formattedProducts = products.map(product => ({
       id: product.id,
       name: product.name,
@@ -81,6 +81,8 @@ const getAllProducts = async (req, res) => {
       supplier: product.supplier?.name || null,
       supplierId: product.supplierId,
       status: product.status,
+      userId: product.userId,
+      user: product.user ? { id: product.user.id, email: product.user.email, firstName: product.user.firstName, lastName: product.user.lastName, businessName: product.user.businessName } : null,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt
     }));
