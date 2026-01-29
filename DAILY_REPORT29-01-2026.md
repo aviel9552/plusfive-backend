@@ -31,6 +31,9 @@
 - ✅ `NewClientModal.jsx` (calendar): `CommonPanelLoader` with "יוצר לקוח..." when `isCreating`; submit button disabled and shows "יוצר..." during create
 - ✅ `CalendarPage.jsx`: passes `newClientBirthdate`, `setNewClientBirthdate`, `isCreatingCustomer` (as `isCreating`) to `NewClientModal`
 
+### 9. **CommonDatePicker for New Client (תאריך לידה)**
+- ✅ `calendar/Modals/NewClientModal.jsx`: native `<input type="date">` replaced with `CommonDatePicker` for "תאריך לידה"; clickable read-only field with Hebrew formatted date and `FiCalendar` icon; opens `CommonDatePicker` on click; `language="he"`, single-date selection; value kept as `YYYY-MM-DD` for API
+
 ### 6. **Catalog – Categories & Keys**
 - ✅ `NewProductModal.jsx`: removed static `CATEGORY_OPTIONS`; `availableCategories` from API only with dedupe by ID; safe fallbacks to avoid blank screen
 - ✅ `CatalogCategoryListingModal.jsx`: unique keys for list (e.g. `key={category.id ?? \`cat-${index}-${title}\`}`) to avoid duplicate-key React warning
@@ -59,7 +62,7 @@
 | `src/components/accountSettings/SingleTabCard.jsx` | Use `DAYS_OF_WEEK` from config constants |
 | `src/components/accountSettings/tabs/BusinessHoursTab.jsx` | Use day constants; dispatch `business-operating-hours-updated` on save |
 | `src/components/calendar/CalendarStaff/StaffSummaryCard.jsx` | `servicesActionLoading` + loader for POST/DELETE staff services; day keys from constants |
-| `src/components/calendar/Modals/NewClientModal.jsx` | Date of birth field; `CommonPanelLoader` + `isCreating` for customer create |
+| `src/components/calendar/Modals/NewClientModal.jsx` | Date of birth field; `CommonPanelLoader` + `isCreating`; **CommonDatePicker** for תאריך לידה (Hebrew calendar, no native date input) |
 | `src/components/calendar/Panels/BookingFlowPanel.jsx` | Day keys/labels from constants |
 | `src/components/catalog/CatalogCategoryListingModal.jsx` | Unique keys for category list |
 | `src/components/catalog/NewProductModal.jsx` | Dynamic categories only; dedupe; no static CATEGORY_OPTIONS |
@@ -67,7 +70,7 @@
 | `src/config/constants.js` | `DAYS_OF_WEEK`, `DAYS_OF_WEEK_KEYS` |
 | `src/hooks/calendar/useCustomerCreation.js` | `newClientBirthdate`, `isCreatingCustomer`; birthdate in API payload; loader state |
 | `src/hooks/calendar/useStaffTransformation.js` | Use `DAYS_OF_WEEK_KEYS` for `todayKey` |
-| `src/pages/calendar/CalendarPage.jsx` | Business hours refetch on visibility/event; NewClientModal birthdate + isCreating |
+| `src/pages/calendar/CalendarPage.jsx` | Business hours refetch on visibility/event; NewClientModal birthdate + isCreating *(incl. in current git status)* |
 | `src/pages/calendarStaff/index.jsx` | No auto-save of working hours on tab open (local state only until save) |
 | `src/redux/services/businessOperatingHoursService.jsx` | Cache-bust query param only (no Cache-Control/Pragma to avoid CORS) |
 | `src/utils/calendar/recurringEngine.js` | Use `DAYS_OF_WEEK_KEYS` for day mapping |
@@ -104,6 +107,7 @@
 2. **Day constants**: Consistent `sunday`–`saturday` keys and Hebrew labels; calendar and account settings stay in sync.
 3. **Loaders**: Customer create (calendar) and staff service add/remove/update show clear loading state.
 4. **Calendar "Add customer"**: Same fields as calendar-clients (including date of birth) and create loader.
+5. **CommonDatePicker in New Client**: תאריך לידה in calendar NewClientModal uses reusable Hebrew calendar picker (CommonDatePicker) instead of native date input.
 
 ---
 
@@ -126,8 +130,8 @@
 
 ## 📝 Notes
 
-- **Git status**: All changes unstaged on branch `snehal` (frontend and backend).
-- **Calendar**: Uses NewClientModal (calendar) + useCustomerCreation; calendar-clients uses its own NewClientModal with birthdate and loader.
+- **Git status**: Unstaged on branch `snehal` — e.g. `src/pages/calendar/CalendarPage.jsx` (and any other modified files). NewClientModal CommonDatePicker change is part of same scope.
+- **Calendar**: Uses NewClientModal (calendar) + useCustomerCreation; calendar-clients uses its own NewClientModal; both support birthdate; calendar modal now uses CommonDatePicker for תאריך לידה.
 - **Report scope**: Based on git status and session context.
 
 ---
