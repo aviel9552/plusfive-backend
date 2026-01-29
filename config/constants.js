@@ -119,8 +119,17 @@ module.exports = {
     BOOKED: 'booked'
   },
 
-  // Days of the week (Hebrew abbreviations: א'-ש')
-  DAYS_OF_WEEK: ['א\'', 'ב\'', 'ג\'', 'ד\'', 'ה\'', 'ו\'', 'ש\''],
+  // Days of the week – client format: English key + Hebrew label (index 0 = Sunday … 6 = Saturday)
+  DAYS_OF_WEEK: [
+    { key: 'sunday', label: 'ראשון' },
+    { key: 'monday', label: 'שני' },
+    { key: 'tuesday', label: 'שלישי' },
+    { key: 'wednesday', label: 'רביעי' },
+    { key: 'thursday', label: 'חמישי' },
+    { key: 'friday', label: 'שישי' },
+    { key: 'saturday', label: 'שבת' },
+  ],
+  DAYS_OF_WEEK_KEYS: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
 
   // Time Options - Generate time options from 00:00 to 23:55 in 5-minute intervals
   TIME_OPTIONS: (() => {
