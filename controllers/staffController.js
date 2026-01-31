@@ -189,7 +189,39 @@ const createStaff = async (req, res) => {
       }
     });
 
-    return successResponse(res, staff, 'Staff created successfully', 201);
+    // Assign all business services to the new staff by default
+    const businessServices = await prisma.service.findMany({
+      where: { businessId: userId },
+      select: { id: true }
+    });
+    if (businessServices.length > 0) {
+      await prisma.staffService.createMany({
+        data: businessServices.map((s) => ({
+          staffId: staff.id,
+          serviceId: s.id,
+          isActive: true
+        }))
+      });
+    }
+
+    // Fetch staff with staffServices for response
+    const staffWithServices = await prisma.staff.findUnique({
+      where: { id: staff.id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true
+          }
+        },
+        staffServices: {
+          include: { service: true }
+        }
+      }
+    });
+
+    return successResponse(res, staffWithServices, 'Staff created successfully', 201);
 
   } catch (error) {
     console.error('Create staff error:', error);

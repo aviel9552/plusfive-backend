@@ -396,16 +396,6 @@ model PaymentWebhook {
   @@map("payment_webhooks")
 }
 
-model WebhookLog {
-  id          String   @id @default(cuid())
-  data        Json     // Store JSON data from webhook body
-  createdDate DateTime @default(now())
-  status      String   @default("pending") // pending, processed, failed
-  type        String   // appointment, payment_checkout
-  
-  @@map("webhook_logs")
-}
-
 // New Payment Webhook Log Model - Completely Different
 model WebhookPaymentLog {
   id                String   @id @default(cuid())

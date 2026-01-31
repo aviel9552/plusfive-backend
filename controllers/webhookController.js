@@ -80,18 +80,6 @@ const handleAppointmentWebhook = async (req, res) => {
       }
     }
 
-    // Only store webhook log AFTER subscription check passes
-    // If subscription check fails, function returns early and this code never executes
-    const webhookLog = await prisma.webhookLog.create({
-      data: {
-        data: webhookData,
-        type: constants.WEBHOOK_TYPES.APPOINTMENT,
-        status: constants.WEBHOOK_STATUS.PENDING
-      }
-    });
-
-    console.log('webhookLog', webhookLog);
-
     // Check if customer exists in Customers table
     let existingCustomer = null;
 
@@ -264,7 +252,6 @@ const handleAppointmentWebhook = async (req, res) => {
 
 
     return successResponse(res, {
-      webhookId: webhookLog.id,
       userId: userId,
       customerId: customerId,
       appointmentId: newAppointment.id,
@@ -1418,89 +1405,6 @@ const createPayment = async (req, res) => {
   }
 };
 
-// Get all webhook logs (admin only)
-const getAllWebhookLogs = async (req, res) => {
-  try {
-    const { type, status, page = 1, limit = 50 } = req.query;
-
-    const skip = (page - 1) * limit;
-
-    // Build where clause
-    const where = {};
-    if (type) where.type = type;
-    if (status) where.status = status;
-
-    // Get webhook logs with pagination
-    const webhookLogs = await prisma.webhookLog.findMany({
-      where,
-      orderBy: { createdDate: 'desc' },
-      skip: parseInt(skip),
-      take: parseInt(limit)
-    });
-
-    // Get total count
-    const totalCount = await prisma.webhookLog.count({ where });
-
-    return successResponse(res, {
-      webhookLogs,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
-    }, 'Webhook logs retrieved successfully');
-
-  } catch (error) {
-    console.error('Get webhook logs error:', error);
-    return errorResponse(res, 'Failed to retrieve webhook logs', 500);
-  }
-};
-
-// Get webhook log by ID
-const getWebhookLogById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const webhookLog = await prisma.webhookLog.findUnique({
-      where: { id }
-    });
-
-    if (!webhookLog) {
-      return errorResponse(res, 'Webhook log not found', 404);
-    }
-
-    return successResponse(res, webhookLog, 'Webhook log retrieved successfully');
-
-  } catch (error) {
-    console.error('Get webhook log by ID error:', error);
-    return errorResponse(res, 'Failed to retrieve webhook log', 500);
-  }
-};
-
-// Update webhook log status
-const updateWebhookLogStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status || ![constants.WEBHOOK_STATUS.PENDING, constants.WEBHOOK_STATUS.PROCESSED, constants.WEBHOOK_STATUS.FAILED].includes(status)) {
-      return errorResponse(res, `Invalid status. Must be ${constants.WEBHOOK_STATUS.PENDING}, ${constants.WEBHOOK_STATUS.PROCESSED}, or ${constants.WEBHOOK_STATUS.FAILED}`, 400);
-    }
-
-    const updatedWebhookLog = await prisma.webhookLog.update({
-      where: { id },
-      data: { status }
-    });
-
-    return successResponse(res, updatedWebhookLog, 'Webhook log status updated successfully');
-
-  } catch (error) {
-    console.error('Update webhook log status error:', error);
-    return errorResponse(res, 'Failed to update webhook log status', 500);
-  }
-};
-
 // Get all payment webhooks
 const getAllPaymentWebhooks = async (req, res) => {
   try {
@@ -2312,31 +2216,6 @@ const createAppointment = async (req, res) => {
       });
     }
 
-    // Create webhook log entry for this appointment (similar to handleAppointmentWebhook)
-    const webhookLogData = {
-      BusinessName: newAppointment.user?.businessName || null,
-      CustomerPhone: customerPhone ? formatIsraeliPhone(customerPhone) : null,
-      CustomerFullName: customerFullName || newAppointment.customer?.customerFullName || null,
-      CustomerEmail: newAppointment.customer?.email || null,
-      StartDate: parsedStartDate ? parsedStartDate.toISOString() : null,
-      EndDate: parsedEndDate ? parsedEndDate.toISOString() : null,
-      Duration: duration || null,
-      SelectedServices: selectedServices || null,
-      EmployeeId: employeeId ? parseInt(employeeId) : null,
-      EmployeeName: employeeName || null,
-      Source: source || 'calendar',
-      ByCustomer: byCustomer || false,
-      AppointmentCount: newAppointment.customer?.appointmentCount || 0
-    };
-
-    await prisma.webhookLog.create({
-      data: {
-        data: webhookLogData,
-        type: constants.WEBHOOK_TYPES.APPOINTMENT,
-        status: constants.WEBHOOK_STATUS.PROCESSED // Mark as processed since it's created by authenticated user
-      }
-    });
-
     return successResponse(res, newAppointment, 'Appointment created successfully', 201);
 
   } catch (error) {
@@ -2465,6 +2344,12 @@ const updateAppointment = async (req, res) => {
             id: true,
             businessName: true,
             email: true
+          }
+        },
+        staff: {
+          select: {
+            id: true,
+            fullName: true
           }
         }
       }
@@ -2911,9 +2796,6 @@ module.exports = {
   handleAppointmentWebhook,
   handleRatingWebhook,
   handlePaymentCheckoutWebhook,
-  getAllWebhookLogs,
-  getWebhookLogById,
-  updateWebhookLogStatus,
   handleWhatsAppIncomingMessage,
   verifyWhatsAppWebhook,
   getAllPaymentWebhooks,

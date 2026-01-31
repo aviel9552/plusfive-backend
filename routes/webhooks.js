@@ -22,9 +22,6 @@ const {
   verifyWhatsAppWebhook,
 
   // Admin (protected)
-  getAllWebhookLogs,
-  getWebhookLogById,
-  updateWebhookLogStatus,
   getAllPaymentWebhooks,
   getPaymentWebhookById,
   getPaymentWebhooksByCustomerId,
@@ -57,13 +54,6 @@ router.get('/whatsapp', verifyWhatsAppWebhook); // verification
 router.post('/whatsapp', handleWhatsAppIncomingMessage); // incoming messages
 
 /* -------------------- PROTECTED ADMIN/DATA ENDPOINTS -------------------- */
-/**
- * Logs
- */
-router.get('/logs', authenticateToken, getAllWebhookLogs);
-router.get('/logs/:id', authenticateToken, getWebhookLogById);
-router.patch('/logs/:id/status', authenticateToken, updateWebhookLogStatus);
-
 /**
  * Payment webhook records
  */
