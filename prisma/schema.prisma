@@ -253,17 +253,9 @@ model Appointment {
   endDate         DateTime?
   duration        String?
   startDate       DateTime?
-  businessId      Int?
-  byCustomer      Boolean  @default(false)
   createDate      DateTime?
-  employeeId      Int?     // Legacy field - keep for backward compatibility
-  businessName    String?
-  employeeName    String?
-  customerPhone   String?
-  appointmentCount Int     @default(0)
-  customerFullName String?
-  selectedServices String? // Legacy field - keep for backward compatibility
   customerNote    String?  // Customer note for the appointment
+  selectedServices String? // Service names (kept for backward compatibility / webhook data)
   
   // Relations
   customerId      String?  // Reference to Customers table

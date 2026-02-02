@@ -1339,31 +1339,31 @@ class AdminDashboardController {
               status: 'Active',
               count: activeCustomers,
               percentage: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#FF257C'
+              color: constants.CUSTOMER_STATUS_COLORS.Active
             },
             {
               status: 'New',
               count: newCustomers,
               percentage: totalCustomers > 0 ? ((newCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#E062CB'
+              color: constants.CUSTOMER_STATUS_COLORS.New
             },
             {
               status: 'At Risk',
               count: atRiskCustomers,
               percentage: totalCustomers > 0 ? ((atRiskCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#FE5D39'
+              color: constants.CUSTOMER_STATUS_COLORS['At Risk']
             },
             {
               status: 'Lost',
               count: lostCustomers,
               percentage: totalCustomers > 0 ? ((lostCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#912018'
+              color: constants.CUSTOMER_STATUS_COLORS.Lost
             },
             {
               status: 'Recovered',
               count: recoveredCustomers,
               percentage: totalCustomers > 0 ? ((recoveredCustomers / totalCustomers) * 100).toFixed(1) : 0,
-              color: '#675DFF'
+              color: constants.CUSTOMER_STATUS_COLORS.Recovered
             }
           ]
         }
@@ -1690,31 +1690,31 @@ class AdminDashboardController {
           status: 'Active',
           count: activeCustomers,
           percentage: totalCustomers > 0 ? ((activeCustomers / totalCustomers) * 100).toFixed(1) : 0,
-          color: '#8B5CF6'
+          color: constants.CUSTOMER_STATUS_COLORS.Active
         },
         {
           status: 'New',
           count: newCustomers,
           percentage: totalCustomers > 0 ? ((newCustomers / totalCustomers) * 100).toFixed(1) : 0,
-          color: '#10B981'
+          color: constants.CUSTOMER_STATUS_COLORS.New
         },
         {
           status: 'At Risk',
           count: atRiskCustomers,
           percentage: totalCustomers > 0 ? ((atRiskCustomers / totalCustomers) * 100).toFixed(1) : 0,
-          color: '#F97316'
+          color: constants.CUSTOMER_STATUS_COLORS['At Risk']
         },
         {
           status: 'Lost',
           count: lostCustomers,
           percentage: totalCustomers > 0 ? ((lostCustomers / totalCustomers) * 100).toFixed(1) : 0,
-          color: '#DC2626'
+          color: constants.CUSTOMER_STATUS_COLORS.Lost
         },
         {
           status: 'Recovered',
           count: recoveredCustomers,
           percentage: totalCustomers > 0 ? ((recoveredCustomers / totalCustomers) * 100).toFixed(1) : 0,
-          color: '#EC4899'
+          color: constants.CUSTOMER_STATUS_COLORS.Recovered
         }
       ]
     };

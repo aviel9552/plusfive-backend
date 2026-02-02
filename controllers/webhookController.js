@@ -156,24 +156,16 @@ const handleAppointmentWebhook = async (req, res) => {
 
 
     // Now add appointment data to Appointment table
-    const formattedPhoneForAppointment = formatIsraeliPhone(webhookData.CustomerPhone);
     const appointmentData = {
       source: webhookData.Source || null,
       endDate: parseDateSafely(webhookData.EndDate),
       duration: webhookData.Duration || null,
       startDate: parseDateSafely(webhookData.StartDate),
-      businessId: webhookData.BusinessId || null,
-      byCustomer: webhookData.ByCustomer || false,
       createDate: parseDateSafely(webhookData.CreateDate),
-      employeeId: webhookData.EmployeeId || null,
-      businessName: webhookData.BusinessName || null,
-      employeeName: webhookData.EmployeeName || null,
-      customerPhone: formattedPhoneForAppointment,
-      appointmentCount: webhookData.AppointmentCount || 0,
-      customerFullName: webhookData.CustomerFullName || null,
-      selectedServices: webhookData.SelectedServices || null,
-      customerId: customerId, // Reference to newly created customer
-      userId: userId // Reference to User table
+      customerId: customerId,
+      userId: userId,
+      customerNote: webhookData.CustomerNote || null,
+      selectedServices: webhookData.SelectedServices || null
     };
 
     const newAppointment = await prisma.appointment.create({
@@ -1623,25 +1615,23 @@ const getAllAppointments = async (req, res) => {
       return errorResponse(res, 'User not authenticated. Please login again.', 401);
     }
 
-    const { userId, customerId, employeeId, start, end, page = 1, limit = 1000 } = req.query;
+    const { userId, customerId, staffId, start, end, page = 1, limit = 1000 } = req.query;
 
     const skip = (page - 1) * limit;
 
     // Build where clause
     const where = {};
     
-    // Filter by userId - if admin, can see all, otherwise only own appointments
-    if (userRole === constants.ROLES.ADMIN && userId) {
-      where.userId = userId;
+    // Filter by userId - if admin with no userId = see all; admin with userId = filter; non-admin = own only
+    if (userRole === constants.ROLES.ADMIN) {
+      if (userId) where.userId = userId;
+      // else: no userId filter = admin sees all appointments
     } else {
-      // Non-admin users can only see their own appointments
       where.userId = loggedInUserId;
     }
     
     if (customerId) where.customerId = customerId;
-    if (employeeId) where.employeeId = parseInt(employeeId); // Legacy filter
-    // New filter by staffId
-    const { staffId } = req.query;
+    // Filter by staffId (Staff relation)
     if (staffId) where.staffId = staffId;
 
     // Add date range filtering if provided
@@ -1964,17 +1954,14 @@ const createAppointment = async (req, res) => {
     const {
       customerId,
       customerPhone,
-      customerFullName,
+      customerFullName, // Used for customer lookup/creation only
       startDate,
       endDate,
       duration,
+      staffId, // Staff table ID (String)
+      serviceId, // Service table ID (String)
       selectedServices,
-      employeeId, // Legacy field
-      employeeName,
-      staffId, // New field - Staff table ID (String)
-      serviceId, // New field - Service table ID (String)
-      source,
-      byCustomer
+      source
     } = req.body;
 
     // Validate required fields
@@ -2120,11 +2107,6 @@ const createAppointment = async (req, res) => {
       if (staffExists.businessId !== userId) {
         return errorResponse(res, 'Staff does not belong to your business', 403);
       }
-    } else if (employeeId) {
-      // Legacy: Try to find staff by employeeId (if it's a staff ID from old system)
-      // This is for backward compatibility
-      // Note: employeeId is Int, staffId is String, so we can't directly map
-      // For now, we'll keep employeeId as is for legacy support
     }
 
     // Validate serviceId if provided
@@ -2143,26 +2125,18 @@ const createAppointment = async (req, res) => {
       }
     }
 
-    // Create appointment
+    // Create appointment (legacy fields removed - use relations)
     const appointmentData = {
       source: source || 'calendar',
       endDate: parsedEndDate,
       duration: duration || null,
       startDate: parsedStartDate,
-      businessId: null,
-      byCustomer: byCustomer || false,
       createDate: new Date(),
-      employeeId: employeeId ? parseInt(employeeId) : null, // Legacy field
-      businessName: null,
-      employeeName: employeeName || null,
-      customerPhone: customerPhone ? formatIsraeliPhone(customerPhone) : null,
-      appointmentCount: 0,
-      customerFullName: finalCustomerFullName, // Use the resolved customerFullName
-      selectedServices: selectedServices || null, // Legacy field
       customerId: finalCustomerId,
       userId: finalUserId,
-      staffId: finalStaffId, // New field
-      serviceId: finalServiceId // New field
+      staffId: finalStaffId,
+      serviceId: finalServiceId,
+      selectedServices: selectedServices || null
     };
 
     const newAppointment = await prisma.appointment.create({
@@ -2238,16 +2212,13 @@ const updateAppointment = async (req, res) => {
 
     const {
       customerId,
-      customerPhone,
-      customerFullName,
       startDate,
       endDate,
       duration,
+      staffId,
+      serviceId,
       selectedServices,
-      employeeId,
-      employeeName,
       source,
-      byCustomer,
       customerNote
     } = req.body;
 
@@ -2304,13 +2275,10 @@ const updateAppointment = async (req, res) => {
     }
     
     if (duration !== undefined) updateData.duration = duration;
-    if (selectedServices !== undefined) updateData.selectedServices = selectedServices;
-    if (employeeId !== undefined) updateData.employeeId = employeeId ? parseInt(employeeId) : null;
-    if (employeeName !== undefined) updateData.employeeName = employeeName;
+    if (staffId !== undefined) updateData.staffId = staffId || null;
+    if (serviceId !== undefined) updateData.serviceId = serviceId || null;
+    if (selectedServices !== undefined) updateData.selectedServices = selectedServices || null;
     if (source !== undefined) updateData.source = source;
-    if (byCustomer !== undefined) updateData.byCustomer = byCustomer;
-    if (customerPhone !== undefined) updateData.customerPhone = customerPhone ? formatIsraeliPhone(customerPhone) : null;
-    if (customerFullName !== undefined) updateData.customerFullName = customerFullName;
     if (customerNote !== undefined) updateData.customerNote = customerNote || null;
 
     // Update customer if customerId changed

@@ -36,6 +36,16 @@ module.exports = {
     RECOVERED: 'recovered'
   },
 
+  // Customer Status Colors (for charts, badges, API responses - shared with frontend)
+  CUSTOMER_STATUS_COLORS: {
+    New: '#ff257c',
+    Active: '#ff4e94',
+    'At Risk': '#ff7db1',
+    Lost: '#ffb7d4',
+    Recovered: '#ffd5e6',
+    Lead: '#f70964'
+  },
+
   // Webhook Types
   WEBHOOK_TYPES: {
     APPOINTMENT: 'appointment',
