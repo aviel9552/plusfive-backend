@@ -129,6 +129,13 @@ module.exports = {
     BOOKED: 'booked'
   },
 
+  // Appointment status: booked, cancelled, scheduled (matches Prisma enum AppointmentStatus)
+  APPOINTMENT_STATUS: {
+    BOOKED: 'booked',
+    CANCELLED: 'cancelled',
+    SCHEDULED: 'scheduled'
+  },
+
   // Days of the week – client format: English key + Hebrew label (index 0 = Sunday … 6 = Saturday)
   DAYS_OF_WEEK: [
     { key: 'sunday', label: 'ראשון' },
@@ -140,6 +147,36 @@ module.exports = {
     { key: 'saturday', label: 'שבת' },
   ],
   DAYS_OF_WEEK_KEYS: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+
+  // JS getDay() 0–6 → Hebrew abbrev (for availability/operating hours). Day key = DAYS_OF_WEEK_KEYS[index].
+  JS_DAY_TO_HEBREW: ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"],
+
+  // Recurrence service type values (match frontend – use in recurrenceHelper)
+  RECURRENCE_SERVICE_TYPE: {
+    REGULAR: 'Regular Appointment',
+    EVERY_DAY: 'Every Day',
+    EVERY_WEEK: 'Every Week',
+    EVERY_2_WEEKS: 'Every 2 Weeks',
+    EVERY_3_WEEKS: 'Every 3 Weeks',
+    EVERY_MONTH: 'Every Month',
+    EVERY_2_MONTHS: 'Every 2 Months',
+    PREFIX_EVERY: 'Every '
+  },
+
+  // Recurrence duration unit (parsed from duration string – lowercase)
+  RECURRENCE_DURATION_UNIT: {
+    DAY: 'day',
+    WEEK: 'week',
+    MONTH: 'month',
+    YEAR: 'year'
+  },
+
+  // Recurrence – days per unit (for day-based calculations)
+  RECURRENCE_DAYS_PER: {
+    WEEK: 7,
+    MONTH: 28,
+    YEAR: 365
+  },
 
   // Time Options - Generate time options from 00:00 to 23:55 in 5-minute intervals
   TIME_OPTIONS: (() => {

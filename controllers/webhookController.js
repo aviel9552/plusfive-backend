@@ -1,5 +1,10 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { calculateRecurringDates: getRecurringDates } = require('../lib/recurrenceHelper');
+const {
+  filterRecurringDatesByAvailability,
+  filterRecurringDatesByExistingAppointments,
+} = require('../lib/availabilityHelper');
 const N8nMessageService = require('../services/N8nMessageService');
 const { createWhatsappMessageRecord } = require('./whatsappMessageController');
 const { stripe } = require('../lib/stripe');
@@ -1961,7 +1966,9 @@ const createAppointment = async (req, res) => {
       staffId, // Staff table ID (String)
       serviceId, // Service table ID (String)
       selectedServices,
-      source
+      source,
+      recurringType,   // SERVICE TYPE: Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
+      recurringDuration // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
     } = req.body;
 
     // Validate required fields
@@ -1971,6 +1978,11 @@ const createAppointment = async (req, res) => {
 
     if (!startDate || !endDate) {
       return errorResponse(res, 'startDate and endDate are required', 400);
+    }
+
+    // When recurrence is in data (e.g. "Every Week" + "Month"), use recurring flow – one API for both create and recurring
+    if (recurringType && recurringDuration && recurringType !== 'Regular Appointment') {
+      return createRecurringAppointments(req, res);
     }
 
     // Helper function to parse date safely
@@ -2125,6 +2137,27 @@ const createAppointment = async (req, res) => {
       }
     }
 
+    // Do not create appointment if staff or business are not available on this date/time
+    const pad = (n) => String(n).padStart(2, '0');
+    const startDateStr = `${parsedStartDate.getFullYear()}-${pad(parsedStartDate.getMonth() + 1)}-${pad(parsedStartDate.getDate())}`;
+    const startTimeStr = `${pad(parsedStartDate.getHours())}:${pad(parsedStartDate.getMinutes())}`;
+    const endTimeStr = `${pad(parsedEndDate.getHours())}:${pad(parsedEndDate.getMinutes())}`;
+    const availableDates = await filterRecurringDatesByAvailability(
+      [startDateStr],
+      userId,
+      finalStaffId,
+      startTimeStr,
+      endTimeStr,
+      prisma
+    );
+    if (!availableDates || availableDates.length === 0) {
+      return errorResponse(
+        res,
+        'Staff or business not available on this date/time. Please choose a day and time when both are open.',
+        400
+      );
+    }
+
     // Create appointment (legacy fields removed - use relations)
     const appointmentData = {
       source: source || 'calendar',
@@ -2136,7 +2169,9 @@ const createAppointment = async (req, res) => {
       userId: finalUserId,
       staffId: finalStaffId,
       serviceId: finalServiceId,
-      selectedServices: selectedServices || null
+      selectedServices: selectedServices || null,
+      recurringType: recurringType || null,
+      recurringDuration: recurringDuration || null
     };
 
     const newAppointment = await prisma.appointment.create({
@@ -2195,6 +2230,226 @@ const createAppointment = async (req, res) => {
   } catch (error) {
     console.error('Create appointment error:', error);
     return errorResponse(res, 'Failed to create appointment', 500);
+  }
+};
+
+/**
+ * Create recurring appointments – same validation as createAppointment, then uses
+ * recurrenceHelper (calculateRecurringDates) and availabilityHelper (filterRecurringDatesByAvailability)
+ * to create one appointment per available day (business + staff hours).
+ * Called from createAppointment when recurringType + recurringDuration are in the request body.
+ */
+const createRecurringAppointments = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const {
+      customerId,
+      customerPhone,
+      customerFullName,
+      startDate,
+      endDate,
+      duration,
+      staffId,
+      serviceId,
+      selectedServices,
+      source,
+      recurringType,
+      recurringDuration,
+    } = req.body;
+
+    if (!recurringType || recurringType === 'Regular Appointment') {
+      return errorResponse(res, 'recurringType is required for recurring (e.g. "Every Day", "Every Week").', 400);
+    }
+    if (!recurringDuration) {
+      return errorResponse(res, 'recurringDuration is required (e.g. "1 Week", "1 Month").', 400);
+    }
+    if (!customerId && !customerPhone) {
+      return errorResponse(res, 'Either customerId or customerPhone is required', 400);
+    }
+    if (!startDate || !endDate) {
+      return errorResponse(res, 'startDate and endDate are required', 400);
+    }
+
+    const parseDateSafely = (dateString) => {
+      if (!dateString) return null;
+      if (dateString instanceof Date) return dateString;
+      try {
+        const parsed = new Date(dateString);
+        return isNaN(parsed.getTime()) ? null : parsed;
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const firstStart = parseDateSafely(startDate);
+    const firstEnd = parseDateSafely(endDate);
+    if (!firstStart || !firstEnd) {
+      return errorResponse(res, 'Invalid date format for startDate or endDate', 400);
+    }
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const startDateStr = `${firstStart.getFullYear()}-${pad(firstStart.getMonth() + 1)}-${pad(firstStart.getDate())}`;
+
+    let dateStrings = getRecurringDates(recurringType, recurringDuration, startDateStr);
+    if (!dateStrings || dateStrings.length === 0) {
+      return errorResponse(res, 'No recurrence dates computed. Check recurringType and recurringDuration.', 400);
+    }
+    const allRequestedDates = [...dateStrings];
+
+    // Resolve customer – same as createAppointment
+    let finalCustomerId = customerId;
+    let finalUserId = userId;
+    if (!finalCustomerId && customerPhone) {
+      const formattedPhone = formatIsraeliPhone(customerPhone);
+      let existingCustomer = await prisma.customers.findFirst({
+        where: { customerPhone: formattedPhone },
+      });
+      if (existingCustomer) {
+        finalCustomerId = existingCustomer.id;
+        finalUserId = existingCustomer.userId || userId;
+      } else {
+        const nameParts = customerFullName ? customerFullName.split(' ') : ['', ''];
+        const newCustomer = await prisma.customers.create({
+          data: {
+            firstName: nameParts[0] || null,
+            lastName: nameParts.slice(1).join(' ') || null,
+            customerPhone: formattedPhone,
+            customerFullName: customerFullName || null,
+            appointmentCount: 0,
+            userId: userId,
+          },
+        });
+        finalCustomerId = newCustomer.id;
+        finalUserId = userId;
+        await prisma.customerUser.create({
+          data: { customerId: finalCustomerId, userId, status: constants.CUSTOMER_STATUS.NEW },
+        });
+        await prisma.customerStatusLog.create({
+          data: { customerId: finalCustomerId, userId, oldStatus: null, newStatus: 'New', reason: 'New appointment created from calendar' },
+        });
+      }
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, subscriptionStatus: true, subscriptionExpirationDate: true, role: true, stripeSubscriptionId: true },
+    });
+    if (!user) return errorResponse(res, 'User not found', 404);
+    const subscriptionCheck = await checkUserSubscription(user);
+    if (!subscriptionCheck.hasActiveSubscription) {
+      const msg = subscriptionCheck.reason === 'Subscription expired'
+        ? 'Subscription expired. Please renew to create appointments.'
+        : 'Active subscription required.';
+      return errorResponse(res, msg, 403);
+    }
+
+    let finalStaffId = staffId || null;
+    if (finalStaffId) {
+      const staffExists = await prisma.staff.findUnique({ where: { id: finalStaffId }, select: { id: true, businessId: true } });
+      if (!staffExists) return errorResponse(res, 'Staff not found', 404);
+      if (staffExists.businessId !== userId) return errorResponse(res, 'Staff does not belong to your business', 403);
+    }
+
+    let finalServiceId = serviceId || null;
+    if (finalServiceId) {
+      const serviceExists = await prisma.service.findUnique({ where: { id: finalServiceId }, select: { id: true, businessId: true } });
+      if (!serviceExists) return errorResponse(res, 'Service not found', 404);
+      if (serviceExists.businessId !== userId) return errorResponse(res, 'Service does not belong to your business', 403);
+    }
+
+    const startHours = firstStart.getHours();
+    const startMinutes = firstStart.getMinutes();
+    const endHours = firstEnd.getHours();
+    const endMinutes = firstEnd.getMinutes();
+
+    // Skip days when staff or business are unavailable (e.g. Staff Two inactive Sunday/Saturday);
+    // create appointments only on remaining available days.
+    const startTimeStr = `${String(startHours).padStart(2, '0')}:${String(startMinutes).padStart(2, '0')}`;
+    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+    dateStrings = await filterRecurringDatesByAvailability(
+      dateStrings,
+      userId,
+      finalStaffId,
+      startTimeStr,
+      endTimeStr,
+      prisma
+    );
+    // Skip days where this staff already has an appointment at the same time (avoid double-booking)
+    dateStrings = await filterRecurringDatesByExistingAppointments(
+      dateStrings,
+      finalStaffId,
+      startHours,
+      startMinutes,
+      endHours,
+      endMinutes,
+      prisma
+    );
+    const datesThatWillGetAppointments = dateStrings || [];
+    const datesThatWontGetAppointments = allRequestedDates.filter((d) => !datesThatWillGetAppointments.includes(d));
+
+    if (!dateStrings || dateStrings.length === 0) {
+      return errorResponse(
+        res,
+        'No available days in the recurrence range. Business or staff are not open at this time on any of the dates, or the requested slot is already booked.',
+        400
+      );
+    }
+
+    const includeRelations = {
+      customer: { select: { id: true, customerFullName: true, customerPhone: true, selectedServices: true, email: true } },
+      user: { select: { id: true, businessName: true, email: true } },
+      staff: { select: { id: true, fullName: true, phone: true, email: true } },
+      service: { select: { id: true, name: true, duration: true, price: true, color: true } },
+    };
+
+    const created = [];
+    for (const dateStr of dateStrings) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const startDateForSlot = new Date(y, m - 1, d, startHours, startMinutes, 0, 0);
+      const endDateForSlot = new Date(y, m - 1, d, endHours, endMinutes, 0, 0);
+
+      const newAppointment = await prisma.appointment.create({
+        data: {
+          source: source || 'calendar',
+          startDate: startDateForSlot,
+          endDate: endDateForSlot,
+          duration: duration || null,
+          createDate: new Date(),
+          customerId: finalCustomerId,
+          userId: finalUserId,
+          staffId: finalStaffId,
+          serviceId: finalServiceId,
+          selectedServices: selectedServices || null,
+          recurringType: recurringType || null,
+          recurringDuration: recurringDuration || null,
+        },
+        include: includeRelations,
+      });
+      created.push(newAppointment);
+    }
+
+    if (finalCustomerId) {
+      await prisma.customers.update({
+        where: { id: finalCustomerId },
+        data: { appointmentCount: { increment: created.length } },
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: `Created ${created.length} recurring appointment(s)`,
+      data: created,
+      availableDates: dateStrings,
+      skippedDates: datesThatWontGetAppointments,
+      count: created.length,
+    });
+  } catch (error) {
+    console.error('Create recurring appointments error:', error);
+    return errorResponse(res, error.message || 'Failed to create recurring appointments', 500);
   }
 };
 
@@ -2331,6 +2586,107 @@ const updateAppointment = async (req, res) => {
     // Provide more detailed error message
     const errorMessage = error.message || 'Failed to update appointment';
     return errorResponse(res, errorMessage, 500);
+  }
+};
+
+// Update appointment status only (authenticated users only)
+const updateAppointmentStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { appointmentStatus } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated. Please login again.', 401);
+    }
+
+    const validStatuses = [
+      constants.APPOINTMENT_STATUS.BOOKED,
+      constants.APPOINTMENT_STATUS.CANCELLED,
+      constants.APPOINTMENT_STATUS.SCHEDULED
+    ];
+    if (!appointmentStatus || typeof appointmentStatus !== 'string' || !validStatuses.includes(appointmentStatus)) {
+      return errorResponse(res, 'Invalid appointmentStatus. Must be one of: booked, cancelled, scheduled', 400);
+    }
+
+    let appointment;
+    if (userRole === constants.ROLES.ADMIN) {
+      appointment = await prisma.appointment.findUnique({ where: { id } });
+    } else {
+      appointment = await prisma.appointment.findFirst({
+        where: { id, userId }
+      });
+    }
+
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    const includeRelations = {
+      customer: {
+        select: {
+          id: true,
+          customerFullName: true,
+          customerPhone: true,
+          selectedServices: true,
+          email: true
+        }
+      },
+      user: {
+        select: {
+          id: true,
+          businessName: true,
+          email: true
+        }
+      },
+      staff: {
+        select: {
+          id: true,
+          fullName: true
+        }
+      },
+      service: {
+        select: {
+          id: true,
+          name: true,
+          duration: true,
+          price: true
+        }
+      }
+    };
+
+    let updatedAppointment;
+    try {
+      updatedAppointment = await prisma.appointment.update({
+        where: { id },
+        data: { appointmentStatus },
+        include: includeRelations
+      });
+    } catch (updateErr) {
+      // Fallback: if Prisma client doesn't know appointmentStatus (e.g. old client cache), use raw SQL
+      if (updateErr.message && updateErr.message.includes('Unknown argument `appointmentStatus`')) {
+        await prisma.$executeRaw`
+          UPDATE appointments
+          SET "appointmentStatus" = ${appointmentStatus}::"AppointmentStatus", "updatedAt" = NOW()
+          WHERE id = ${id}
+        `;
+        updatedAppointment = await prisma.appointment.findUnique({
+          where: { id },
+          include: includeRelations
+        });
+        if (!updatedAppointment) {
+          return errorResponse(res, 'Appointment not found after update', 500);
+        }
+      } else {
+        throw updateErr;
+      }
+    }
+
+    return successResponse(res, updatedAppointment, 'Appointment status updated successfully');
+  } catch (error) {
+    console.error('Update appointment status error:', error);
+    return errorResponse(res, error.message || 'Failed to update appointment status', 500);
   }
 };
 
@@ -2773,7 +3129,9 @@ module.exports = {
   getAppointmentById,
   getAppointmentsByCustomerId,
   createAppointment,
+  createRecurringAppointments,
   updateAppointment,
+  updateAppointmentStatus,
   deleteAppointment,
   createPayment,
   createWhatsappMessageWithValidation

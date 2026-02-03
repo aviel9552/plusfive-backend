@@ -244,6 +244,13 @@ model Customers {
   @@map("customers")
 } 
 
+// Appointment status: booked, cancelled, scheduled
+enum AppointmentStatus {
+  booked
+  cancelled
+  scheduled
+}
+
 // Appointment table - Store webhook appointment data
 model Appointment {
   id              String   @id @default(cuid())
@@ -256,6 +263,13 @@ model Appointment {
   createDate      DateTime?
   customerNote    String?  // Customer note for the appointment
   selectedServices String? // Service names (kept for backward compatibility / webhook data)
+  
+  // Appointment status: booked, cancelled, scheduled
+  appointmentStatus AppointmentStatus @default(booked)
+  
+  // Recurring: service type (e.g. Every Day, Every Week) and repeat duration (e.g. 1 Week, 2 Months)
+  recurringType    String?  // SERVICE TYPE: Regular Appointment | Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
+  recurringDuration String? // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
   
   // Relations
   customerId      String?  // Reference to Customers table

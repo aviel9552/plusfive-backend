@@ -30,6 +30,7 @@ const {
   getAppointmentsByCustomerId,
   createAppointment,
   updateAppointment,
+  updateAppointmentStatus,
   deleteAppointment,
   createPayment,
   createWhatsappMessageWithValidation,
@@ -75,6 +76,7 @@ router.post('/appointments', authenticateToken, checkSubscription, createAppoint
 router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
 router.put('/appointments/:id', authenticateToken, updateAppointment);
+router.patch('/appointments/:id/status', authenticateToken, updateAppointmentStatus);
 router.delete('/appointments/:id', authenticateToken, deleteAppointment);
 router.get(
   '/appointments/customer/:customerId',
