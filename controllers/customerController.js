@@ -969,21 +969,27 @@ const getAllCustomers = async (req, res) => {
     // Get all customer IDs
     const customerIds = customersData.map(c => c.id);
 
-    // Fetch all appointments for these customers
+    // Fetch all appointments for these customers (all statuses: booked, cancelled, scheduled)
     let appointmentsByCustomer = {};
     if (customerIds.length > 0) {
       const appointments = await prisma.appointment.findMany({
         where: {
           customerId: { in: customerIds },
           userId: authenticatedUserId
+          // No appointmentStatus filter - return booked, cancelled, and scheduled
         },
         select: {
           id: true,
           customerId: true,
           selectedServices: true,
+          serviceId: true,
+          appointmentStatus: true,
           startDate: true,
           endDate: true,
-          duration: true
+          duration: true,
+          service: {
+            select: { name: true }
+          }
         },
         orderBy: { createdAt: 'desc' }
       });
@@ -1026,15 +1032,15 @@ const getAllCustomers = async (req, res) => {
           appointmentsByCustomer[appointment.customerId] = [];
         }
         
-        // Convert selectedServices to string
+        // selectedServices: prefer service name from serviceId, fallback to appointment.selectedServices
         let selectedServicesString = '';
-        if (appointment.selectedServices) {
+        if (appointment.service?.name) {
+          selectedServicesString = appointment.service.name;
+        } else if (appointment.selectedServices) {
           if (Array.isArray(appointment.selectedServices)) {
-            // Join array items with comma
             selectedServicesString = appointment.selectedServices.join(', ');
           } else if (typeof appointment.selectedServices === 'string') {
             try {
-              // Try to parse as JSON
               const parsed = JSON.parse(appointment.selectedServices);
               if (Array.isArray(parsed)) {
                 selectedServicesString = parsed.join(', ');
@@ -1042,7 +1048,6 @@ const getAllCustomers = async (req, res) => {
                 selectedServicesString = appointment.selectedServices;
               }
             } catch {
-              // If not JSON, use as string
               selectedServicesString = appointment.selectedServices;
             }
           } else {
@@ -1052,6 +1057,7 @@ const getAllCustomers = async (req, res) => {
 
         appointmentsByCustomer[appointment.customerId].push({
           selectedServices: selectedServicesString,
+          appointmentStatus: appointment.appointmentStatus ?? null,
           startDate: appointment.startDate,
           endDate: appointment.endDate,
           duration: convertDurationToMinutes(appointment.duration)

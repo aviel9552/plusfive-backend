@@ -1,16 +1,17 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
-const { WAITLIST_STATUS } = require('../config/constants');
+const { WAITLIST_STATUS, ROLES } = require('../config/constants');
 
 /**
  * Map DB waitlist row to frontend shape.
- * Frontend expects: id, client, service, staff (same shape), date|requestedDate, time, status.
+ * Returns: id, client, service, staff, requestedDate, time, status, note.
+ * When row includes user (admin fetch), adds businessName for display.
  */
 function toFrontendItem(row) {
   const clientName = row.customer?.customerFullName ||
     [row.customer?.firstName, row.customer?.lastName].filter(Boolean).join(' ') ||
     'Unknown Client';
-  return {
+  const item = {
     id: row.id,
     client: {
       id: row.customer?.id,
@@ -39,35 +40,42 @@ function toFrontendItem(row) {
         }
       : null,
     staffId: row.staffId ?? null,
-    date: row.requestedDate,
     requestedDate: row.requestedDate,
     time: row.time ?? 'any',
-    startDateTime: row.startDateTime,
     status: row.status,
     note: row.note,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
   };
+  if (row.user) {
+    item.businessName = row.user.businessName || [row.user.firstName, row.user.lastName].filter(Boolean).join(' ') || row.user.email || null;
+  }
+  return item;
 }
 
 /**
  * GET /api/waitlist
- * Get all waitlist entries for the authenticated user (business).
+ * Get waitlist entries:
+ * - Admin role: all waitlist entries (all businesses), includes businessName.
+ * - User role: only entries for the authenticated user (business).
  */
 const getAllWaitlist = async (req, res) => {
   try {
     const userId = req.user?.userId;
+    const role = (req.user?.role || '').toLowerCase();
     if (!userId) {
       return errorResponse(res, 'User not authenticated', 401);
     }
 
+    const isAdmin = role === ROLES.ADMIN;
+    const where = isAdmin ? {} : { userId };
+
     const items = await prisma.waitlist.findMany({
-      where: { userId },
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         customer: true,
         service: true,
-        staff: true, // Optional: staff who is preferred for this waitlist entry
+        staff: true,
+        ...(isAdmin ? { user: true } : {}),
       },
     });
 

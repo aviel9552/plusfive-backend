@@ -1620,7 +1620,7 @@ const getAllAppointments = async (req, res) => {
       return errorResponse(res, 'User not authenticated. Please login again.', 401);
     }
 
-    const { userId, customerId, staffId, start, end, page = 1, limit = 1000 } = req.query;
+    const { userId, customerId, staffId, start, end, page = 1, limit = 1000, appointmentStatus } = req.query;
 
     const skip = (page - 1) * limit;
 
@@ -1638,6 +1638,10 @@ const getAllAppointments = async (req, res) => {
     if (customerId) where.customerId = customerId;
     // Filter by staffId (Staff relation)
     if (staffId) where.staffId = staffId;
+    // Filter by appointment status (booked, cancelled, scheduled)
+    if (appointmentStatus && ['booked', 'cancelled', 'scheduled'].includes(String(appointmentStatus).toLowerCase())) {
+      where.appointmentStatus = String(appointmentStatus).toLowerCase();
+    }
 
     // Add date range filtering if provided
     // Filter by startDate range (appointments that overlap with the requested range)
