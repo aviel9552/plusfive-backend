@@ -1696,7 +1696,9 @@ const getAllAppointments = async (req, res) => {
             id: true,
             businessName: true,
             email: true,
-            phoneNumber: true
+            phoneNumber: true,
+            firstName: true,
+            lastName: true
           }
         },
         staff: {
@@ -1730,11 +1732,26 @@ const getAllAppointments = async (req, res) => {
       take: parseInt(limit)
     });
 
+    // Add fullName to each appointment's user (firstName + lastName || businessName || email)
+    const appointmentsWithUserFullName = appointments.map((apt) => {
+      const user = apt.user
+        ? {
+            ...apt.user,
+            fullName:
+              `${[apt.user.firstName, apt.user.lastName].filter(Boolean).join(' ')}`.trim() ||
+              apt.user.businessName ||
+              apt.user.email ||
+              null
+          }
+        : apt.user;
+      return { ...apt, user };
+    });
+
     // Get total count
     const totalCount = await prisma.appointment.count({ where });
 
     return successResponse(res, {
-      appointments,
+      appointments: appointmentsWithUserFullName,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1774,7 +1791,9 @@ const getAppointmentById = async (req, res) => {
             businessName: true,
             email: true,
             phoneNumber: true,
-            whatsappNumber: true
+            whatsappNumber: true,
+            firstName: true,
+            lastName: true
           }
         },
         staff: {
@@ -1822,6 +1841,15 @@ const getAppointmentById = async (req, res) => {
       return errorResponse(res, 'Appointment not found', 404);
     }
 
+    // Add fullName to user (firstName + lastName || businessName || email)
+    if (appointment.user) {
+      appointment.user.fullName =
+        `${[appointment.user.firstName, appointment.user.lastName].filter(Boolean).join(' ')}`.trim() ||
+        appointment.user.businessName ||
+        appointment.user.email ||
+        null;
+    }
+
     return successResponse(res, appointment, 'Appointment retrieved successfully');
 
   } catch (error) {
@@ -1852,7 +1880,9 @@ const getAppointmentsByCustomerId = async (req, res) => {
             businessName: true,
             email: true,
             phoneNumber: true,
-            whatsappNumber: true
+            whatsappNumber: true,
+            firstName: true,
+            lastName: true
           }
         },
         staff: {
@@ -1916,6 +1946,21 @@ const getAppointmentsByCustomerId = async (req, res) => {
     // Get total count
     const totalCount = await prisma.appointment.count({ where });
 
+    // Add fullName to each appointment's user (firstName + lastName || businessName || email)
+    const appointmentsWithUserFullName = appointments.map((apt) => {
+      const user = apt.user
+        ? {
+            ...apt.user,
+            fullName:
+              `${[apt.user.firstName, apt.user.lastName].filter(Boolean).join(' ')}`.trim() ||
+              apt.user.businessName ||
+              apt.user.email ||
+              null
+          }
+        : apt.user;
+      return { ...apt, user };
+    });
+
     // Calculate statistics
     const totalAppointments = totalCount;
     const appointmentsWithPayments = await prisma.appointment.count({
@@ -1929,7 +1974,7 @@ const getAppointmentsByCustomerId = async (req, res) => {
 
     return successResponse(res, {
       customer,
-      appointments,
+      appointments: appointmentsWithUserFullName,
       summary: {
         totalAppointments,
         appointmentsWithPayments,

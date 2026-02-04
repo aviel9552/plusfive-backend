@@ -16,6 +16,10 @@
 ### 2. **Customer & webhooks**
 - Updates in `controllers/customerController.js` and `controllers/webhookController.js` (per git status).
 
+### 3. **Admin appointments – user fullName in API (webhookController.js)**
+- **Appointment endpoints** (`getAllAppointments`, `getAppointmentById`, `getAppointmentsByCustomerId`): Prisma `user` selection now includes `firstName` and `lastName`.
+- After fetching appointments, a mapping step adds a **`fullName`** field to each `user` in the response: `(firstName + lastName).trim() || businessName || email || null`, so the admin appointments table and business filter can show owner full name correctly.
+
 ---
 
 ### Frontend
@@ -50,7 +54,7 @@
 |------|--------|
 | `controllers/customerController.js` | Customer controller updates |
 | `controllers/waitlistController.js` | Admin waitlist: all businesses, businessName, ROLES.ADMIN |
-| `controllers/webhookController.js` | Webhook handling updates |
+| `controllers/webhookController.js` | Appointment APIs: user `firstName`/`lastName` in query; response includes `user.fullName` for admin appointments |
 
 ### Backend – Deleted (not staged)
 | File | Change |
