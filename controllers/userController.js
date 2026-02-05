@@ -58,46 +58,6 @@ const createUser = async (req, res) => {
   }
 };
 
-// Get user profile
-const getProfile = async (req, res) => {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phoneNumber: true,
-        businessName: true,
-        businessType: true,
-        address: true,
-        whatsappNumber: true,
-        directChatMessage: true,
-        role: true,
-        subscriptionExpirationDate: true,
-        subscriptionLtv: true,
-        subscriptionPlan: true,
-        subscriptionStartDate: true,
-        subscriptionStatus: true,
-        isActive: true,
-        isDeleted: true,
-        createdAt: true,
-        updatedAt: true,
-      }
-    });
-
-    if (!user) {
-      return errorResponse(res, 'User not found', 404);
-    }
-
-    return successResponse(res, user);
-  } catch (error) {
-    console.error('Get profile error:', error);
-    return errorResponse(res, 'Internal server error', 500);
-  }
-};
-
 // Helper function to format Israeli phone numbers
 const formatIsraeliPhone = (phoneNumber) => {
   if (!phoneNumber) return phoneNumber;
@@ -214,43 +174,6 @@ const getAllUsers = async (req, res) => {
     return successResponse(res, users);
   } catch (error) {
     console.error('Get all users error:', error);
-    return errorResponse(res, 'Internal server error', 500);
-  }
-};
-
-// Update user profile
-const updateProfile = async (req, res) => {
-  try {
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.userId },
-      data: req.body,
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phoneNumber: true,
-        businessName: true,
-        businessType: true,
-        address: true,
-        whatsappNumber: true,
-        directChatMessage: true,
-        role: true,
-        subscriptionExpirationDate: true,
-        subscriptionLtv: true,
-        subscriptionPlan: true,
-        subscriptionStartDate: true,
-        subscriptionStatus: true,
-        isActive: true,
-        isDeleted: true,
-        createdAt: true,
-        updatedAt: true,
-      }
-    });
-
-    return successResponse(res, updatedUser, 'Profile updated successfully');
-  } catch (error) {
-    console.error('Update profile error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
 };
@@ -387,8 +310,12 @@ const changePassword = async (req, res) => {
 
 // Soft delete user account and update customer statuses
 const softDeleteUser = async (req, res) => {
-  try { 
-    // Get user ID from authenticated token
+  try {
+    // Validate token payload
+    if (!req.user || !req.user.userId) {
+      return errorResponse(res, 'Invalid token: user ID not found. Please log in again.', 401);
+    }
+
     const currentUserId = req.user.userId;
 
     // First, check if user exists and is not already deleted
@@ -402,16 +329,16 @@ const softDeleteUser = async (req, res) => {
     });
 
     if (!existingUser) {
-      return errorResponse(res, 'User not found', 404);
+      return errorResponse(res, 'Account not found. It may have been deleted already.', 404);
     }
 
     if (existingUser.isDeleted) {
-      return errorResponse(res, 'User is already deleted', 400);
+      return errorResponse(res, 'This account is already deactivated.', 400);
     }
 
     // Prevent admin users from being deleted
     if (existingUser.role === constants.ROLES.ADMIN) {
-      return errorResponse(res, 'Admin users cannot be deleted', 403);
+      return errorResponse(res, 'Admin accounts cannot be deactivated from this action.', 403);
     }
 
     // Use transaction to ensure data consistency
@@ -468,19 +395,29 @@ const softDeleteUser = async (req, res) => {
       };
     });
 
-    return successResponse(res, result, `User soft deleted successfully. ${result.affectedCustomers} customers affected.`);
+    return successResponse(res, result, `Account deactivated successfully. ${result.affectedCustomers} customer link(s) updated.`);
   } catch (error) {
     console.error('Soft delete user error:', error);
-    return errorResponse(res, 'Internal server error', 500);
+
+    // Prisma known error codes
+    if (error.code === 'P2025') {
+      return errorResponse(res, 'Account not found. It may have been deleted already.', 404);
+    }
+    if (error.code === 'P2003') {
+      return errorResponse(res, 'Cannot deactivate account: related data must be resolved first.', 400);
+    }
+    if (error.code && error.code.startsWith('P')) {
+      return errorResponse(res, 'Unable to deactivate account. Please try again later.', 400);
+    }
+
+    return errorResponse(res, 'Unable to deactivate account. Please try again later.', 500);
   }
 };
 
 module.exports = {
   createUser,
-  getProfile,
   getUserById,
   getAllUsers,
-  updateProfile,
   updateUserById,
   deleteUserById,
   changePassword,

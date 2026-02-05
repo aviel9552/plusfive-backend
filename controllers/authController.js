@@ -2,14 +2,13 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse, hashPassword, verifyPassword } = require('../lib/utils');
 const { generateToken } = require('../middleware/auth');
 const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../lib/emailService');
-const { getOrCreateStripeCustomer, createAffiliateCoupon, createAffiliatePromotionCode } = require('../lib/stripe');
 const { constants } = require('../config');
 const crypto = require('crypto');
 
 // Register user
 const register = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, referralCode, phoneNumber, ...otherFields } = req.body;
+    const { email, password, firstName, lastName, phoneNumber, ...otherFields } = req.body;
     // Check if user already exists with this email (excluding soft deleted users)
     const existingUserByEmail = await prisma.user.findFirst({
       where: { 
@@ -94,66 +93,6 @@ const register = async (req, res) => {
         createdAt: true
       }
     });
-
-    // If referral code provided, create referral
-    if (referralCode) {
-      try {
-        // Find referrer by referral code
-        const referrer = await prisma.user.findUnique({
-          where: { referralCode: referralCode }
-        });
-
-        if (referrer && referrer.id !== user.id) {
-          // Create Stripe customer for referred user
-          let stripeCustomerId = null;
-          let affiliateData = null;
-          
-          try {
-            const stripeCustomer = await getOrCreateStripeCustomer(user.email, user.id);
-            stripeCustomerId = stripeCustomer.id;
-            
-            // Update user with Stripe customer ID
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { stripeCustomerId }
-            });
-            
-            
-            // Create affiliate coupon and promotion code
-            try {
-              const coupon = await createAffiliateCoupon(user.id);
-              const promotionCode = await createAffiliatePromotionCode(coupon.id, user.id);
-              
-              affiliateData = {
-                stripeCouponId: coupon.id,
-                stripePromotionCodeId: promotionCode.id,
-                promotionCode: promotionCode.code
-              };
-              
-            } catch (affiliateError) {
-              // Continue without affiliate coupon/promotion
-            }
-            
-          } catch (stripeError) {
-            // Continue without Stripe integration
-          }
-
-          // Create referral with affiliate data
-          await prisma.referral.create({
-            data: {
-              referrerId: referrer.id,
-              referredUserId: user.id,
-              status: affiliateData ? constants.STATUS.ACTIVE : constants.STATUS.PENDING,
-              commission: 0,
-              ...(affiliateData || {})
-            }
-          });
-
-        }
-      } catch (referralError) {
-        // Don't fail registration if referral fails
-      }
-    }
 
     // Generate JWT token for automatic login after registration
     const token = generateToken(user.id, user.email, user.role);
@@ -427,96 +366,6 @@ const resetPassword = async (req, res) => {
   }
 };
 
-// Change password (authenticated user)
-const changePassword = async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const userId = req.user.userId;
-
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
-    if (!user) {
-      return errorResponse(res, 'User not found', 404);
-    }
-
-    // Verify current password
-    const isValidPassword = await verifyPassword(currentPassword, user.password);
-    if (!isValidPassword) {
-      return errorResponse(res, 'Current password is incorrect', 400);
-    }
-
-    // Hash new password
-    const hashedPassword = await hashPassword(newPassword);
-
-    // Update password
-    await prisma.user.update({
-      where: { id: userId },
-      data: { password: hashedPassword }
-    });
-
-    return successResponse(res, null, 'Password changed successfully');
-  } catch (error) {
-    console.error('Change password error:', error);
-    return errorResponse(res, 'Internal server error', 500);
-  }
-};
-
-// Account soft delete - toggle isDeleted field
-const accountSoftDelete = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const userRole = req.user.role;
-    
-    // Prevent admin from soft deleting their account
-    if (userRole === constants.ROLES.ADMIN) {
-      return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
-    }
-    
-    // Get current user data
-    const currentUser = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { isDeleted: true, role: true }
-    });
-
-    if (!currentUser) {
-      return errorResponse(res, 'User not found', 404);
-    }
-
-    // Double check admin role from database
-    if (currentUser.role === constants.ROLES.ADMIN) {
-      return errorResponse(res, 'Admin accounts cannot be soft deleted', 403);
-    }
-
-    // Toggle isDeleted field
-    const newIsDeletedValue = !currentUser.isDeleted;
-
-    // Update user's isDeleted status
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { isDeleted: newIsDeletedValue },
-      select: {
-        id: true,
-        email: true,
-        businessName: true,
-        isDeleted: true,
-        isActive: false
-      }
-    });
-
-    return successResponse(res, {
-      user: updatedUser,
-      message: newIsDeletedValue ? 'Account soft deleted successfully' : 'Account restored successfully'
-    }, newIsDeletedValue ? 'Account soft deleted' : 'Account restored');
-
-  } catch (error) {
-    console.error('Account soft delete error:', error);
-    return errorResponse(res, 'Failed to update account status', 500);
-  }
-};
-
 // Helper function to format phone number
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return phoneNumber;
@@ -539,7 +388,5 @@ module.exports = {
   verifyEmail,
   resendVerification,
   forgotPassword,
-  resetPassword,
-  changePassword,
-  accountSoftDelete
+  resetPassword
 }; 

@@ -2,8 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { 
   createUser,
-  getProfile, 
-  updateProfile, 
   getUserById, 
   getAllUsers, 
   updateUserById, 
@@ -13,7 +11,7 @@ const {
 } = require('../controllers/userController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { userCreateSchema, userUpdateSchema, adminUserUpdateSchema, changePasswordSchema } = require('../lib/validations');
+const { userCreateSchema, adminUserUpdateSchema, changePasswordSchema } = require('../lib/validations');
 const { adminOnly } = require('../middleware/authorization');
 
 // Admin routes (admin only)
@@ -24,12 +22,6 @@ router.post('/', authenticateToken, adminOnly, validateRequest(userCreateSchema)
 router.get('/', authenticateToken, adminOnly, getAllUsers);
 
 // User profile routes (for authenticated users) - PUT THESE BEFORE PARAMETERIZED ROUTES
-// GET /api/users/profile - Get user profile
-router.get('/profile', authenticateToken, getProfile);
-
-// PUT /api/users/profile - Update user profile
-router.put('/profile', authenticateToken, validateRequest(userUpdateSchema), updateProfile);
-
 // PUT /api/users/change-password - Change password
 router.put('/change-password', authenticateToken, validateRequest(changePasswordSchema), changePassword);
 

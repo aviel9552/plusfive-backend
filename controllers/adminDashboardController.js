@@ -43,10 +43,9 @@ class AdminDashboardController {
         }
       }
 
-      const { month, year } = req.query;
       const currentDate = new Date();
-      const targetMonth = month || currentDate.getMonth() + 1;
-      const targetYear = year || currentDate.getFullYear();
+      const targetMonth = currentDate.getMonth() + 1;
+      const targetYear = currentDate.getFullYear();
 
       // Get start and end dates for the month
       const startDate = new Date(targetYear, targetMonth - 1, 1);
@@ -222,65 +221,6 @@ class AdminDashboardController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch monthly performance data',
-        error: error.message
-      });
-    }
-  }
-
-  // Get revenue impact over months
-  getRevenueImpact = async (req, res) => {
-    try {
-      const { months = 7, year } = req.query;
-      const authenticatedUser = req.user;
-      const currentDate = new Date();
-      const targetYear = year ? parseInt(year) : currentDate.getFullYear();
-      const revenueData = [];
-
-      // Build where clause based on user role
-      let where = {
-        status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
-      };
-      
-      if (authenticatedUser && authenticatedUser.role === constants.ROLES.USER) {
-        where.userId = authenticatedUser.userId;
-      }
-
-      for (let i = months - 1; i >= 0; i--) {
-        // Calculate target date based on targetYear if provided, otherwise use current year
-        const baseYear = targetYear || currentDate.getFullYear();
-        const baseMonth = currentDate.getMonth();
-        const targetDate = new Date(baseYear, baseMonth - i, 1);
-        const startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
-        const endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
-
-        const monthRevenue = await prisma.paymentWebhook.aggregate({
-          where: {
-            ...where,
-            paymentDate: {
-              gte: startDate,
-              lte: endDate
-            }
-          },
-          _sum: {
-            total: true
-          }
-        });
-
-        revenueData.push({
-          month: targetDate.toLocaleString('default', { month: 'long' }),
-          revenue: monthRevenue._sum.total || 0,
-          year: targetDate.getFullYear()
-        });
-      }
-      res.json({
-        success: true,
-        data: revenueData
-      });
-    } catch (error) {
-      console.error('Error getting revenue impact:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch revenue impact data',
         error: error.message
       });
     }
@@ -660,105 +600,6 @@ class AdminDashboardController {
       return res.status(500).json({
         success: false,
         message: 'Failed to fetch revenue counts',
-        error: error.message
-      });
-    }
-  }
-
-  // Calculate Lost Revenue for all lost customers
-  // Lost Revenue = Average Transaction × LTV (in months)
-  getLostRevenue = async (req, res) => {
-    try {
-      const authenticatedUser = req.user;
-
-      // Build where clause based on user role
-      let where = {};
-      if (authenticatedUser.role === constants.ROLES.USER) {
-        where.userId = authenticatedUser.userId;
-      }
-
-      // Get all customers based on user role
-      const lostCustomers = await prisma.customerUser.findMany({
-        where: {
-          ...(authenticatedUser.role === constants.ROLES.USER && { userId: authenticatedUser.userId })
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              customerFullName: true,
-              userId: true
-            }
-          }
-        }
-      });
-
-      let totalLostRevenue = 0;
-      let averageLTV = 0;
-      const customerDetails = [];
-
-      for (const customerUser of lostCustomers) {
-        const customerId = customerUser.customer.id;
-        // Use customer creation date from customers table instead of customerUser table
-        const customerCreatedDate = new Date(customerUser.customer.createdAt || customerUser.createdAt);
-        const currentDate = new Date();
-
-        // Calculate months active (LTV in months)
-        const monthsActive = Math.max(1, Math.ceil((currentDate - customerCreatedDate) / (1000 * 60 * 60 * 24 * 30)));
-
-        // Get all payments for this customer
-        const customerPayments = await prisma.paymentWebhook.findMany({
-          where: {
-            customerId: customerId,
-            status: constants.PAYMENT_STATUS.SUCCESS
-          },
-          select: {
-            total: true
-          }
-        });
-
-        if (customerPayments.length > 0) {
-          // Calculate average payment amount
-          const totalSpent = customerPayments.reduce((sum, payment) => sum + (payment.total || 0), 0);
-          const averagePayment = totalSpent / customerPayments.length;
-
-          // Calculate lost revenue for this customer
-          const customerLostRevenue = averagePayment * monthsActive;
-          totalLostRevenue += customerLostRevenue;
-
-          customerDetails.push({
-            customerId: customerId,
-            customerName: customerUser.customer.customerFullName,
-            createdDate: customerCreatedDate,
-            monthsActive: monthsActive,
-            totalPayments: customerPayments.length,
-            totalSpent: totalSpent,
-            averagePayment: Math.round(averagePayment * 100) / 100,
-            lostRevenue: Math.round(customerLostRevenue * 100) / 100
-          });
-        }
-      }
-
-      // Calculate average LTV across all lost customers
-      if (customerDetails.length > 0) {
-        averageLTV = customerDetails.reduce((sum, customer) => sum + customer.monthsActive, 0) / customerDetails.length;
-      }
-
-      return res.json({
-        success: true,
-        data: {
-          totalLostRevenue: Math.round(totalLostRevenue * 100) / 100,
-          averageLTV: Math.round(averageLTV * 100) / 100,
-          lostCustomersCount: lostCustomers.length,
-          customerDetails: customerDetails
-        }
-      });
-
-    } catch (error) {
-      console.error('Error calculating lost revenue:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to calculate lost revenue',
         error: error.message
       });
     }
@@ -1380,113 +1221,12 @@ class AdminDashboardController {
     }
   }
 
-  // Get admin summary
-  getAdminSummary = async (req, res) => {
-    try {
-      const totalAdmins = await prisma.user.count({
-        where: {
-          role: constants.ROLES.ADMIN
-        }
-      });
-
-      const totalBusinessOwners = await prisma.user.count({
-        where: {
-          role: constants.ROLES.USER
-        }
-      });
-
-      const totalCustomers = await prisma.customers.count();
-
-      const totalRevenue = await prisma.paymentWebhook.aggregate({
-        where: {
-          status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
-        },
-        _sum: {
-          total: true
-        }
-      });
-
-      const response = {
-        success: true,
-        data: {
-          totalAdmins,
-          totalBusinessOwners,
-          totalCustomers,
-          totalRevenue: totalRevenue._sum.total || 0,
-          summary: [
-            {
-              label: 'Admins',
-              count: totalAdmins,
-              icon: '👥'
-            },
-            {
-              label: 'Business Owners',
-              count: totalBusinessOwners,
-              icon: '🏢'
-            },
-            {
-              label: 'Customers',
-              count: totalCustomers,
-              icon: '👤'
-            },
-            {
-              label: 'Total Revenue',
-              count: `$${(totalRevenue._sum.amount || 0).toLocaleString()}`,
-              icon: '💰'
-            }
-          ]
-        }
-      };
-
-      res.json(response);
-    } catch (error) {
-      console.error('Error getting admin summary:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch admin summary',
-        error: error.message
-      });
-    }
-  }
-
-  // Get dashboard overview (all metrics in one call)
-  getDashboardOverview = async (req, res) => {
-    try {
-      const [monthlyPerformance, revenueImpact, customerStatus, adminSummary, qrAnalytics] = await Promise.all([
-        this.getMonthlyPerformanceData(req),
-        this.getRevenueImpactData(req),
-        this.getCustomerStatusData(req),
-        this.getAdminSummaryData(req),
-        this.getQRCodeAnalyticsData(req)
-      ]);
-
-      res.json({
-        success: true,
-        data: {
-          monthlyPerformance,
-          revenueImpact,
-          customerStatus,
-          adminSummary,
-          qrAnalytics
-        }
-      });
-    } catch (error) {
-      console.error('Error getting dashboard overview:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch dashboard overview',
-        error: error.message
-      });
-    }
-  }
-
   // Helper methods for dashboard overview
   async getMonthlyPerformanceData(req) {
     const authenticatedUser = req.user;
-    const { month, year } = req.query;
     const currentDate = new Date();
-    const targetMonth = month || currentDate.getMonth() + 1;
-    const targetYear = year || currentDate.getFullYear();
+    const targetMonth = currentDate.getMonth() + 1;
+    const targetYear = currentDate.getFullYear();
 
     const startDate = new Date(targetYear, targetMonth - 1, 1);
     const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59);
@@ -1604,53 +1344,6 @@ class AdminDashboardController {
     };
   }
 
-  async getRevenueImpactData(req) {
-    const { months = 7 } = req.query;
-    const currentDate = new Date();
-    
-    // Calculate date range for the specified number of months
-    const startMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - (months - 1), 1);
-    const endMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59);
-
-    // Single optimized query to get all revenue data for the specified months
-    const revenueQuery = `
-      SELECT 
-        EXTRACT(YEAR FROM "createdAt") as year,
-        EXTRACT(MONTH FROM "createdAt") as month,
-        SUM(amount) as total_revenue
-      FROM "payments"
-      WHERE "createdAt" >= $1 AND "createdAt" <= $2
-      GROUP BY EXTRACT(YEAR FROM "createdAt"), EXTRACT(MONTH FROM "createdAt")
-      ORDER BY year, month
-    `;
-
-    const revenueResults = await prisma.$queryRawUnsafe(revenueQuery, startMonth, endMonth);
-
-    // Create a map for quick lookup of revenue by year-month
-    const revenueMap = {};
-    revenueResults.forEach(result => {
-      const key = `${result.year}-${result.month}`;
-      revenueMap[key] = Number(result.total_revenue) || 0;
-    });
-
-    // Build the response array with the same structure as before
-    const revenueData = [];
-    for (let i = months - 1; i >= 0; i--) {
-      const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-      const year = targetDate.getFullYear();
-      const month = targetDate.getMonth() + 1; // getMonth() returns 0-11, we need 1-12
-      const key = `${year}-${month}`;
-
-      revenueData.push({
-        month: targetDate.toLocaleString('default', { month: 'long' }),
-        revenue: revenueMap[key] || 0,
-        year: year
-      });
-    }
-
-    return revenueData;
-  }
-
   async getCustomerStatusData(req) {
     const totalCustomers = await prisma.customers.count();
     const threeMonthsAgo = new Date();
@@ -1715,62 +1408,6 @@ class AdminDashboardController {
           count: recoveredCustomers,
           percentage: totalCustomers > 0 ? ((recoveredCustomers / totalCustomers) * 100).toFixed(1) : 0,
           color: constants.CUSTOMER_STATUS_COLORS.Recovered
-        }
-      ]
-    };
-  }
-
-  async getAdminSummaryData(req) {
-    const authenticatedUser = req.user;
-    
-    // Build where clause based on user role
-    let where = {
-      status: constants.PAYMENT_STATUS.SUCCESS // Only count successful payments
-    };
-    
-    if (authenticatedUser && authenticatedUser.role === constants.ROLES.USER) {
-      where.userId = authenticatedUser.userId;
-    }
-
-    const [totalAdmins, totalBusinessOwners, totalCustomers, totalRevenue] = await Promise.all([
-      prisma.user.count({ where: { role: constants.ROLES.ADMIN } }),
-      prisma.user.count({ where: { role: constants.ROLES.USER } }),
-      prisma.customers.count({
-        where: authenticatedUser && authenticatedUser.role === constants.ROLES.USER 
-          ? { userId: authenticatedUser.userId }
-          : {}
-      }),
-      prisma.paymentWebhook.aggregate({
-        where: where,
-        _sum: { total: true }
-      })
-    ]);
-
-    return {
-      totalAdmins,
-      totalBusinessOwners,
-      totalCustomers,
-      totalRevenue: totalRevenue._sum.total || 0,
-      summary: [
-        {
-          label: 'Admins',
-          count: totalAdmins,
-          icon: '👥'
-        },
-        {
-          label: 'Business Owners',
-          count: totalBusinessOwners,
-          icon: '🏢'
-        },
-        {
-          label: 'Customers',
-          count: totalCustomers,
-          icon: '👤'
-        },
-        {
-          label: 'Total Revenue',
-          count: `$${(totalRevenue._sum.amount || 0).toLocaleString()}`,
-          icon: '💰'
         }
       ]
     };
@@ -1907,9 +1544,7 @@ class AdminDashboardController {
   async getQRCodeAnalyticsData(req) {
     try {
       const authenticatedUser = req.user;
-      const { period = 'monthly' } = req.query;
-      
-      // Use common helper function
+      const period = 'monthly';
       const { startDate, endDate } = this.calculateDateRange(period);
       
       let where = {};

@@ -17,7 +17,6 @@ const paymentRoutes = require('./routes/payments');
 const qrRoutes = require('./routes/qr');
 const supportRoutes = require('./routes/support');
 const userRoutes = require('./routes/users');
-const referralRoutes = require('./routes/referrals');
 const customerRoutes = require('./routes/customers');
 const staffRoutes = require('./routes/staff');
 const staffServiceRoutes = require('./routes/staffServices');
@@ -38,6 +37,8 @@ const cronJobRoutes = require('./routes/cronJobs');
 const n8nTestRoutes = require('./routes/n8nTest');
 const waitlistRoutes = require('./routes/waitlist');
 const businessOperatingHoursRoutes = require('./routes/businessOperatingHours');
+const swaggerUi = require('swagger-ui-express');
+const swaggerDocument = require('./docs/swaggerDoc');
 
 const app = express();
 
@@ -75,8 +76,22 @@ const loginLimiter = rateLimit({
 // Apply login rate limit only to auth routes
 // app.use('/api/auth/', loginLimiter);
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
+// Body parsing middleware – accept empty/whitespace JSON as {} (avoids 500 when Postman sends "raw JSON" with no body)
+app.use((req, res, next) => {
+  const isJson = req.headers['content-type']?.includes('application/json');
+  if (!isJson) return express.json({ limit: '10mb' })(req, res, next);
+  let data = '';
+  req.setEncoding('utf8');
+  req.on('data', (chunk) => { data += chunk; });
+  req.on('end', () => {
+    try {
+      req.body = (data.trim() === '') ? {} : JSON.parse(data);
+      next();
+    } catch (e) {
+      next(e);
+    }
+  });
+});
 app.use(express.urlencoded({ extended: true }));
 
 // Trust proxy for proper IP address handling
@@ -92,13 +107,18 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Swagger API documentation (OpenAPI 3.0 – aligns with USER_API_ENDPOINTS.md & ADMIN_API_ENDPOINTS.md)
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Plusfive API Docs',
+}));
+
 // API routes
 app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/referrals', referralRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/staff', staffServiceRoutes);
@@ -132,7 +152,15 @@ app.use('*', (req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
-  
+
+  // JSON parse error (e.g. empty body with Content-Type: application/json)
+  if (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.statusCode === 400)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or empty JSON body. For endpoints that need no body, set Body to "none" in Postman or send valid JSON.'
+    });
+  }
+
   if (err.name === 'ValidationError') {
     return res.status(400).json({
       success: false,
@@ -140,14 +168,14 @@ app.use((err, req, res, next) => {
       errors: err.errors
     });
   }
-  
+
   if (err.name === 'UnauthorizedError') {
     return res.status(401).json({
       success: false,
       message: 'Unauthorized'
     });
   }
-  
+
   res.status(500).json({
     success: false,
     message: 'Internal server error'
@@ -163,6 +191,7 @@ if (require.main === module) {
     console.log(`🚀 Server running on http://${HOST}:${PORT}`);
     console.log(`📊 Environment: ${config.server.environment}`);
     console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
+    console.log(`📖 Swagger docs: http://${HOST}:${PORT}/api-docs`);
     console.log(`📝 Log level: ${config.logging.level}`);
     
     // Start Cron Jobs after server is running

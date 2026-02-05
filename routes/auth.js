@@ -6,9 +6,7 @@ const {
   verifyEmail, 
   resendVerification, 
   forgotPassword, 
-  resetPassword, 
-  changePassword, 
-  accountSoftDelete
+  resetPassword
 } = require('../controllers/authController');
 const { validateRequest } = require('../middleware/validation');
 const { 
@@ -16,10 +14,8 @@ const {
   userLoginSchema, 
   resendVerificationSchema, 
   forgotPasswordSchema, 
-  resetPasswordSchema, 
-  changePasswordSchema 
+  resetPasswordSchema
 } = require('../lib/validations');
-const { authenticateToken } = require('../middleware/auth');
 
 // POST /api/auth/register - User registration
 // router.post('/register', validateRequest(userRegistrationSchema), register);
@@ -39,12 +35,5 @@ router.post('/forgot-password', validateRequest(forgotPasswordSchema), forgotPas
 
 // POST /api/auth/reset-password/:token - Reset password
 router.post('/reset-password/:token', validateRequest(resetPasswordSchema), resetPassword);
-
-// POST /api/auth/change-password - Change password (authenticated)
-router.post('/change-password', authenticateToken, validateRequest(changePasswordSchema), changePassword);
-
-
-// POST /api/auth/account-soft-delete - Active account (authenticated)
-router.post('/account-soft-delete', authenticateToken, accountSoftDelete);
 
 module.exports = router; 

@@ -53,10 +53,6 @@ model User {
   emailVerifications EmailVerification[]
   passwordResets    PasswordReset[]
   
-  // Referral relations
-  referralsGiven    Referral[] @relation("Referrer")
-  referralsReceived Referral[] @relation("ReferredUser")
-  
   // Customer relations
   customers         Customers[]      // New customers table relation
   appointments      Appointment[]    // Appointments relation
@@ -164,32 +160,6 @@ model SupportTicket {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("support_tickets")
-}
-
-model Referral {
-  id                    String   @id @default(cuid())
-  status               String   @default("pending") // pending, active, cancelled
-  commission           Float    @default(0)
-  totalCommissionEarned Float    @default(0) // Total commission earned from this referral
-  date                 DateTime @default(now())
-  
-  // Stripe integration fields
-  stripeCouponId       String?  // Stripe coupon ID
-  stripePromotionCodeId String? // Stripe promotion code ID  
-  promotionCode        String?  // The actual promotion code (e.g., PLUS5-partnerId)
-  
-  // Commission tracking
-  invoicesPaid         Int      @default(0) // Number of invoices paid using this promotion
-  lastCommissionDate   DateTime? // Last time commission was calculated
-  
-  // Relations
-  referrerId     String
-  referrer       User     @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
-  
-  referredUserId String
-  referredUser   User     @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
-
-  @@map("referrals")
 }
 
 // New Customers table - Simple customer information
