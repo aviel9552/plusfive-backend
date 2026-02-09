@@ -893,11 +893,12 @@ const getAllCustomers = async (req, res) => {
         GROUP BY "customerId"
       ) appointment_counts ON c.id = appointment_counts."customerId"
       LEFT JOIN (
-        SELECT DISTINCT ON ("customerId")
-          "customerId",
-          "selectedServices" as last_appointment_service
-        FROM "appointments"
-        ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
+        SELECT DISTINCT ON (a."customerId")
+          a."customerId",
+          s."name" as last_appointment_service
+        FROM "appointments" a
+        LEFT JOIN "services" s ON a."serviceId" = s.id
+        ORDER BY a."customerId", a."updatedAt" DESC, a."createdAt" DESC
       ) last_appointment_service ON c.id = last_appointment_service."customerId"
       LEFT JOIN (
         SELECT DISTINCT ON (a."customerId")
@@ -981,7 +982,6 @@ const getAllCustomers = async (req, res) => {
         select: {
           id: true,
           customerId: true,
-          selectedServices: true,
           serviceId: true,
           appointmentStatus: true,
           startDate: true,
@@ -1032,28 +1032,8 @@ const getAllCustomers = async (req, res) => {
           appointmentsByCustomer[appointment.customerId] = [];
         }
         
-        // selectedServices: prefer service name from serviceId, fallback to appointment.selectedServices
-        let selectedServicesString = '';
-        if (appointment.service?.name) {
-          selectedServicesString = appointment.service.name;
-        } else if (appointment.selectedServices) {
-          if (Array.isArray(appointment.selectedServices)) {
-            selectedServicesString = appointment.selectedServices.join(', ');
-          } else if (typeof appointment.selectedServices === 'string') {
-            try {
-              const parsed = JSON.parse(appointment.selectedServices);
-              if (Array.isArray(parsed)) {
-                selectedServicesString = parsed.join(', ');
-              } else {
-                selectedServicesString = appointment.selectedServices;
-              }
-            } catch {
-              selectedServicesString = appointment.selectedServices;
-            }
-          } else {
-            selectedServicesString = String(appointment.selectedServices);
-          }
-        }
+        // Use service name from service relation
+        const selectedServicesString = appointment.service?.name ?? '';
 
         appointmentsByCustomer[appointment.customerId].push({
           selectedServices: selectedServicesString,
@@ -1285,11 +1265,12 @@ const getTenCustomers = async (req, res) => {
         GROUP BY "customerId"
       ) appointment_counts ON c.id = appointment_counts."customerId"
       LEFT JOIN (
-        SELECT DISTINCT ON ("customerId")
-          "customerId",
-          "selectedServices" as last_appointment_service
-        FROM "appointments"
-        ORDER BY "customerId", "updatedAt" DESC, "createdAt" DESC
+        SELECT DISTINCT ON (a."customerId")
+          a."customerId",
+          s."name" as last_appointment_service
+        FROM "appointments" a
+        LEFT JOIN "services" s ON a."serviceId" = s.id
+        ORDER BY a."customerId", a."updatedAt" DESC, a."createdAt" DESC
       ) last_appointment_service ON c.id = last_appointment_service."customerId"
       LEFT JOIN (
         SELECT DISTINCT ON (a."customerId")
@@ -1651,12 +1632,13 @@ const getCustomerById = async (req, res) => {
       }
     });
 
-    // Get ALL appointments for this customer
+    // Get ALL appointments for this customer (include service name for display)
     const appointments = await prisma.appointment.findMany({
       where: {
         customerId: customer.id,
         userId: customer.userId // Match with business owner
       },
+      include: { service: { select: { name: true } } },
       orderBy: { createdAt: 'desc' }
       // Removed take: 10 to get all appointments
     });
@@ -1741,7 +1723,7 @@ const getCustomerById = async (req, res) => {
         updatedAt: true,
         startDate: true,
         endDate: true,
-        selectedServices: true
+        service: { select: { name: true } }
       }
     });
 
@@ -1773,7 +1755,7 @@ const getCustomerById = async (req, res) => {
       reviews: customerReviews,
       lastRating: lastRating,
       lastVisit: lastVisit?.updatedAt || null,
-      lastAppointmentService: lastVisit?.selectedServices || null,
+      lastAppointmentService: lastVisit?.service?.name ?? null,
       lastAppointmentDetails: lastVisit,
       appointments: appointments,
       paymentHistory: paymentHistory,

@@ -189,7 +189,7 @@ const createStaff = async (req, res) => {
       }
     });
 
-    // Assign all business services to the new staff by default
+    // Assign all business services to the new staff by default (same as business settings)
     const businessServices = await prisma.service.findMany({
       where: { businessId: userId },
       select: { id: true }
@@ -204,7 +204,34 @@ const createStaff = async (req, res) => {
       });
     }
 
-    // Fetch staff with staffServices for response
+    // Set default staff working hours from business operating hours (same as business settings)
+    const businessOperatingHours = await prisma.businessOperatingHours.findMany({
+      where: { userId },
+      orderBy: [{ day: 'asc' }, { startTime: 'asc' }]
+    });
+    if (businessOperatingHours.length > 0) {
+      const staffHoursFromBusiness = businessOperatingHours
+        .map((boh) => {
+          const startTime = boh.startTime;
+          const endTime = boh.endTime ?? boh.ending ?? boh.end;
+          if (!boh.day || !startTime || !endTime) return null;
+          return {
+            staffId: staff.id,
+            day: boh.day,
+            startTime,
+            endTime,
+            isActive: boh.isActive !== false
+          };
+        })
+        .filter(Boolean);
+      if (staffHoursFromBusiness.length > 0) {
+        await prisma.staffOperatingHours.createMany({
+          data: staffHoursFromBusiness
+        });
+      }
+    }
+
+    // Fetch staff with staffServices and operatingHours for response
     const staffWithServices = await prisma.staff.findUnique({
       where: { id: staff.id },
       include: {
@@ -217,11 +244,31 @@ const createStaff = async (req, res) => {
         },
         staffServices: {
           include: { service: true }
+        },
+        operatingHours: {
+          orderBy: [
+            { day: 'asc' },
+            { startTime: 'asc' }
+          ]
         }
       }
     });
 
-    return successResponse(res, staffWithServices, 'Staff created successfully', 201);
+    // Transform operating hours to workingHours object for frontend (same shape as getAllStaff / getStaffById)
+    const workingHours = {};
+    (staffWithServices.operatingHours || []).forEach(oh => {
+      workingHours[oh.day] = {
+        startTime: oh.startTime,
+        endTime: oh.endTime,
+        active: oh.isActive
+      };
+    });
+    const response = {
+      ...staffWithServices,
+      workingHours
+    };
+
+    return successResponse(res, response, 'Staff created successfully', 201);
 
   } catch (error) {
     console.error('Create staff error:', error);

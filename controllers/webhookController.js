@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { calculateRecurringDates: getRecurringDates } = require('../lib/recurrenceHelper');
@@ -169,8 +170,7 @@ const handleAppointmentWebhook = async (req, res) => {
       createDate: parseDateSafely(webhookData.CreateDate),
       customerId: customerId,
       userId: userId,
-      customerNote: webhookData.CustomerNote || null,
-      selectedServices: webhookData.SelectedServices || null
+      customerNote: webhookData.CustomerNote || null
     };
 
     const newAppointment = await prisma.appointment.create({
@@ -1500,8 +1500,7 @@ const getPaymentWebhookById = async (req, res) => {
             customerFullName: true,
             startDate: true,
             endDate: true,
-            duration: true,
-            selectedServices: true
+            duration: true
           }
         }
       }
@@ -1550,8 +1549,7 @@ const getPaymentWebhooksByCustomerId = async (req, res) => {
             customerFullName: true,
             startDate: true,
             endDate: true,
-            duration: true,
-            selectedServices: true
+            duration: true
           }
         }
       },
@@ -2014,7 +2012,6 @@ const createAppointment = async (req, res) => {
       duration,
       staffId, // Staff table ID (String)
       serviceId, // Service table ID (String)
-      selectedServices,
       source,
       recurringType,   // SERVICE TYPE: Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
       recurringDuration // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
@@ -2186,6 +2183,20 @@ const createAppointment = async (req, res) => {
       }
     }
 
+    // Validate that staff has the service assigned (when both staffId and serviceId are provided)
+    if (finalStaffId && finalServiceId) {
+      const staffService = await prisma.staffService.findFirst({
+        where: {
+          staffId: finalStaffId,
+          serviceId: finalServiceId,
+          isActive: true
+        }
+      });
+      if (!staffService) {
+        return errorResponse(res, 'Staff does not have this service assigned. Please assign the service to the staff member first.', 400);
+      }
+    }
+
     // Do not create appointment if staff or business are not available on this date/time
     const pad = (n) => String(n).padStart(2, '0');
     const startDateStr = `${parsedStartDate.getFullYear()}-${pad(parsedStartDate.getMonth() + 1)}-${pad(parsedStartDate.getDate())}`;
@@ -2208,17 +2219,17 @@ const createAppointment = async (req, res) => {
     }
 
     // Create appointment (legacy fields removed - use relations)
+    const now = new Date();
     const appointmentData = {
       source: source || 'calendar',
       endDate: parsedEndDate,
       duration: duration || null,
       startDate: parsedStartDate,
-      createDate: new Date(),
+      createDate: now,
       customerId: finalCustomerId,
       userId: finalUserId,
       staffId: finalStaffId,
       serviceId: finalServiceId,
-      selectedServices: selectedServices || null,
       recurringType: recurringType || null,
       recurringDuration: recurringDuration || null
     };
@@ -2262,6 +2273,11 @@ const createAppointment = async (req, res) => {
       }
     });
 
+    // Set queueTimeDate via raw SQL (works even if Prisma client not regenerated)
+    await prisma.$executeRaw`
+      UPDATE appointments SET "queueTimeDate" = ${now} WHERE id = ${newAppointment.id}
+    `;
+
     // Update customer appointment count
     if (finalCustomerId) {
       await prisma.customers.update({
@@ -2304,7 +2320,6 @@ const createRecurringAppointments = async (req, res) => {
       duration,
       staffId,
       serviceId,
-      selectedServices,
       source,
       recurringType,
       recurringDuration,
@@ -2455,6 +2470,8 @@ const createRecurringAppointments = async (req, res) => {
       service: { select: { id: true, name: true, duration: true, price: true, color: true } },
     };
 
+    const queueTime = new Date();
+    const recurringGroupId = crypto.randomUUID(); // Same for entire series (for "cancel entire series")
     const created = [];
     for (const dateStr of dateStrings) {
       const [y, m, d] = dateStr.split('-').map(Number);
@@ -2467,17 +2484,20 @@ const createRecurringAppointments = async (req, res) => {
           startDate: startDateForSlot,
           endDate: endDateForSlot,
           duration: duration || null,
-          createDate: new Date(),
+          createDate: queueTime,
           customerId: finalCustomerId,
           userId: finalUserId,
           staffId: finalStaffId,
           serviceId: finalServiceId,
-          selectedServices: selectedServices || null,
           recurringType: recurringType || null,
           recurringDuration: recurringDuration || null,
         },
         include: includeRelations,
       });
+      // Set queueTimeDate and recurringGroupId via raw SQL (works even if Prisma client not regenerated)
+      await prisma.$executeRaw`
+        UPDATE appointments SET "queueTimeDate" = ${queueTime}, "recurringGroupId" = ${recurringGroupId} WHERE id = ${newAppointment.id}
+      `;
       created.push(newAppointment);
     }
 
@@ -2521,7 +2541,6 @@ const updateAppointment = async (req, res) => {
       duration,
       staffId,
       serviceId,
-      selectedServices,
       source,
       customerNote
     } = req.body;
@@ -2581,7 +2600,6 @@ const updateAppointment = async (req, res) => {
     if (duration !== undefined) updateData.duration = duration;
     if (staffId !== undefined) updateData.staffId = staffId || null;
     if (serviceId !== undefined) updateData.serviceId = serviceId || null;
-    if (selectedServices !== undefined) updateData.selectedServices = selectedServices || null;
     if (source !== undefined) updateData.source = source;
     if (customerNote !== undefined) updateData.customerNote = customerNote || null;
 
@@ -2593,6 +2611,22 @@ const updateAppointment = async (req, res) => {
     // Log update data for debugging
     if (Object.keys(updateData).length === 0) {
       return errorResponse(res, 'No fields to update', 400);
+    }
+
+    // Validate that staff has the service assigned (when both staffId and serviceId will be set)
+    const finalStaffId = Object.prototype.hasOwnProperty.call(updateData, 'staffId') ? updateData.staffId : appointment.staffId;
+    const finalServiceId = Object.prototype.hasOwnProperty.call(updateData, 'serviceId') ? updateData.serviceId : appointment.serviceId;
+    if (finalStaffId && finalServiceId) {
+      const staffService = await prisma.staffService.findFirst({
+        where: {
+          staffId: finalStaffId,
+          serviceId: finalServiceId,
+          isActive: true
+        }
+      });
+      if (!staffService) {
+        return errorResponse(res, 'Staff does not have this service assigned. Please assign the service to the staff member first.', 400);
+      }
     }
 
     console.log('Updating appointment:', { id, updateData });
@@ -2638,11 +2672,30 @@ const updateAppointment = async (req, res) => {
   }
 };
 
+// Same logic as frontend isPastAppointment: true if appointment date is past or same day and end time has passed
+const isPastAppointment = (apt) => {
+  if (!apt || !apt.startDate) return false;
+  const now = new Date();
+  const start = new Date(apt.startDate);
+  if (isNaN(start.getTime())) return false;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const apptDay = new Date(start);
+  apptDay.setHours(0, 0, 0, 0);
+  if (apptDay.getTime() < today.getTime()) return true;
+  if (apptDay.getTime() > today.getTime()) return false;
+  const endDate = apt.endDate ? new Date(apt.endDate) : null;
+  if (!endDate || isNaN(endDate.getTime())) return false;
+  return endDate <= now;
+};
+
 // Update appointment status only (authenticated users only)
+// Body: { appointmentStatus, cancelScope? } — cancelScope: 'this' | 'series'. When cancelling, 'series' cancels all in same recurring group.
+// Status change allowed only for future appointments (start date >= today and end time > now), same as frontend.
 const updateAppointmentStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { appointmentStatus } = req.body;
+    const { appointmentStatus, cancelScope } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -2670,6 +2723,11 @@ const updateAppointmentStatus = async (req, res) => {
 
     if (!appointment) {
       return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    // Allow status change only if appointment is not past (same rule as frontend isPastAppointment)
+    if (isPastAppointment(appointment)) {
+      return errorResponse(res, 'Cannot change status of past appointments. Only future appointments can be updated.', 400);
     }
 
     const includeRelations = {
@@ -2705,6 +2763,56 @@ const updateAppointmentStatus = async (req, res) => {
       }
     };
 
+    const isCancelling = (appointmentStatus || '').toLowerCase() === 'cancelled';
+    const scope = (cancelScope && String(cancelScope).toLowerCase() === 'series') ? 'series' : 'this';
+
+    // Cancel entire recurring series: only booked appointments that are not past (same rule as frontend)
+    if (isCancelling && scope === 'series' && appointment.recurringGroupId) {
+      const whereBooked = {
+        recurringGroupId: appointment.recurringGroupId,
+        appointmentStatus: constants.APPOINTMENT_STATUS.BOOKED,
+        ...(userRole !== constants.ROLES.ADMIN ? { userId } : {})
+      };
+      const bookedInSeries = await prisma.appointment.findMany({
+        where: whereBooked,
+        select: { id: true, startDate: true, endDate: true },
+        orderBy: { startDate: 'asc' }
+      });
+      const toUpdate = bookedInSeries.filter((a) => !isPastAppointment(a));
+      const actualCount = toUpdate.length;
+      if (actualCount === 0) {
+        const updatedAppointment = await prisma.appointment.findUnique({
+          where: { id },
+          include: includeRelations
+        });
+        return successResponse(res, {
+          ...updatedAppointment,
+          _cancelledCount: 0,
+          cancelledAppointments: []
+        }, 'All appointments in this series were already cancelled');
+      }
+      const idsUpdated = toUpdate.map((a) => a.id);
+      await prisma.appointment.updateMany({
+        where: { id: { in: idsUpdated } },
+        data: { appointmentStatus: constants.APPOINTMENT_STATUS.CANCELLED }
+      });
+      const cancelledAppointments = await prisma.appointment.findMany({
+        where: { id: { in: idsUpdated } },
+        include: includeRelations,
+        orderBy: { startDate: 'asc' }
+      });
+      const updatedAppointment = await prisma.appointment.findUnique({
+        where: { id },
+        include: includeRelations
+      });
+      return successResponse(res, {
+        ...updatedAppointment,
+        _cancelledCount: actualCount,
+        cancelledAppointments
+      }, `Cancelled ${actualCount} appointment(s) in series`);
+    }
+
+    // Single appointment (or this occurrence only)
     let updatedAppointment;
     try {
       updatedAppointment = await prisma.appointment.update({
@@ -2713,7 +2821,6 @@ const updateAppointmentStatus = async (req, res) => {
         include: includeRelations
       });
     } catch (updateErr) {
-      // Fallback: if Prisma client doesn't know appointmentStatus (e.g. old client cache), use raw SQL
       if (updateErr.message && updateErr.message.includes('Unknown argument `appointmentStatus`')) {
         await prisma.$executeRaw`
           UPDATE appointments

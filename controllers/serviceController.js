@@ -82,7 +82,7 @@ const getServiceById = async (req, res) => {
 // Create new service
 const createService = async (req, res) => {
   try {
-    const { name, notes, category, price, duration, color, hideFromClients, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
+    const { name, notes, category, categoryId, price, duration, color, hideFromClients, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
     const userId = req.user.userId;
 
     // Validate required fields
@@ -121,21 +121,37 @@ const createService = async (req, res) => {
       return errorResponse(res, subscriptionMessage || 'No active subscription found. Please subscribe to create services.', 403);
     }
 
-    // Create service
+    // Validate categoryId if provided
+    if (categoryId) {
+      const categoryExists = await prisma.category.findFirst({
+        where: {
+          id: categoryId,
+          userId,
+          isDeleted: false
+        }
+      });
+      if (!categoryExists) {
+        return errorResponse(res, 'Category not found', 404);
+      }
+    }
+
+    // Create service (categoryId set via raw SQL - Prisma client may not include it until regenerated)
+    const serviceData = {
+      name: name.trim(),
+      notes: notes?.trim() || null,
+      category: category?.trim() || null,
+      price: parseFloat(price),
+      duration: parseInt(duration),
+      color: color || '#FF257C',
+      hideFromClients: hideFromClients || false,
+      earliestTimeToBook: earliestTimeToBook?.trim() || null,
+      latestTimeToBook: latestTimeToBook?.trim() || null,
+      availableDays: Array.isArray(availableDays) ? availableDays : [],
+      businessId: userId
+    };
+
     const service = await prisma.service.create({
-      data: {
-        name: name.trim(),
-        notes: notes?.trim() || null,
-        category: category?.trim() || null,
-        price: parseFloat(price),
-        duration: parseInt(duration),
-        color: color || '#FF257C',
-        hideFromClients: hideFromClients || false,
-        earliestTimeToBook: earliestTimeToBook?.trim() || null,
-        latestTimeToBook: latestTimeToBook?.trim() || null,
-        availableDays: Array.isArray(availableDays) ? availableDays : [],
-        businessId: userId
-      },
+      data: serviceData,
       include: {
         user: {
           select: {
@@ -146,6 +162,31 @@ const createService = async (req, res) => {
         }
       }
     });
+
+    // Assign new service to all active team members by default
+    const activeStaff = await prisma.staff.findMany({
+      where: {
+        businessId: userId,
+        isDeleted: false,
+        isActive: true
+      },
+      select: { id: true }
+    });
+    if (activeStaff.length > 0) {
+      await prisma.staffService.createMany({
+        data: activeStaff.map((s) => ({
+          staffId: s.id,
+          serviceId: service.id,
+          isActive: true
+        }))
+      });
+    }
+
+    // Set categoryId via raw SQL (Prisma client may not support it until prisma generate is run)
+    if (categoryId) {
+      await prisma.$executeRaw`UPDATE "services" SET "categoryId" = ${categoryId} WHERE id = ${service.id}`;
+      service.categoryId = categoryId;
+    }
 
     return successResponse(res, service, 'Service created successfully', 201);
 
@@ -159,7 +200,7 @@ const createService = async (req, res) => {
 const updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, notes, category, price, duration, color, hideFromClients, isActive, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
+    const { name, notes, category, categoryId, price, duration, color, hideFromClients, isActive, earliestTimeToBook, latestTimeToBook, availableDays } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -212,11 +253,27 @@ const updateService = async (req, res) => {
       return errorResponse(res, 'Duration must be a valid positive number', 400);
     }
 
+    // Validate categoryId if provided
+    if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+      const categoryExists = await prisma.category.findFirst({
+        where: {
+          id: categoryId,
+          userId,
+          isDeleted: false
+        }
+      });
+      if (!categoryExists) {
+        return errorResponse(res, 'Category not found', 404);
+      }
+    }
+
     // Build update data
     const updateData = {};
     if (name !== undefined) updateData.name = name.trim();
     if (notes !== undefined) updateData.notes = notes?.trim() || null;
     if (category !== undefined) updateData.category = category?.trim() || null;
+    // categoryId: handled separately via raw SQL (Prisma client may not include it until regenerated)
+    const categoryIdToSet = categoryId !== undefined ? (categoryId || null) : undefined;
     if (price !== undefined) updateData.price = parseFloat(price);
     if (duration !== undefined) updateData.duration = parseInt(duration);
     if (color !== undefined) updateData.color = color || '#FF257C';
@@ -240,6 +297,12 @@ const updateService = async (req, res) => {
         }
       }
     });
+
+    // Update categoryId via raw SQL (Prisma client may not support it until prisma generate is run)
+    if (categoryIdToSet !== undefined) {
+      await prisma.$executeRaw`UPDATE "services" SET "categoryId" = ${categoryIdToSet} WHERE id = ${id}`;
+      service.categoryId = categoryIdToSet;
+    }
 
     return successResponse(res, service, 'Service updated successfully');
 
