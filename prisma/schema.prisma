@@ -232,15 +232,18 @@ model Appointment {
   startDate       DateTime?
   createDate      DateTime?
   customerNote    String?  // Customer note for the appointment
-  selectedServices String? // Service names (kept for backward compatibility / webhook data)
   
   // Appointment status: booked, cancelled, scheduled
   appointmentStatus AppointmentStatus @default(booked)
   
   // Recurring: service type (e.g. Every Day, Every Week) and repeat duration (e.g. 1 Week, 2 Months)
-  recurringType    String?  // SERVICE TYPE: Regular Appointment | Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
-  recurringDuration String? // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
-  
+  recurringType     String?  // SERVICE TYPE: Regular Appointment | Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
+  recurringDuration String?  // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
+  recurringGroupId  String?  // Same for all appointments in one recurring series (used for "cancel entire series")
+
+  // Queue: date/time when this appointment was created (e.g. when user created a queue appointment)
+  queueTimeDate     DateTime?
+
   // Relations
   customerId      String?  // Reference to Customers table
   customer        Customers? @relation(fields: [customerId], references: [id])
@@ -260,8 +263,8 @@ model Appointment {
   reviews         Review[] // Reviews for this appointment
   
   // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@map("appointments")
 }
@@ -564,7 +567,8 @@ model Service {
   // Service details
   name              String   // Service name (required)
   notes             String?  // Service notes/description (optional)
-  category          String?  // Service category (optional)
+  category          String?  // Service category name (optional, kept for backward compatibility)
+  categoryId        String?  // Reference to Category table (optional)
   price             Float    // Service price (required)
   duration          Int      // Duration in minutes (required)
   color             String?  // Color code for display (optional, default: #FF257C)
@@ -578,6 +582,9 @@ model Service {
   // Business relation
   businessId        String   // Reference to User table (business owner)
   user              User     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  
+  // Category relation
+  categoryRelation  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   
   // Appointments relation
   appointments      Appointment[] // Appointments using this service
@@ -639,6 +646,9 @@ model Category {
   // Business relation
   userId      String   // Reference to User table (business owner)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Services using this category
+  services    Service[]
   
   // Timestamps
   createdAt   DateTime @default(now())
