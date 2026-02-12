@@ -2218,6 +2218,26 @@ const createAppointment = async (req, res) => {
       );
     }
 
+    // Prevent double-booking: block only if staff already has a non-cancelled appointment at this slot (cancelled slots can be re-booked)
+    if (finalStaffId) {
+      const overlapping = await prisma.appointment.findFirst({
+        where: {
+          staffId: finalStaffId,
+          appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
+          startDate: { lt: parsedEndDate },
+          endDate: { gt: parsedStartDate },
+        },
+        select: { id: true },
+      });
+      if (overlapping) {
+        return errorResponse(
+          res,
+          'This time slot is already booked for this staff. Please choose another time.',
+          400
+        );
+      }
+    }
+
     // Create appointment (legacy fields removed - use relations)
     const now = new Date();
     const appointmentData = {
@@ -2562,6 +2582,25 @@ const updateAppointment = async (req, res) => {
 
     if (!appointment) {
       return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    // Do not allow updating past appointments (same rule as updateAppointmentStatus)
+    const now = new Date();
+    const aptStart = appointment.startDate ? new Date(appointment.startDate) : null;
+    if (aptStart && !isNaN(aptStart.getTime())) {
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
+      const apptDay = new Date(aptStart);
+      apptDay.setHours(0, 0, 0, 0);
+      if (apptDay.getTime() < today.getTime()) {
+        return errorResponse(res, 'Past appointments cannot be updated.', 400);
+      }
+      if (apptDay.getTime() === today.getTime()) {
+        const aptEnd = appointment.endDate ? new Date(appointment.endDate) : null;
+        if (aptEnd && !isNaN(aptEnd.getTime()) && aptEnd <= now) {
+          return errorResponse(res, 'Past appointments cannot be updated.', 400);
+        }
+      }
     }
 
     // Helper function to parse date safely
