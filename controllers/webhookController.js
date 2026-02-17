@@ -2144,11 +2144,26 @@ const createAppointment = async (req, res) => {
     }
 
     // Parse dates
-    const parsedStartDate = parseDateSafely(startDate);
-    const parsedEndDate = parseDateSafely(endDate);
+    let parsedStartDate = parseDateSafely(startDate);
+    let parsedEndDate = parseDateSafely(endDate);
 
     if (!parsedStartDate || !parsedEndDate) {
       return errorResponse(res, 'Invalid date format for startDate or endDate', 400);
+    }
+
+    // Ensure endDate is on the same calendar day as startDate and end > start (prevent bad data like endDate in April)
+    const pad = (n) => String(n).padStart(2, '0');
+    const toDateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const startDay = toDateStr(parsedStartDate);
+    const endDay = toDateStr(parsedEndDate);
+    const durationMinutes = duration ? parseInt(String(duration), 10) : 30;
+    if (startDay !== endDay || parsedEndDate.getTime() <= parsedStartDate.getTime()) {
+      const startH = parsedStartDate.getHours();
+      const startM = parsedStartDate.getMinutes();
+      const endTotalMinutes = startH * 60 + startM + (durationMinutes || 30);
+      const endH = Math.floor(endTotalMinutes / 60) % 24;
+      const endM = endTotalMinutes % 60;
+      parsedEndDate = new Date(parsedStartDate.getFullYear(), parsedStartDate.getMonth(), parsedStartDate.getDate(), endH, endM, 0, 0);
     }
 
     // Validate staffId if provided
@@ -2198,7 +2213,6 @@ const createAppointment = async (req, res) => {
     }
 
     // Do not create appointment if staff or business are not available on this date/time
-    const pad = (n) => String(n).padStart(2, '0');
     const startDateStr = `${parsedStartDate.getFullYear()}-${pad(parsedStartDate.getMonth() + 1)}-${pad(parsedStartDate.getDate())}`;
     const startTimeStr = `${pad(parsedStartDate.getHours())}:${pad(parsedStartDate.getMinutes())}`;
     const endTimeStr = `${pad(parsedEndDate.getHours())}:${pad(parsedEndDate.getMinutes())}`;
@@ -2293,10 +2307,7 @@ const createAppointment = async (req, res) => {
       }
     });
 
-    // Set queueTimeDate via raw SQL (works even if Prisma client not regenerated)
-    await prisma.$executeRaw`
-      UPDATE appointments SET "queueTimeDate" = ${now} WHERE id = ${newAppointment.id}
-    `;
+    // queueTimeDate only when recurringGroupId is set (recurring appointments); for single appointments leave queueTimeDate null
 
     // Update customer appointment count
     if (finalCustomerId) {
@@ -2621,22 +2632,47 @@ const updateAppointment = async (req, res) => {
 
     // Build update data
     const updateData = {};
-    
+    let parsedStartDate = null;
+    let parsedEndDate = null;
+
     if (startDate !== undefined) {
-      const parsedStartDate = parseDateSafely(startDate);
+      parsedStartDate = parseDateSafely(startDate);
       if (parsedStartDate) {
         updateData.startDate = parsedStartDate;
       }
     }
-    
     if (endDate !== undefined) {
-      const parsedEndDate = parseDateSafely(endDate);
+      parsedEndDate = parseDateSafely(endDate);
       if (parsedEndDate) {
         updateData.endDate = parsedEndDate;
       }
     }
-    
     if (duration !== undefined) updateData.duration = duration;
+
+    // Ensure endDate is same calendar day as startDate and end > start (prevent storing bad endDate like April when start is Feb)
+    const finalStart = updateData.startDate || appointment.startDate ? new Date(updateData.startDate || appointment.startDate) : null;
+    const finalEnd = updateData.endDate || appointment.endDate ? new Date(updateData.endDate || appointment.endDate) : null;
+    const durationNum = duration !== undefined ? parseInt(String(duration), 10) : (appointment.duration ? parseInt(String(appointment.duration), 10) : 30);
+    if (finalStart && finalEnd) {
+      const sameDay = finalStart.getFullYear() === finalEnd.getFullYear() &&
+        finalStart.getMonth() === finalEnd.getMonth() &&
+        finalStart.getDate() === finalEnd.getDate();
+      if (!sameDay || finalEnd.getTime() <= finalStart.getTime()) {
+        const startH = finalStart.getHours();
+        const startM = finalStart.getMinutes();
+        const endTotalM = startH * 60 + startM + (durationNum || 30);
+        const endH = Math.floor(endTotalM / 60) % 24;
+        const endM = endTotalM % 60;
+        updateData.endDate = new Date(finalStart.getFullYear(), finalStart.getMonth(), finalStart.getDate(), endH, endM, 0, 0);
+      }
+    } else if (finalStart && !updateData.endDate) {
+      const startH = finalStart.getHours();
+      const startM = finalStart.getMinutes();
+      const endTotalM = startH * 60 + startM + (durationNum || 30);
+      const endH = Math.floor(endTotalM / 60) % 24;
+      const endM = endTotalM % 60;
+      updateData.endDate = new Date(finalStart.getFullYear(), finalStart.getMonth(), finalStart.getDate(), endH, endM, 0, 0);
+    }
     if (staffId !== undefined) updateData.staffId = staffId || null;
     if (serviceId !== undefined) updateData.serviceId = serviceId || null;
     if (source !== undefined) updateData.source = source;
