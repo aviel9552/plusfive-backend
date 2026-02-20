@@ -1,0 +1,79 @@
+N8n Message Trigger APIs – List
+================================
+
+ADD TO AUTOMATIONS (this list only – no other files):
+All items below are the automations to add. Use this file as the single reference.
+
+-----------------------------------------
+1. CLIENT REMINDERS
+-----------------------------------------
+• Send a message 24 hours before the appointment
+  → API: triggerAppointmentReminder24h / POST /api/n8n-test/appointment-reminder-24h
+
+• Send a message 1 hour before the appointment
+  → API: triggerAppointmentReminder1h / POST /api/n8n-test/appointment-reminder-1h
+
+HOW THE BACKEND KNOWS WHEN TO SEND "24 HOURS" VS "1 HOUR" REMINDERS:
+  A scheduled job (cron) runs every few minutes (e.g. every 5 or 15 minutes). It:
+  1. Fetches all upcoming appointments from the database (startDate in the future).
+  2. For each appointment, calculates: time until appointment = (appointment start time − current time).
+  3. If time until appointment is between approximately 23 and 25 hours, it calls the 24h reminder API for that client.
+  4. If time until appointment is between approximately 0.9 and 1.1 hours, it calls the 1h reminder API for that client.
+  In other words: the cron job compares the current time with each appointment’s start time and triggers the appropriate reminder API when the remaining time falls within the correct window.
+
+-----------------------------------------
+2. APPOINTMENT UPDATES
+-----------------------------------------
+• Send a confirmation message after an appointment is successfully booked
+  → API: triggerAppointmentBookedConfirmation / POST /api/n8n-test/appointment-booked-confirmation
+
+• Notify the client if their appointment is changed (by business or by themselves)
+  → API: triggerAppointmentChangedNotification / POST /api/n8n-test/appointment-changed
+
+• Notify the client if their appointment is canceled (by themselves or by the business)
+  → API: triggerAppointmentCanceledNotification / POST /api/n8n-test/appointment-canceled
+
+-----------------------------------------
+3. WAITING LIST
+-----------------------------------------
+• Send a confirmation message upon successfully joining the waiting list
+  → API: triggerWaitlistJoinConfirmation / POST /api/n8n-test/waitlist-join-confirmation
+
+• Send a message to the waiting list when an appointment becomes available
+  → API: triggerWaitlistSlotAvailable / POST /api/n8n-test/waitlist-slot-available
+
+-----------------------------------------
+4. RETENTION & INCREASING LTV
+-----------------------------------------
+• Send a message 1 hour after the appointment
+  → API: triggerPostAppointmentMessage1h / POST /api/n8n-test/post-appointment-1h
+
+• Send a message after an average number of days (based on client return cycle)
+  → API: triggerReturnCycleMessage / POST /api/n8n-test/return-cycle-message
+
+• Send a birthday appointment reminder message
+  → API: triggerBirthdayReminder / POST /api/n8n-test/birthday-reminder
+
+• Send a message to a new client after their first appointment with an offer (e.g. % discount for next appointment)
+  → API: triggerNewClientOffer / POST /api/n8n-test/new-client-offer
+
+• Send a Plusfive message to help increase organic audience growth
+  → API: triggerPlusfiveOrganicGrowth / POST /api/n8n-test/plusfive-organic-growth
+
+-----------------------------------------
+SUMMARY – ALL NEW APIs (12)
+-----------------------------------------
+1.  appointment-reminder-24h
+2.  appointment-reminder-1h
+3.  appointment-booked-confirmation
+4.  appointment-changed
+5.  appointment-canceled
+6.  waitlist-join-confirmation
+7.  waitlist-slot-available
+8.  post-appointment-1h
+9.  return-cycle-message
+10. birthday-reminder
+11. new-client-offer
+12. plusfive-organic-growth
+
+(Existing: at-risk, lost, review, recovered, custom – no change.)

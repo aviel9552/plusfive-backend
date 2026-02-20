@@ -72,6 +72,8 @@ model User {
    waitlists          Waitlist[]        // Waiting list entries for calendar
    businessOperatingHours BusinessOperatingHours[] // Business operating hours
    businessGalleries   BusinessGallery[] // Business gallery images (Cloudinary)
+   clientPermissions  ClientPermissions? // Client booking permissions (one per user)
+   automations       Automations?       // Automation toggles (one per user)
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -572,6 +574,51 @@ model BusinessGallery {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("business_gallery")
+}
+
+// Client permissions - Booking/scheduling settings per user (linked by userId)
+model ClientPermissions {
+  id                        String   @id @default(cuid())
+  userId                    String   @unique
+  user                      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  allowOnlineBooking        Boolean  @default(true)
+  minAdvanceBookingMinutes  Int      @default(10)   // from CLIENT_PERMISSIONS_TIME_OPTIONS (e.g. 10, 15, 30)
+  maxAdvanceBookingMinutes  Int      @default(30240) // from same options (e.g. 10080=1 week, 30240=3 weeks)
+  cancelBeforeMinutes       Int      @default(180)  // from same options (e.g. 10, 60, 180=3 hours)
+  timeSlotInterval          String   @default("half-hour")  // half-hour, hour, 15-minutes, 30-minutes
+  appointmentLimit          String   @default("unlimited") // unlimited, 1, 2, 3, 5, 10
+  showServicePrices         Boolean  @default(true)
+  showServiceDuration       Boolean  @default(false)
+  allowChooseTeamMember     Boolean  @default(true)
+  requireBusinessApproval   Boolean  @default(false)
+  onlyExistingClients       Boolean  @default(false)
+  oneAppointmentOnly        Boolean  @default(true)
+
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@map("client_permissions")
+}
+
+// Automations - Customer messages & business notification toggles per user (linked by userId)
+model Automations {
+  id                          String   @id @default(cuid())
+  userId                      String   @unique
+  user                        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sendMessageOnAtRisk          Boolean  @default(false)
+  sendMessageOnChurned        Boolean  @default(false)
+  sendMessageOnPaymentForReview Boolean @default(false)
+  notifyOnAtRisk              Boolean  @default(false)
+  notifyOnChurned             Boolean  @default(false)
+  notifyOnRecovered            Boolean  @default(false)
+  notifyOnLowRating           Boolean  @default(false)
+
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@map("automations")
 }
 
 // Service table - Store services/offerings for businesses

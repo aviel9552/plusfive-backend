@@ -190,5 +190,45 @@ module.exports = {
       }
     }
     return times;
-  })()
+  })(),
+
+  // Client permissions – dropdown key/value options (shared with frontend)
+  // Time options: value = minutes (string), used for min advance, max advance, cancel before
+  CLIENT_PERMISSIONS_TIME_OPTIONS: [
+    { value: '10', label: '10 דקות' },
+    { value: '15', label: '15 דקות' },
+    { value: '30', label: 'חצי שעה' },
+    { value: '60', label: 'שעה' },
+    { value: '120', label: 'שעתיים' },
+    { value: '180', label: '3 שעות' },
+    { value: '300', label: '5 שעות' },
+    { value: '480', label: '8 שעות' },
+    { value: '600', label: '10 שעות' },
+    { value: '1440', label: 'יום' },
+    { value: '2880', label: 'יומיים' },
+    { value: '4320', label: '3 ימים' },
+    { value: '10080', label: 'שבוע' },
+    { value: '20160', label: 'שבועיים' },
+    { value: '30240', label: '3 שבועות' },
+    { value: '43200', label: 'חודש' },
+    { value: '86400', label: 'חודשיים' },
+  ],
+
+  // Time slot interval: value = slug, label = Hebrew
+  CLIENT_PERMISSIONS_TIME_SLOT_INTERVAL_OPTIONS: [
+    { value: '15-minutes', label: '15 דקות' },
+    { value: '30-minutes', label: '30 דקות' },
+    { value: 'half-hour', label: 'חצי שעה' },
+    { value: 'hour', label: 'שעה' },
+  ],
+
+  // Appointment limit: value = 'unlimited' or count string, label = Hebrew
+  CLIENT_PERMISSIONS_APPOINTMENT_LIMIT_OPTIONS: [
+    { value: 'unlimited', label: 'ללא הגבלה' },
+    { value: '1', label: '1 תור' },
+    { value: '2', label: '2 תורים' },
+    { value: '3', label: '3 תורים' },
+    { value: '5', label: '5 תורים' },
+    { value: '10', label: '10 תורים' },
+  ],
 };
