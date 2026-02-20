@@ -71,6 +71,7 @@ model User {
    products           Product[]         // Products in catalog for this business
    waitlists          Waitlist[]        // Waiting list entries for calendar
    businessOperatingHours BusinessOperatingHours[] // Business operating hours
+   businessGalleries   BusinessGallery[] // Business gallery images (Cloudinary)
 
   // 👇 compound unique constraints
   @@unique([email, isDeleted])
@@ -558,6 +559,19 @@ model BusinessOperatingHours {
   updatedAt   DateTime @updatedAt
   
   @@map("business_operating_hours")
+}
+
+// BusinessGallery - Store gallery image references (fileName, fileUrl from Cloudinary) per user
+model BusinessGallery {
+  id        String   @id @default(cuid())
+  fileName  String   // Original file name
+  fileUrl   String   // Cloudinary URL for display/delete
+  userId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("business_gallery")
 }
 
 // Service table - Store services/offerings for businesses

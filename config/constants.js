@@ -95,7 +95,8 @@ module.exports = {
   // Cloudinary Folders
   CLOUDINARY_FOLDERS: {
     STAFF: 'Staff',
-    CUSTOMER: 'Customer'
+    CUSTOMER: 'Customer',
+    BUSINESS_GALLERY: 'BusinessGallery'
   },
 
   // Supplier Status

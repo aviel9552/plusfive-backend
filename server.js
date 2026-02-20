@@ -37,6 +37,7 @@ const cronJobRoutes = require('./routes/cronJobs');
 const n8nTestRoutes = require('./routes/n8nTest');
 const waitlistRoutes = require('./routes/waitlist');
 const businessOperatingHoursRoutes = require('./routes/businessOperatingHours');
+const businessGalleryRoutes = require('./routes/businessGallery');
 const swaggerUi = require('swagger-ui-express');
 const swaggerDocument = require('./docs/swaggerDoc');
 
@@ -140,6 +141,7 @@ app.use('/api/cron-test', cronTestRoutes);
 app.use('/api/cron-jobs', cronJobRoutes);
 app.use('/api/n8n-test', n8nTestRoutes);
 app.use('/api/waitlist', waitlistRoutes);
+app.use('/api/business-gallery', businessGalleryRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
