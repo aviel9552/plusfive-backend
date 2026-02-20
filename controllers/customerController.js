@@ -1678,9 +1678,17 @@ const getCustomerById = async (req, res) => {
             id: true,
             startDate: true,
             endDate: true,
-            customerFullName: true,
-            businessName: true,
-            employeeName: true
+            duration: true,
+            customerNote: true,
+            appointmentStatus: true,
+            customerId: true,
+            userId: true,
+            staffId: true,
+            serviceId: true,
+            customer: { select: { customerFullName: true } },
+            user: { select: { businessName: true } },
+            staff: { select: { fullName: true } },
+            service: { select: { name: true } }
           }
         },
         paymentWebhook: {
