@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
-const { successResponse, errorResponse } = require('../lib/utils');
-const { hashPassword, verifyPassword } = require('../lib/utils');
+const { successResponse, errorResponse, hashPassword, verifyPassword } = require('../lib/utils');
 const { constants } = require('../config');
+const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 
 // Create user (admin only)
 const createUser = async (req, res) => {
@@ -58,36 +58,6 @@ const createUser = async (req, res) => {
   }
 };
 
-// Helper function to format Israeli phone numbers
-const formatIsraeliPhone = (phoneNumber) => {
-  if (!phoneNumber) return phoneNumber;
-  
-  // Remove all spaces and special characters
-  let cleaned = phoneNumber.replace(/[\s\-\(\)]/g, '');
-  
-  // If starts with +972, replace with 0
-  if (cleaned.startsWith('+972')) {
-    return '0' + cleaned.substring(4);
-  }
-  
-  // If starts with 972, replace with 0
-  if (cleaned.startsWith('972')) {
-    return '0' + cleaned.substring(3);
-  }
-  
-  // If already starts with 0, return as is
-  if (cleaned.startsWith('0')) {
-    return cleaned;
-  }
-  
-  // If starts with Israeli mobile prefix (5), add 0
-  if (cleaned.startsWith('5') && cleaned.length === 9) {
-    return '0' + cleaned;
-  }
-  
-  return phoneNumber; // Return original if no pattern matches
-};
-
 // Get user by ID (admin only)
 const getUserById = async (req, res) => {
   try {
@@ -126,8 +96,8 @@ const getUserById = async (req, res) => {
     // Format phone numbers before sending response
     const formattedUser = {
       ...user,
-      phoneNumber: formatIsraeliPhone(user.phoneNumber),
-      whatsappNumber: formatIsraeliPhone(user.whatsappNumber)
+      phoneNumber: formatIsraelPhoneToLocal(user.phoneNumber),
+      whatsappNumber: formatIsraelPhoneToLocal(user.whatsappNumber)
     };
 
     return successResponse(res, formattedUser);
@@ -183,13 +153,14 @@ const updateUserById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Format phone number if provided
+    // Format and validate phone number if provided (must be 10 digits e.g. 0501234567)
     let updateData = { ...req.body };
-    let originalPhoneNumber = null;
     
-    if (updateData.phoneNumber) {
-      originalPhoneNumber = updateData.phoneNumber; // Store original for response
-      updateData.phoneNumber = formatPhoneNumber(updateData.phoneNumber);
+    if (updateData.phoneNumber !== undefined && updateData.phoneNumber !== null && updateData.phoneNumber !== '') {
+      if (!isValidIsraelPhone(updateData.phoneNumber)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
+      updateData.phoneNumber = formatIsraeliPhone(updateData.phoneNumber);
       updateData.whatsappNumber = updateData.phoneNumber;
     }
 
@@ -220,9 +191,12 @@ const updateUserById = async (req, res) => {
       }
     });
 
-    // Override phone number in response to show original formatted number
-    if (originalPhoneNumber) {
-      updatedUser.phoneNumber = originalPhoneNumber;
+    // Return phone in local display format (0...)
+    if (updatedUser.phoneNumber) {
+      updatedUser.phoneNumber = formatIsraelPhoneToLocal(updatedUser.phoneNumber);
+    }
+    if (updatedUser.whatsappNumber) {
+      updatedUser.whatsappNumber = formatIsraelPhoneToLocal(updatedUser.whatsappNumber);
     }
 
     return successResponse(res, updatedUser, 'User updated successfully');
@@ -230,22 +204,6 @@ const updateUserById = async (req, res) => {
     console.error('Update user by ID error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
-};
-
-// Helper function to format phone number
-const formatPhoneNumber = (phoneNumber) => {
-  if (!phoneNumber) return phoneNumber;
-  
-  // Remove all non-digit characters
-  let cleanNumber = phoneNumber.replace(/\D/g, '');
-  
-  // If number starts with 0, remove it
-  if (cleanNumber.startsWith('0')) {
-    cleanNumber = cleanNumber.substring(1);
-  }
-  
-  // Add +972 prefix
-  return `+972${cleanNumber}`;
 };
 
 // Delete user by ID (admin only)

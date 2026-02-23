@@ -142,7 +142,7 @@ const createService = async (req, res) => {
       category: category?.trim() || null,
       price: parseFloat(price),
       duration: parseInt(duration),
-      color: color || '#FF257C',
+      color: color || constants.DEFAULT_SERVICE_COLOR,
       hideFromClients: hideFromClients || false,
       earliestTimeToBook: earliestTimeToBook?.trim() || null,
       latestTimeToBook: latestTimeToBook?.trim() || null,
@@ -276,7 +276,7 @@ const updateService = async (req, res) => {
     const categoryIdToSet = categoryId !== undefined ? (categoryId || null) : undefined;
     if (price !== undefined) updateData.price = parseFloat(price);
     if (duration !== undefined) updateData.duration = parseInt(duration);
-    if (color !== undefined) updateData.color = color || '#FF257C';
+    if (color !== undefined) updateData.color = color || constants.DEFAULT_SERVICE_COLOR;
     if (hideFromClients !== undefined) updateData.hideFromClients = hideFromClients;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (earliestTimeToBook !== undefined) updateData.earliestTimeToBook = earliestTimeToBook?.trim() || null;
