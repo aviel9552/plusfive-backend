@@ -2,27 +2,7 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { constants } = require('../config');
 const { uploadImage, deleteImage, extractPublicId } = require('../lib/cloudinary');
-
-// Helper function to format Israeli phone numbers (same as webhookController)
-const formatIsraeliPhone = (phoneNumber) => {
-  if (!phoneNumber) return null;
-
-  // Remove any existing country code or special characters
-  let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
-
-  // If phone already starts with 972, just add +
-  if (cleanPhone.startsWith('972')) {
-    return `+${cleanPhone}`;
-  }
-
-  // If phone starts with 0, remove it and add +972
-  if (cleanPhone.startsWith('0')) {
-    cleanPhone = cleanPhone.substring(1);
-  }
-
-  // Add Israel country code +972
-  return `+972${cleanPhone}`;
-};
+const { formatIsraeliPhone, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 
 // Add new customer to business owner's list
 const addCustomer = async (req, res) => {
@@ -205,12 +185,11 @@ const createAndAddNewCustomer = async (req, res, customerData) => {
       return errorResponse(res, 'User not found in database. Please login again.', 400);
     }
 
-    // Format phone number (like webhook)
-    const formattedPhone = formatIsraeliPhone(customerData.phoneNumber);
-
-    if (!formattedPhone) {
-      return errorResponse(res, 'Valid phone number is required', 400);
+    // Validate and format phone number (10 digits e.g. 0501234567)
+    if (!isValidIsraelPhone(customerData.phoneNumber)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
     }
+    const formattedPhone = formatIsraeliPhone(customerData.phoneNumber);
 
     // Check if customer already exists by phone (like webhook)
     const existingCustomer = await prisma.customers.findFirst({
@@ -566,7 +545,12 @@ const updateCustomer = async (req, res) => {
       if (firstName !== undefined) updateData.firstName = firstName;
       if (lastName !== undefined) updateData.lastName = lastName;
       if (email !== undefined) updateData.email = email;
-      if (phoneNumber !== undefined) updateData.customerPhone = formatIsraeliPhone(phoneNumber);
+      if (phoneNumber !== undefined) {
+        if (!isValidIsraelPhone(phoneNumber)) {
+          throw new Error(PHONE_VALIDATION_ERROR_MESSAGE);
+        }
+        updateData.customerPhone = formatIsraeliPhone(phoneNumber);
+      }
       
       // Automatically update customerFullName if firstName or lastName is being updated
       // Use the new values if provided, otherwise use existing values from database
@@ -702,6 +686,9 @@ const updateCustomer = async (req, res) => {
     return successResponse(res, finalResult, 'Customer updated successfully');
   } catch (error) {
     console.error('Update customer error:', error);
+    if (error.message === PHONE_VALIDATION_ERROR_MESSAGE) {
+      return errorResponse(res, error.message, 400);
+    }
     return errorResponse(res, 'Internal server error', 500);
   }
 };
@@ -1967,17 +1954,16 @@ const bulkImportCustomers = async (req, res) => {
             continue;
           }
 
-          // Format phone number
-          const formattedPhone = formatIsraeliPhone(customerData.phoneNumber);
-          
-          if (!formattedPhone) {
+          // Validate and format phone number (10 digits)
+          if (!isValidIsraelPhone(customerData.phoneNumber)) {
             errors.push({
               index: i + 1,
               customer: customerData,
-              error: 'Invalid phone number format'
+              error: PHONE_VALIDATION_ERROR_MESSAGE
             });
             continue;
           }
+          const formattedPhone = formatIsraeliPhone(customerData.phoneNumber);
 
           // Check if customer already exists by phone
           const existingCustomer = await tx.customers.findFirst({

@@ -152,6 +152,23 @@ module.exports = {
   // JS getDay() 0–6 → Hebrew abbrev (for availability/operating hours). Day key = DAYS_OF_WEEK_KEYS[index].
   JS_DAY_TO_HEBREW: ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"],
 
+  // Map Hebrew day abbrev to English key (for normalizing staff operating hours API response). Keep in sync with frontend.
+  HEBREW_TO_DAY_KEY: (() => {
+    const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const out = {};
+    ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"].forEach((h, i) => { out[h] = keys[i]; });
+    return out;
+  })(),
+
+  /** Normalize day string (Hebrew א', ב' or English sunday, monday) to English key. Use when building API responses. */
+  normalizeDayKey(day) {
+    if (!day) return null;
+    const d = String(day).trim();
+    const lower = d.toLowerCase();
+    if (this.DAYS_OF_WEEK_KEYS.includes(lower)) return lower;
+    return this.HEBREW_TO_DAY_KEY[d] || lower;
+  },
+
   // Recurrence service type values (match frontend – use in recurrenceHelper)
   RECURRENCE_SERVICE_TYPE: {
     REGULAR: 'Regular Appointment',
@@ -231,4 +248,29 @@ module.exports = {
     { value: '5', label: '5 תורים' },
     { value: '10', label: '10 תורים' },
   ],
+
+  // Service calendar color palette – same as frontend (הצבע של השירות ביומן). Stored in DB as hex.
+  SERVICE_COLOR_PALETTE: [
+    { name: 'קרם', value: '#FDF2DD' },
+    { name: 'אפרסק', value: '#FFE6D6' },
+    { name: 'קורל', value: '#FFDBCB' },
+    { name: 'ורוד בהיר', value: '#FADDD9' },
+    { name: 'ורוד', value: '#F5DEE6' },
+    { name: 'ורוד-סגול', value: '#F7E8F3' },
+    { name: 'סגול בהיר', value: '#F8F7FF' },
+    { name: 'סגול', value: '#E4E1FF' },
+    { name: 'סגול-כחול', value: '#D0D1FF' },
+    { name: 'כחול בהיר', value: '#D6E8FF' },
+    { name: 'תכלת', value: '#D0F4F0' },
+    { name: 'ירוק בהיר', value: '#D4F4DD' },
+    { name: 'צהוב בהיר', value: '#FFF9D0' },
+    { name: 'כתום בהיר', value: '#FFE8D0' },
+    { name: 'אדום בהיר', value: '#FFE0E0' },
+    { name: 'אפור בהיר', value: '#F0F0F0' },
+    { name: 'ורוד בוהק', value: '#FF257C' },
+    { name: 'כחול', value: '#014773' },
+    { name: 'ירוק', value: '#10b981' },
+    { name: 'סגול כהה', value: '#8e4e78' },
+  ],
+  DEFAULT_SERVICE_COLOR: '#FDF2DD', // First palette color (קרם); keep in sync with SERVICE_COLOR_PALETTE[0].value
 };

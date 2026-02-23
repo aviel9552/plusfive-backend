@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { formatIsraeliPhone, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 const { calculateRecurringDates: getRecurringDates } = require('../lib/recurrenceHelper');
 const {
   filterRecurringDatesByAvailability,
@@ -10,27 +11,6 @@ const N8nMessageService = require('../services/N8nMessageService');
 const { createWhatsappMessageRecord } = require('./whatsappMessageController');
 const { stripe } = require('../lib/stripe');
 const { constants } = require('../config');
-
-// Helper function to format Israeli phone numbers
-const formatIsraeliPhone = (phoneNumber) => {
-  if (!phoneNumber) return null;
-
-  // Remove any existing country code or special characters
-  let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
-
-  // If phone already starts with 972, just add +
-  if (cleanPhone.startsWith('972')) {
-    return `+${cleanPhone}`;
-  }
-
-  // If phone starts with 0, remove it and add +972
-  if (cleanPhone.startsWith('0')) {
-    cleanPhone = cleanPhone.substring(1);
-  }
-
-  // Add Israel country code +972
-  return `+972${cleanPhone}`;
-};
 
 // Helper function to check if user has active subscription
 // Import reusable subscription check utility
@@ -136,6 +116,9 @@ const handleAppointmentWebhook = async (req, res) => {
     };
     // If customer doesn't exist, create new customer
     if (!existingCustomer) {
+      if (webhookData.CustomerPhone && !isValidIsraelPhone(webhookData.CustomerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
       const newCustomer = await prisma.customers.create({
         data: {
@@ -508,6 +491,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       return errorResponse(res, 'CustomerPhone is required. Cannot process payment webhook without customer phone number.', 400);
     }
 
+    if (actualData.CustomerPhone && !isValidIsraelPhone(actualData.CustomerPhone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+    }
     const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
     
     // Find customer ONLY by phone number - no fallback searches
@@ -2055,6 +2041,9 @@ const createAppointment = async (req, res) => {
     
     // If customerPhone is provided but no customerId, find or create customer
     if (!finalCustomerId && customerPhone) {
+      if (!isValidIsraelPhone(customerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(customerPhone);
       
       // Find existing customer by phone
@@ -2399,6 +2388,9 @@ const createRecurringAppointments = async (req, res) => {
     let finalCustomerId = customerId;
     let finalUserId = userId;
     if (!finalCustomerId && customerPhone) {
+      if (!isValidIsraelPhone(customerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(customerPhone);
       let existingCustomer = await prisma.customers.findFirst({
         where: { customerPhone: formattedPhone },

@@ -4,6 +4,26 @@ const stripe = require('../lib/stripe').stripe;
 const { checkUserSubscription } = require('../lib/subscriptionUtils');
 const { constants } = require('../config');
 const { uploadImage, deleteImage, extractPublicId } = require('../lib/cloudinary');
+const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
+
+// Return staff with phone in local format (0...) for API responses
+const staffWithLocalPhone = (s) => (s ? { ...s, phone: s.phone ? formatIsraelPhoneToLocal(s.phone) : s.phone } : s);
+
+// Build workingHours object with English day keys so frontend can read it
+const buildWorkingHoursForResponse = (operatingHours) => {
+  const workingHours = {};
+  (operatingHours || []).forEach(oh => {
+    const key = constants.normalizeDayKey(oh.day);
+    if (key) {
+      workingHours[key] = {
+        startTime: oh.startTime,
+        endTime: oh.endTime,
+        active: oh.isActive
+      };
+    }
+  });
+  return workingHours;
+};
 
 // Get all staff for the logged-in user
 const getAllStaff = async (req, res) => {
@@ -37,18 +57,11 @@ const getAllStaff = async (req, res) => {
       }
     });
 
-    // Transform operating hours from array to object format for frontend
+    // Transform operating hours from array to object format for frontend (use English day keys: sunday, monday, ...)
     const staffWithWorkingHours = staff.map(s => {
-      const workingHours = {};
-      s.operatingHours.forEach(oh => {
-        workingHours[oh.day] = {
-          startTime: oh.startTime,
-          endTime: oh.endTime,
-          active: oh.isActive
-        };
-      });
+      const workingHours = buildWorkingHoursForResponse(s.operatingHours);
       return {
-        ...s,
+        ...staffWithLocalPhone(s),
         workingHours
       };
     });
@@ -100,18 +113,11 @@ const getStaffById = async (req, res) => {
       return errorResponse(res, 'Staff not found', 404);
     }
 
-    // Transform operating hours from array to object format for frontend
-    const workingHours = {};
-    staff.operatingHours.forEach(oh => {
-      workingHours[oh.day] = {
-        startTime: oh.startTime,
-        endTime: oh.endTime,
-        active: oh.isActive
-      };
-    });
+    // Transform operating hours from array to object format for frontend (use English day keys)
+    const workingHours = buildWorkingHoursForResponse(staff.operatingHours);
 
     return successResponse(res, {
-      ...staff,
+      ...staffWithLocalPhone(staff),
       workingHours
     });
 
@@ -130,6 +136,9 @@ const createStaff = async (req, res) => {
     // Validate required fields
     if (!fullName || !phone) {
       return errorResponse(res, 'Full name and phone are required', 400);
+    }
+    if (!isValidIsraelPhone(phone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
     }
 
     // Check if user exists and fetch subscription info
@@ -167,11 +176,11 @@ const createStaff = async (req, res) => {
       }
     }
 
-    // Create staff
+    // Create staff (store phone in +972 format for consistency)
     const staff = await prisma.staff.create({
       data: {
         fullName,
-        phone,
+        phone: formatIsraeliPhone(phone),
         email: email || null,
         city: city || null,
         address: address || null,
@@ -254,17 +263,10 @@ const createStaff = async (req, res) => {
       }
     });
 
-    // Transform operating hours to workingHours object for frontend (same shape as getAllStaff / getStaffById)
-    const workingHours = {};
-    (staffWithServices.operatingHours || []).forEach(oh => {
-      workingHours[oh.day] = {
-        startTime: oh.startTime,
-        endTime: oh.endTime,
-        active: oh.isActive
-      };
-    });
+    // Transform operating hours to workingHours object for frontend (English day keys)
+    const workingHours = buildWorkingHoursForResponse(staffWithServices.operatingHours);
     const response = {
-      ...staffWithServices,
+      ...staffWithLocalPhone(staffWithServices),
       workingHours
     };
 
@@ -328,6 +330,9 @@ const updateStaff = async (req, res) => {
     if (phone !== undefined && !phone) {
       return errorResponse(res, 'Phone cannot be empty', 400);
     }
+    if (phone !== undefined && phone && !isValidIsraelPhone(phone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+    }
 
     // Handle image upload if new file is present
     let imageUrl = existingStaff.image; // Keep existing image by default
@@ -355,12 +360,12 @@ const updateStaff = async (req, res) => {
       }
     }
 
-    // Update staff
+    // Update staff (store phone in +972 format when provided)
     const staff = await prisma.staff.update({
       where: { id },
       data: {
         ...(fullName !== undefined && { fullName }),
-        ...(phone !== undefined && { phone }),
+        ...(phone !== undefined && { phone: phone ? formatIsraeliPhone(phone) : null }),
         ...(email !== undefined && { email: email || null }),
         ...(city !== undefined && { city: city || null }),
         ...(address !== undefined && { address: address || null }),
@@ -378,7 +383,7 @@ const updateStaff = async (req, res) => {
       }
     });
 
-    return successResponse(res, staff, 'Staff updated successfully');
+    return successResponse(res, staffWithLocalPhone(staff), 'Staff updated successfully');
 
   } catch (error) {
     console.error('Update staff error:', error);
@@ -730,15 +735,8 @@ const upsertStaffOperatingHours = async (req, res) => {
       return createdHours;
     });
 
-    // Transform back to frontend format
-    const workingHoursResponse = {};
-    result.forEach(oh => {
-      workingHoursResponse[oh.day] = {
-        startTime: oh.startTime,
-        endTime: oh.endTime,
-        active: oh.isActive
-      };
-    });
+    // Transform back to frontend format (English day keys so UI can display)
+    const workingHoursResponse = buildWorkingHoursForResponse(result);
 
     return successResponse(res, {
       staffId,
