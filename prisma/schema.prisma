@@ -511,6 +511,9 @@ model Staff {
   isActive    Boolean  @default(true)
   isDeleted   Boolean  @default(false) // Soft delete flag
   
+  // Role
+  role        String?  @default("staff") // staff, admin - permissions level
+  
   // Timestamps
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
