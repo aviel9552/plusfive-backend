@@ -70,14 +70,14 @@ router.get(
 /**
  * Appointments
  */
-// POST, PUT, DELETE routes - Require active subscription (checked directly from Stripe)
+// POST, PUT, PATCH, DELETE routes - Require active subscription (checked directly from Stripe)
 router.post('/appointments', authenticateToken, checkSubscription, createAppointment);
 // GET routes - No subscription check required
 router.get('/appointments', authenticateToken, getAllAppointments);
 router.get('/appointments/:id', authenticateToken, getAppointmentById);
-router.put('/appointments/:id', authenticateToken, updateAppointment);
-router.patch('/appointments/:id/status', authenticateToken, updateAppointmentStatus);
-router.delete('/appointments/:id', authenticateToken, deleteAppointment);
+router.put('/appointments/:id', authenticateToken, checkSubscription, updateAppointment);
+router.patch('/appointments/:id/status', authenticateToken, checkSubscription, updateAppointmentStatus);
+router.delete('/appointments/:id', authenticateToken, checkSubscription, deleteAppointment);
 router.get(
   '/appointments/customer/:customerId',
   authenticateToken,

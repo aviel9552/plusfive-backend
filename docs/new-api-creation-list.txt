@@ -1,0 +1,322 @@
+NEW API CREATION – CHECKLIST & REQUIREMENTS
+==========================================
+Use this list when you create a new API. Fill in each section so every new API follows the same rules and has the right permissions and credentials.
+
+-----------------------------------------
+0. HOW TO CREATE IN N8N FIRST, THEN USE IN THIS PROJECT
+-----------------------------------------
+Do this order: (1) Create the workflow/webhook in n8n. (2) Call it from this Node.js project.
+
+STEP 1 – CREATE IN N8N (not in this project):
+  a) Open n8n (e.g. https://n8n.plusfive.io).
+  b) New workflow → Add trigger node:
+     - Choose “Webhook” (or “Webhook – n8n”).
+     - Set HTTP Method (e.g. POST), path optional (e.g. /appointment-reminder-24h).
+     - Save the workflow and activate it. n8n will show a URL like:
+       https://n8n.plusfive.io/webhook/xxxx-xxxx  or  .../webhook/msg-in (if you use one webhook and route by body).
+  c) Add the rest of the workflow (e.g. WhatsApp node, conditions, etc.) using the data that the webhook receives (e.g. {{ $json.body.customerName }}).
+  d) Note the webhook URL. You will call this URL from this project.
+
+STEP 2 – USE THAT “API” (WEBHOOK) IN THIS PROJECT:
+  a) In this project, the backend calls n8n – it does not “create” the API in n8n. The “API” is the n8n webhook URL.
+  b) Add a method in  services/N8nMessageService.js  that does:
+     - Build a payload (e.g. { trigger_type: 'appointment_reminder_24h', customer_name, customer_phone, ... }).
+     - POST that payload to the n8n webhook URL (same URL you got in Step 1).
+  c) Add a controller method in  controllers/n8nTestController.js  that:
+     - Takes req.body (or cron/app data).
+     - Calls the service method above.
+     - Returns success/error response.
+  d) Add a route in  routes/n8nTest.js  (e.g. POST /appointment-reminder-24h) that calls that controller.
+  e) When a reminder is needed (e.g. cron finds “appointment in 24h”), this project calls  POST /api/n8n-test/appointment-reminder-24h  (internal) or directly  N8nMessageService.triggerAppointmentReminder24h(...), which sends data to the n8n webhook. n8n then runs the workflow (e.g. send WhatsApp).
+
+SUMMARY:
+  - The “function/API” is created in n8n as a Webhook + workflow.
+  - This project only calls that webhook URL (HTTP POST with JSON). It does not create the workflow in n8n.
+  - One n8n webhook URL can handle many trigger types if you send a field like  trigger_type  and n8n branches on it; or you can create one webhook per automation.
+
+-----------------------------------------
+1. HOW THE NEW API SHOULD LOOK (STRUCTURE)
+-----------------------------------------
+• Route file:     routes/<name>.js   (e.g. routes/n8nTest.js)
+• Controller:     controllers/<name>Controller.js
+• Service (optional): services/<Name>Service.js (if logic is heavy or reusable)
+• Register route in server.js:  app.use('/api/<path>', <name>Routes);
+
+For each new API endpoint, decide:
+  - Method:  GET / POST / PUT / PATCH / DELETE
+  - Path:    e.g. POST /api/n8n-test/appointment-reminder-24h
+  - Request body/query: what fields are required and optional
+  - Response shape:  { success, message, data } (use successResponse/errorResponse from lib/utils)
+
+-----------------------------------------
+2. PERMISSIONS REQUIRED
+-----------------------------------------
+For each new API, choose one:
+
+  [ ] PUBLIC (no auth)
+      - No middleware. Anyone can call.
+      - Use for: webhooks from n8n, public health check, etc.
+
+  [ ] AUTHENTICATED (logged-in user)
+      - Add:  const { authenticateToken } = require('../middleware/auth');
+      - In route file:  router.use(authenticateToken);  or  router.get('/', authenticateToken, controllerMethod);
+      - Backend gets:  req.user.userId  (and optionally req.user.role, req.user.email).
+      - Use for: most app APIs (client-permissions, automations, gallery, etc.).
+
+  [ ] ADMIN ONLY
+      - Add:  authenticateToken + check req.user.role === 'admin'.
+      - Use for: admin dashboard, user management, etc.
+
+  [ ] CUSTOM (e.g. business owner only, or owner of the resource)
+      - After authenticateToken, check e.g. req.user.userId === resource.userId.
+      - Use for: update/delete own gallery, own settings, etc.
+
+Write here for your new API:
+  Permission type:  _______________________
+  Middleware used:  _______________________
+
+-----------------------------------------
+3. CREDENTIALS REQUIRED
+-----------------------------------------
+For each new API, list what credentials or env vars it needs:
+
+  [ ] None (e.g. pure DB read with auth)
+
+  [ ] Database
+      - DATABASE_URL (Prisma uses it; no extra config if Prisma is already set up)
+
+  [ ] External API key / secret
+      - Name:  _______________________   (e.g. N8N_WEBHOOK_URL, STRIPE_SECRET_KEY)
+      - Where stored:  .env
+      - Used in:  _______________________
+
+  [ ] Auth token (from client)
+      - Client sends:  Authorization: Bearer <token>  or cookie.
+      - Backend:  authenticateToken middleware reads it and sets req.user.
+
+  [ ] Other (e.g. Cloudinary, Stripe, n8n webhook URL)
+      - List:  _______________________
+
+-----------------------------------------
+STRIPE_SECRET_KEY – WHERE IT IS USED (BACKEND vs N8N)
+-----------------------------------------
+  • In the backend (this Node app):
+    STRIPE_SECRET_KEY is in .env and used by Stripe SDK (e.g. payments, subscriptions).
+    Only the backend uses it; never send it to the frontend or to n8n in a request.
+
+  • In n8n:
+    n8n does not use your .env file. If an n8n workflow needs to call Stripe (e.g. Stripe
+    node to create a payment or read a customer), you configure Stripe inside n8n:
+    - Add a “Stripe” node in the workflow.
+    - In that node’s credentials, enter the same Stripe Secret Key (or a separate key
+      if you want n8n to use a different Stripe account).
+    So: STRIPE_SECRET_KEY lives in the backend .env; in n8n you re-enter the key (or a
+    copy) in the Stripe node’s credential settings. They are not shared automatically.
+
+Write here for your new API:
+  Credentials needed:  _______________________
+  Env variables:       _______________________
+
+-----------------------------------------
+4. REQUEST / RESPONSE FORMAT
+-----------------------------------------
+For your new API, write down so others (and n8n/frontend) know what to send and get.
+
+  Request:
+    Method:   _______________________
+    URL:      _______________________
+    Headers:  _______________________
+    Body (if POST/PUT):  { field1: ..., field2: ... }
+
+  Response (success):
+    { "success": true, "message": "...", "data": { ... } }
+
+  Response (error):
+    { "success": false, "message": "...", "error": "..." }
+    Status code: 400 / 401 / 403 / 404 / 500
+
+-----------------------------------------
+5. QUICK CHECKLIST FOR EACH NEW API
+-----------------------------------------
+  [ ] Route added in routes/<name>.js
+  [ ] Controller method added
+  [ ] Permission chosen and middleware applied (auth / admin / custom)
+  [ ] Credentials and env vars documented and used in code
+  [ ] Route registered in server.js
+  [ ] Request/response format written in this file or in Swagger
+  [ ] Error handling and validation (e.g. required fields) done
+
+-----------------------------------------
+6. EXAMPLE: N8N TEST ROUTES (REFERENCE)
+-----------------------------------------
+  Path:       POST /api/n8n-test/at-risk
+  Permission: Usually PUBLIC or a test-only auth (so n8n or Postman can call).
+  Credentials: None on request; backend may use N8N_WEBHOOK_URL or hardcoded n8n URL in N8nMessageService.
+  Body:       { customerName, customerPhone, businessName, ... }
+  Response:   { success, message, data: { trigger, params, result } }
+
+==========================================
+7. ADD TO AUTOMATIONS – FULL LIST (DISCUSS PER API)
+==========================================
+All discussion in this file should follow these automations. For each item below, decide and fill: permission, credentials, who triggers it (cron / app event / n8n), request/response.
+
+-----------------------------------------
+7.1 CLIENT REMINDERS
+-----------------------------------------
+  1. Send a message 24 hours before the appointment
+     API:  POST /api/n8n-test/appointment-reminder-24h  (or internal trigger from cron)
+     Triggered by:  Cron job (finds appointments in ~24h window).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   appointmentId, customerId, customerName, customerPhone, appointmentDate, appointmentTime, businessName, serviceName, ...
+     Response:       _______________________
+
+  2. Send a message 1 hour before the appointment
+     API:  POST /api/n8n-test/appointment-reminder-1h
+     Triggered by:  Cron job (finds appointments in ~1h window).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   (same as 24h reminder)
+     Response:       _______________________
+
+-----------------------------------------
+7.2 APPOINTMENT UPDATES
+-----------------------------------------
+  3. Send a confirmation message after an appointment is successfully booked
+     API:  POST /api/n8n-test/appointment-booked-confirmation
+     Triggered by:  App (right after booking is saved in DB).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   appointmentId, customerName, customerPhone, appointmentDate, appointmentTime, serviceName, businessName, ...
+     Response:       _______________________
+
+  4. Notify the client if their appointment is changed (by business or by themselves)
+     API:  POST /api/n8n-test/appointment-changed
+     Triggered by:  App (when appointment is updated – date/time/service change).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   appointmentId, customerName, customerPhone, oldDate, newDate, oldTime, newTime, businessName, ...
+     Response:       _______________________
+
+  5. Notify the client if their appointment is canceled (by themselves or by the business)
+     API:  POST /api/n8n-test/appointment-canceled
+     Triggered by:  App (when appointment status is set to canceled).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   appointmentId, customerName, customerPhone, appointmentDate, appointmentTime, canceledBy (client/business), businessName, ...
+     Response:       _______________________
+
+-----------------------------------------
+7.3 WAITING LIST
+-----------------------------------------
+  6. Send a confirmation message upon successfully joining the waiting list
+     API:  POST /api/n8n-test/waitlist-join-confirmation
+     Triggered by:  App (when a client is added to the waitlist).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   waitlistId, customerName, customerPhone, serviceName, requestedDate, businessName, ...
+     Response:       _______________________
+
+  7. Send a message to the waiting list when an appointment becomes available
+     API:  POST /api/n8n-test/waitlist-slot-available
+     Triggered by:  App or cron (when a slot opens – e.g. cancellation or new availability).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   waitlistId, customerName, customerPhone, availableDate, availableTime, serviceName, businessName, ...
+     Response:       _______________________
+
+-----------------------------------------
+7.4 RETENTION & INCREASING LTV
+-----------------------------------------
+  8. Send a message 1 hour after the appointment
+     API:  POST /api/n8n-test/post-appointment-1h
+     Triggered by:  Cron (find appointments that ended ~1h ago).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   appointmentId, customerName, customerPhone, appointmentDate, serviceName, businessName, ...
+     Response:       _______________________
+
+  9. Send a message after an average number of days (based on client return cycle)
+     API:  POST /api/n8n-test/return-cycle-message
+     Triggered by:  Cron (e.g. daily – find customers whose last visit + averageDays is around today).
+     Permission:     _______________________
+     Credentials:    _______________________
+     Request body:   customerId, customerName, customerPhone, lastVisitDate, averageDays, businessName, ...
+     Response:       _______________________
+
+  10. Send a birthday appointment reminder message
+      API:  POST /api/n8n-test/birthday-reminder
+      Triggered by:  Cron (e.g. daily – find customers whose birthday is today or in X days).
+      Permission:     _______________________
+      Credentials:    _______________________
+      Request body:   customerId, customerName, customerPhone, birthdayDate, businessName, ...
+      Response:       _______________________
+
+  11. Send a message to a new client after their first appointment with an offer (e.g. % discount for next appointment)
+      API:  POST /api/n8n-test/new-client-offer
+      Triggered by:  App or cron (after first appointment is completed; or cron finds “first visit just completed”).
+      Permission:     _______________________
+      Credentials:    _______________________
+      Request body:   customerId, customerName, customerPhone, firstVisitDate, offerText, discountPercent, businessName, ...
+      Response:       _______________________
+
+  12. Send a Plusfive message to help increase organic audience growth
+      API:  POST /api/n8n-test/plusfive-organic-growth
+      Triggered by:  App or cron (e.g. after visit, or scheduled campaign).
+      Permission:     _______________________
+      Credentials:    _______________________
+      Request body:   customerName, customerPhone, businessName, messageType, ...
+      Response:       _______________________
+
+-----------------------------------------
+SUMMARY – ALL 12 AUTOMATIONS (DISCUSS EACH AS PER SECTIONS 1–5 ABOVE)
+-----------------------------------------
+  1. appointment-reminder-24h      2. appointment-reminder-1h
+  3. appointment-booked-confirmation  4. appointment-changed  5. appointment-canceled
+  6. waitlist-join-confirmation   7. waitlist-slot-available
+  8. post-appointment-1h          9. return-cycle-message  10. birthday-reminder
+  11. new-client-offer           12. plusfive-organic-growth
+
+==========================================
+Add your new APIs below with the same structure (permissions, credentials, request/response).
+==========================================
+
+-----------------------------------------
+HOW MUCH TIME TO ADD ALL OF THIS (ESTIMATE)
+-----------------------------------------
+Rough estimate for implementing the full list (12 automations + n8n + this project):
+
+  • N8n (create 12 workflows with Webhook trigger + logic, e.g. WhatsApp):
+    - Per workflow: ~30–60 min (webhook + nodes + test).
+    - 12 workflows: ~6–12 hours (depending on complexity and reuse).
+
+  • This project – backend only (service + controller + routes for 12 triggers):
+    - N8nMessageService: add 12 methods, ~1–2 hours.
+    - n8nTestController: add 12 test methods, ~1–2 hours.
+    - routes/n8nTest.js: add 12 routes, ~15 min.
+    - Total backend (APIs that call n8n): ~2–4 hours.
+
+  • Cron jobs (to trigger 24h/1h reminders, post-appointment, return cycle, birthday, etc.):
+    - Design + implement cron service and jobs: ~2–4 hours.
+
+  • App integration (call triggers when booking/cancel/waitlist happens):
+    - Wire “appointment booked”, “appointment changed”, “appointment canceled”, “waitlist join”, “slot available” into existing code: ~2–3 hours.
+
+  TOTAL (approximate): 12–23 hours (about 1.5–3 working days) for one developer, assuming n8n and backend are already set up. Can be less if workflows are simple or reused; more if each automation has heavy logic or many edge cases.
+
+-----------------------------------------
+TWO DIFFERENT TIME ESTIMATIONS (SCENARIOS)
+-----------------------------------------
+
+  SCENARIO 1 – ONLY API INTEGRATION (THIRD PARTY GIVES THE APIs):
+  - A third-party person/team provides the APIs or n8n webhook URLs (and maybe docs).
+  - We only integrate in this app: call those APIs from our backend when needed (e.g. on booking, cancel, cron).
+  - We do NOT build or design the workflows in n8n.
+  - Work: N8nMessageService methods (build payload, POST to given URL) + controller + routes + wiring in app/cron.
+  - Estimate: ~4–8 hours (about 0.5–1 working day) for all 12 automations. Less if payloads are simple and docs are clear; more if many custom fields or retry/error handling needed.
+
+  SCENARIO 2 – WE BUILD OUR OWN FLOW IN N8N AND INTEGRATE IN THIS APP:
+  - We design and build the workflows ourselves in n8n (Webhook + logic, e.g. WhatsApp, conditions).
+  - Then we integrate in this app (service + controller + routes + cron + app events).
+  - Work: Full n8n workflow creation (12 workflows) + backend integration + cron + app wiring.
+  - Estimate: ~12–23 hours (about 1.5–3 working days) as in the breakdown above. Can be less with templates/reuse; more if each workflow is complex.

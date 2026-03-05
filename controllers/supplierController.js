@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
 const { constants } = require('../config');
+const { isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 
 // Helper function to ensure minimum delay for better UX (loader visibility)
 const ensureMinimumDelay = async (promise, minDelayMs = 2000) => {
@@ -158,6 +159,10 @@ const createSupplier = async (req, res) => {
       return errorResponse(res, 'Supplier with this name already exists', 400);
     }
 
+    if (phone && phone.trim() && !isValidIsraelPhone(phone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+    }
+
     // Create supplier associated with the user
     const supplier = await ensureMinimumDelay(
       prisma.supplier.create({
@@ -232,6 +237,10 @@ const updateSupplier = async (req, res) => {
       if (duplicateSupplier) {
         return errorResponse(res, 'Supplier with this name already exists', 400);
       }
+    }
+
+    if (phone !== undefined && phone?.trim() && !isValidIsraelPhone(phone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
     }
 
     // Build update data

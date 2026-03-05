@@ -3,6 +3,7 @@ const { successResponse, errorResponse, hashPassword, verifyPassword } = require
 const { generateToken } = require('../middleware/auth');
 const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../lib/emailService');
 const { constants } = require('../config');
+const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 const crypto = require('crypto');
 
 // Register user
@@ -24,8 +25,11 @@ const register = async (req, res) => {
 
     // Check if user already exists with this phone number (excluding soft deleted users)
     if (phoneNumber) {
+      if (!isValidIsraelPhone(phoneNumber)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       // Format phone number before checking
-      const formattedPhoneNumber = formatPhoneNumber(phoneNumber);
+      const formattedPhoneNumber = formatIsraeliPhone(phoneNumber);
       
       const existingUserByPhone = await prisma.user.findFirst({
         where: { 
@@ -44,7 +48,7 @@ const register = async (req, res) => {
 
     // Filter valid fields for user creation
     const validUserFields = {
-      phoneNumber: phoneNumber ? formatPhoneNumber(phoneNumber) : phoneNumber,
+      phoneNumber: phoneNumber ? formatIsraeliPhone(phoneNumber) : phoneNumber,
       businessName: otherFields.businessName,
       businessType: otherFields.businessType,
       address: otherFields.address,
@@ -97,10 +101,10 @@ const register = async (req, res) => {
     // Generate JWT token for automatic login after registration
     const token = generateToken(user.id, user.email, user.role);
 
-    // Format phone number - remove +972 prefix
+    // Format phone for response (local 0... format)
     let formattedUser = { ...user };
-    if (formattedUser.phoneNumber && formattedUser.phoneNumber.startsWith('+972')) {
-      formattedUser.phoneNumber = '0' + formattedUser.phoneNumber.substring(4);
+    if (formattedUser.phoneNumber) {
+      formattedUser.phoneNumber = formatIsraelPhoneToLocal(formattedUser.phoneNumber);
     }
 
     // Email is already verified during registration, return token for automatic login
@@ -364,22 +368,6 @@ const resetPassword = async (req, res) => {
     console.error('Reset password error:', error);
     return errorResponse(res, 'Internal server error', 500);
   }
-};
-
-// Helper function to format phone number
-const formatPhoneNumber = (phoneNumber) => {
-  if (!phoneNumber) return phoneNumber;
-  
-  // Remove all non-digit characters
-  let cleanNumber = phoneNumber.replace(/\D/g, '');
-  
-  // If number starts with 0, remove it
-  if (cleanNumber.startsWith('0')) {
-    cleanNumber = cleanNumber.substring(1);
-  }
-  
-  // Add +972 prefix
-  return `+972${cleanNumber}`;
 };
 
 module.exports = {

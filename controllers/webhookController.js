@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse } = require('../lib/utils');
+const { formatIsraeliPhone, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 const { calculateRecurringDates: getRecurringDates } = require('../lib/recurrenceHelper');
 const {
   filterRecurringDatesByAvailability,
@@ -10,27 +11,6 @@ const N8nMessageService = require('../services/N8nMessageService');
 const { createWhatsappMessageRecord } = require('./whatsappMessageController');
 const { stripe } = require('../lib/stripe');
 const { constants } = require('../config');
-
-// Helper function to format Israeli phone numbers
-const formatIsraeliPhone = (phoneNumber) => {
-  if (!phoneNumber) return null;
-
-  // Remove any existing country code or special characters
-  let cleanPhone = phoneNumber.toString().replace(/[\s\-\(\)\+]/g, '');
-
-  // If phone already starts with 972, just add +
-  if (cleanPhone.startsWith('972')) {
-    return `+${cleanPhone}`;
-  }
-
-  // If phone starts with 0, remove it and add +972
-  if (cleanPhone.startsWith('0')) {
-    cleanPhone = cleanPhone.substring(1);
-  }
-
-  // Add Israel country code +972
-  return `+972${cleanPhone}`;
-};
 
 // Helper function to check if user has active subscription
 // Import reusable subscription check utility
@@ -136,6 +116,9 @@ const handleAppointmentWebhook = async (req, res) => {
     };
     // If customer doesn't exist, create new customer
     if (!existingCustomer) {
+      if (webhookData.CustomerPhone && !isValidIsraelPhone(webhookData.CustomerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(webhookData.CustomerPhone);
       const newCustomer = await prisma.customers.create({
         data: {
@@ -508,6 +491,9 @@ const handlePaymentCheckoutWebhook = async (req, res) => {
       return errorResponse(res, 'CustomerPhone is required. Cannot process payment webhook without customer phone number.', 400);
     }
 
+    if (actualData.CustomerPhone && !isValidIsraelPhone(actualData.CustomerPhone)) {
+      return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+    }
     const formattedPhone = formatIsraeliPhone(actualData.CustomerPhone);
     
     // Find customer ONLY by phone number - no fallback searches
@@ -2055,6 +2041,9 @@ const createAppointment = async (req, res) => {
     
     // If customerPhone is provided but no customerId, find or create customer
     if (!finalCustomerId && customerPhone) {
+      if (!isValidIsraelPhone(customerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(customerPhone);
       
       // Find existing customer by phone
@@ -2144,11 +2133,26 @@ const createAppointment = async (req, res) => {
     }
 
     // Parse dates
-    const parsedStartDate = parseDateSafely(startDate);
-    const parsedEndDate = parseDateSafely(endDate);
+    let parsedStartDate = parseDateSafely(startDate);
+    let parsedEndDate = parseDateSafely(endDate);
 
     if (!parsedStartDate || !parsedEndDate) {
       return errorResponse(res, 'Invalid date format for startDate or endDate', 400);
+    }
+
+    // Ensure endDate is on the same calendar day as startDate and end > start (prevent bad data like endDate in April)
+    const pad = (n) => String(n).padStart(2, '0');
+    const toDateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const startDay = toDateStr(parsedStartDate);
+    const endDay = toDateStr(parsedEndDate);
+    const durationMinutes = duration ? parseInt(String(duration), 10) : 30;
+    if (startDay !== endDay || parsedEndDate.getTime() <= parsedStartDate.getTime()) {
+      const startH = parsedStartDate.getHours();
+      const startM = parsedStartDate.getMinutes();
+      const endTotalMinutes = startH * 60 + startM + (durationMinutes || 30);
+      const endH = Math.floor(endTotalMinutes / 60) % 24;
+      const endM = endTotalMinutes % 60;
+      parsedEndDate = new Date(parsedStartDate.getFullYear(), parsedStartDate.getMonth(), parsedStartDate.getDate(), endH, endM, 0, 0);
     }
 
     // Validate staffId if provided
@@ -2198,7 +2202,6 @@ const createAppointment = async (req, res) => {
     }
 
     // Do not create appointment if staff or business are not available on this date/time
-    const pad = (n) => String(n).padStart(2, '0');
     const startDateStr = `${parsedStartDate.getFullYear()}-${pad(parsedStartDate.getMonth() + 1)}-${pad(parsedStartDate.getDate())}`;
     const startTimeStr = `${pad(parsedStartDate.getHours())}:${pad(parsedStartDate.getMinutes())}`;
     const endTimeStr = `${pad(parsedEndDate.getHours())}:${pad(parsedEndDate.getMinutes())}`;
@@ -2293,10 +2296,7 @@ const createAppointment = async (req, res) => {
       }
     });
 
-    // Set queueTimeDate via raw SQL (works even if Prisma client not regenerated)
-    await prisma.$executeRaw`
-      UPDATE appointments SET "queueTimeDate" = ${now} WHERE id = ${newAppointment.id}
-    `;
+    // queueTimeDate only when recurringGroupId is set (recurring appointments); for single appointments leave queueTimeDate null
 
     // Update customer appointment count
     if (finalCustomerId) {
@@ -2388,6 +2388,9 @@ const createRecurringAppointments = async (req, res) => {
     let finalCustomerId = customerId;
     let finalUserId = userId;
     if (!finalCustomerId && customerPhone) {
+      if (!isValidIsraelPhone(customerPhone)) {
+        return errorResponse(res, PHONE_VALIDATION_ERROR_MESSAGE, 400);
+      }
       const formattedPhone = formatIsraeliPhone(customerPhone);
       let existingCustomer = await prisma.customers.findFirst({
         where: { customerPhone: formattedPhone },
@@ -2621,22 +2624,47 @@ const updateAppointment = async (req, res) => {
 
     // Build update data
     const updateData = {};
-    
+    let parsedStartDate = null;
+    let parsedEndDate = null;
+
     if (startDate !== undefined) {
-      const parsedStartDate = parseDateSafely(startDate);
+      parsedStartDate = parseDateSafely(startDate);
       if (parsedStartDate) {
         updateData.startDate = parsedStartDate;
       }
     }
-    
     if (endDate !== undefined) {
-      const parsedEndDate = parseDateSafely(endDate);
+      parsedEndDate = parseDateSafely(endDate);
       if (parsedEndDate) {
         updateData.endDate = parsedEndDate;
       }
     }
-    
     if (duration !== undefined) updateData.duration = duration;
+
+    // Ensure endDate is same calendar day as startDate and end > start (prevent storing bad endDate like April when start is Feb)
+    const finalStart = updateData.startDate || appointment.startDate ? new Date(updateData.startDate || appointment.startDate) : null;
+    const finalEnd = updateData.endDate || appointment.endDate ? new Date(updateData.endDate || appointment.endDate) : null;
+    const durationNum = duration !== undefined ? parseInt(String(duration), 10) : (appointment.duration ? parseInt(String(appointment.duration), 10) : 30);
+    if (finalStart && finalEnd) {
+      const sameDay = finalStart.getFullYear() === finalEnd.getFullYear() &&
+        finalStart.getMonth() === finalEnd.getMonth() &&
+        finalStart.getDate() === finalEnd.getDate();
+      if (!sameDay || finalEnd.getTime() <= finalStart.getTime()) {
+        const startH = finalStart.getHours();
+        const startM = finalStart.getMinutes();
+        const endTotalM = startH * 60 + startM + (durationNum || 30);
+        const endH = Math.floor(endTotalM / 60) % 24;
+        const endM = endTotalM % 60;
+        updateData.endDate = new Date(finalStart.getFullYear(), finalStart.getMonth(), finalStart.getDate(), endH, endM, 0, 0);
+      }
+    } else if (finalStart && !updateData.endDate) {
+      const startH = finalStart.getHours();
+      const startM = finalStart.getMinutes();
+      const endTotalM = startH * 60 + startM + (durationNum || 30);
+      const endH = Math.floor(endTotalM / 60) % 24;
+      const endM = endTotalM % 60;
+      updateData.endDate = new Date(finalStart.getFullYear(), finalStart.getMonth(), finalStart.getDate(), endH, endM, 0, 0);
+    }
     if (staffId !== undefined) updateData.staffId = staffId || null;
     if (serviceId !== undefined) updateData.serviceId = serviceId || null;
     if (source !== undefined) updateData.source = source;
