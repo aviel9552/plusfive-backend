@@ -282,7 +282,7 @@ const createStaff = async (req, res) => {
 const updateStaff = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phone, email, city, address, isActive } = req.body;
+    const { fullName, phone, email, city, address, isActive, role } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -370,6 +370,7 @@ const updateStaff = async (req, res) => {
         ...(city !== undefined && { city: city || null }),
         ...(address !== undefined && { address: address || null }),
         ...(isActive !== undefined && { isActive }),
+        ...(role !== undefined && { role }),
         ...(req.file && { image: imageUrl }) // Update image only if new file was uploaded
       },
       include: {
