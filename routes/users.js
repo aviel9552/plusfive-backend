@@ -4,15 +4,19 @@ const {
   createUser,
   getUserById, 
   getAllUsers, 
+  getMe,
   updateUserById, 
   deleteUserById,
   changePassword,
-  softDeleteUser
+  softDeleteUser,
+  uploadMyImage,
+  uploadMyCoverImage
 } = require('../controllers/userController');
 const { authenticateToken } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { userCreateSchema, adminUserUpdateSchema, changePasswordSchema } = require('../lib/validations');
 const { adminOnly } = require('../middleware/authorization');
+const upload = require('../middleware/upload');
 
 // Admin routes (admin only)
 // POST /api/users - Create new user
@@ -24,6 +28,15 @@ router.get('/', authenticateToken, adminOnly, getAllUsers);
 // User profile routes (for authenticated users) - PUT THESE BEFORE PARAMETERIZED ROUTES
 // PUT /api/users/change-password - Change password
 router.put('/change-password', authenticateToken, validateRequest(changePasswordSchema), changePassword);
+
+// POST /api/users/me/image - Upload profile image (self)
+router.post('/me/image', authenticateToken, upload.single('image'), uploadMyImage);
+
+// POST /api/users/me/cover-image - Upload cover image (self)
+router.post('/me/cover-image', authenticateToken, upload.single('image'), uploadMyCoverImage);
+
+// GET /api/users/me - Get current user (includes image, coverImage)
+router.get('/me', authenticateToken, getMe);
 
 // PATCH /api/users/soft-delete - Soft delete user account (self-deletion)
 router.patch('/soft-delete', authenticateToken, softDeleteUser);

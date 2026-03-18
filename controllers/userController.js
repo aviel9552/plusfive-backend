@@ -2,6 +2,8 @@ const prisma = require('../lib/prisma');
 const { successResponse, errorResponse, hashPassword, verifyPassword } = require('../lib/utils');
 const { constants } = require('../config');
 const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
+const { uploadImage } = require('../lib/cloudinary');
+const { generateUniqueBusinessPublicSlug } = require('../lib/businessSlug');
 
 // Create user (admin only)
 const createUser = async (req, res) => {
@@ -107,6 +109,39 @@ const getUserById = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/users/me
+ * Get current authenticated user (including image and coverImage from Cloudinary).
+ */
+const getMe = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      return errorResponse(res, 'User not authenticated', 401);
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { id: userId, isDeleted: false }
+    });
+
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const { password: _, ...userWithoutPassword } = user;
+    const formattedUser = {
+      ...userWithoutPassword,
+      phoneNumber: userWithoutPassword.phoneNumber ? formatIsraelPhoneToLocal(userWithoutPassword.phoneNumber) : null,
+      whatsappNumber: userWithoutPassword.whatsappNumber ? formatIsraelPhoneToLocal(userWithoutPassword.whatsappNumber) : null
+    };
+
+    return successResponse(res, formattedUser);
+  } catch (error) {
+    console.error('Get me error:', error);
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
 // Get all users (admin only)
 const getAllUsers = async (req, res) => {
   try {
@@ -164,6 +199,15 @@ const updateUserById = async (req, res) => {
       updateData.whatsappNumber = updateData.phoneNumber;
     }
 
+    // If businessPublicSlug is empty in DB, generate it on first profile update
+    const existingUser = await prisma.user.findUnique({ where: { id } });
+    if (existingUser && !existingUser.businessPublicSlug) {
+      const provided = updateData.businessPublicSlug;
+      if (provided === undefined || provided === null || String(provided).trim() === '') {
+        updateData.businessPublicSlug = await generateUniqueBusinessPublicSlug(prisma, { length: 7 });
+      }
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id },
       data: updateData,
@@ -178,6 +222,11 @@ const updateUserById = async (req, res) => {
         address: true,
         whatsappNumber: true,
         directChatMessage: true,
+        businessPublicSlug: true,
+        instagramLink: true,
+        facebookLink: true,
+        tiktokLink: true,
+        locationLink: true,
         role: true,
         subscriptionExpirationDate: true,
         subscriptionLtv: true,
@@ -376,8 +425,69 @@ module.exports = {
   createUser,
   getUserById,
   getAllUsers,
+  getMe,
   updateUserById,
   deleteUserById,
   changePassword,
-  softDeleteUser
+  softDeleteUser,
+  uploadMyImage,
+  uploadMyCoverImage
 }; 
+
+/**
+ * Upload authenticated user's profile image and save to users.image
+ * POST /api/users/me/image
+ * Form-data: image (single file)
+ */
+async function uploadMyImage(req, res) {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return errorResponse(res, 'Unauthorized', 401);
+
+    if (!req.file?.buffer) {
+      return errorResponse(res, 'No image provided. Send form-data field "image".', 400);
+    }
+
+    const uploadResult = await uploadImage(req.file.buffer, constants.CLOUDINARY_FOLDERS.USER, `user-${userId}`);
+    const imageUrl = uploadResult.secure_url;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { image: imageUrl }
+    });
+
+    return successResponse(res, { image: imageUrl }, 'Profile image updated successfully');
+  } catch (error) {
+    console.error('Upload my image error:', error);
+    return errorResponse(res, 'Failed to upload profile image', 500);
+  }
+}
+
+/**
+ * Upload authenticated user's cover image and save to users.coverImage
+ * POST /api/users/me/cover-image
+ * Form-data: image (single file)
+ */
+async function uploadMyCoverImage(req, res) {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return errorResponse(res, 'Unauthorized', 401);
+
+    if (!req.file?.buffer) {
+      return errorResponse(res, 'No image provided. Send form-data field "image".', 400);
+    }
+
+    const uploadResult = await uploadImage(req.file.buffer, constants.CLOUDINARY_FOLDERS.USER, `cover-${userId}`);
+    const imageUrl = uploadResult.secure_url;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { coverImage: imageUrl }
+    });
+
+    return successResponse(res, { coverImage: imageUrl }, 'Cover image updated successfully');
+  } catch (error) {
+    console.error('Upload my cover image error:', error);
+    return errorResponse(res, 'Failed to upload cover image', 500);
+  }
+}

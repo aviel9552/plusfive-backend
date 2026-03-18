@@ -41,7 +41,8 @@ const uploadGalleryImages = async (req, res) => {
             userId
           }
         });
-        results.push(record);
+        // Frontend expects `url`, while DB stores `fileUrl`.
+        results.push({ ...record, url: record.fileUrl });
       } catch (err) {
         console.error(`BusinessGallery upload error for file ${i}:`, err);
         errors.push({ index: i, name: file.originalname, message: err.message });
@@ -76,10 +77,13 @@ const getGalleryByUser = async (req, res) => {
   try {
     const userId = req.user.userId;
 
-    const gallery = await prisma.businessGallery.findMany({
+    const galleryRecords = await prisma.businessGallery.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
+
+    // Frontend uses `image.url` (not `fileUrl`)
+    const gallery = galleryRecords.map((g) => ({ ...g, url: g.fileUrl }));
 
     return successResponse(res, {
       gallery,

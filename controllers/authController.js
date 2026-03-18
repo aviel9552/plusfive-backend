@@ -5,6 +5,7 @@ const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = requ
 const { constants } = require('../config');
 const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
 const crypto = require('crypto');
+const { generateUniqueBusinessPublicSlug } = require('../lib/businessSlug');
 
 // Register user
 const register = async (req, res) => {
@@ -67,6 +68,7 @@ const register = async (req, res) => {
 
     // Create user with only valid fields (auto-verify email)
     // Explicitly set subscriptionStatus to 'pending' for new users (no subscription yet)
+    const businessPublicSlug = await generateUniqueBusinessPublicSlug(prisma, { length: 7 });
     const user = await prisma.user.create({
       data: {
         email,
@@ -74,6 +76,7 @@ const register = async (req, res) => {
         firstName,
         lastName,
         referralCode: userReferralCode,
+        businessPublicSlug,
         emailVerified: new Date(), // Auto-verify email on registration
         subscriptionStatus: constants.SUBSCRIPTION_STATUS.PENDING, // New users don't have active subscription
         subscriptionPlan: null, // No subscription plan yet
@@ -91,6 +94,7 @@ const register = async (req, res) => {
         phoneNumber: true,
         businessName: true,
         businessType: true,
+        businessPublicSlug: true,
         subscriptionStatus: true,
         subscriptionExpirationDate: true,
         subscriptionPlan: true,

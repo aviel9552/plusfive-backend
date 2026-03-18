@@ -96,6 +96,7 @@ module.exports = {
   CLOUDINARY_FOLDERS: {
     STAFF: 'Staff',
     CUSTOMER: 'Customer',
+    USER: 'User',
     BUSINESS_GALLERY: 'BusinessGallery'
   },
 

@@ -1,0 +1,2 @@
+-- This migration file was missing from the repository.
+-- It is intentionally left empty to restore Prisma migrate history consistency.

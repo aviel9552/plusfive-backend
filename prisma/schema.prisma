@@ -27,6 +27,12 @@ model User {
   isDeleted         Boolean   @default(false) // New field for soft delete
   emailVerified     DateTime?
   image             String?
+  coverImage        String?
+  businessPublicSlug String?  @unique @map("business_public_slug")
+  instagramLink     String?
+  facebookLink      String?
+  tiktokLink        String?
+  locationLink      String?
 
   // Essential fields
   subscriptionExpirationDate DateTime?
