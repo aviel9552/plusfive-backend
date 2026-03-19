@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const N8nMessageService = require('./N8nMessageService');
-const { createWhatsappMessageRecord } = require('../controllers/whatsappMessageController');
+const { createWhatsappMessageRecord } = require('../whatsappMessage/controller');
 
 class CustomerStatusService {
     constructor() {

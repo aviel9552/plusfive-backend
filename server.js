@@ -12,34 +12,35 @@ const { getConfig, validateConfig } = require('./config');
 const config = getConfig();
 
 // Import routes
-const authRoutes = require('./routes/auth');
-const paymentRoutes = require('./routes/payments');
-const qrRoutes = require('./routes/qr');
-const supportRoutes = require('./routes/support');
-const userRoutes = require('./routes/users');
-const customerRoutes = require('./routes/customers');
-const staffRoutes = require('./routes/staff');
-const staffServiceRoutes = require('./routes/staffServices');
-const serviceRoutes = require('./routes/services');
-const categoryRoutes = require('./routes/categories');
-const catalogCategoryRoutes = require('./routes/catalogCategories');
-const supplierRoutes = require('./routes/suppliers');
-const productRoutes = require('./routes/products');
-const webhookRoutes = require('./routes/webhooks');
-const reviewRoutes = require('./routes/reviews');
-const customerStatusRoutes = require('./routes/customerStatus');
-const whatsappRoutes = require('./routes/whatsapp');
-const whatsappMessageRoutes = require('./routes/whatsappMessage');
-const adminDashboardRoutes = require('./routes/adminDashboard');
-const stripeRoutes = require('./routes/stripe');
-const cronTestRoutes = require('./routes/cronTest');
-const cronJobRoutes = require('./routes/cronJobs');
-const n8nTestRoutes = require('./routes/n8nTest');
-const waitlistRoutes = require('./routes/waitlist');
-const businessOperatingHoursRoutes = require('./routes/businessOperatingHours');
-const businessGalleryRoutes = require('./routes/businessGallery');
-const clientPermissionsRoutes = require('./routes/clientPermissions');
-const automationsRoutes = require('./routes/automations');
+const authRoutes = require('./auth');
+const paymentRoutes = require('./payments');
+const qrRoutes = require('./qr');
+const supportRoutes = require('./support');
+const userRoutes = require('./users');
+const customerRoutes = require('./customers');
+const staffRoutes = require('./staff');
+const staffServiceRoutes = require('./staffServices');
+const serviceRoutes = require('./userServices');
+const categoryRoutes = require('./categories');
+const catalogCategoryRoutes = require('./catalogCategories');
+const supplierRoutes = require('./suppliers');
+const productRoutes = require('./products');
+const webhookRoutes = require('./webhooks');
+const reviewRoutes = require('./reviews');
+const customerStatusRoutes = require('./customerStatus');
+const whatsappRoutes = require('./whatsapp');
+const whatsappMessageRoutes = require('./whatsappMessage');
+const adminDashboardRoutes = require('./adminDashboard');
+const stripeRoutes = require('./payments/stripe');
+const cronTestRoutes = require('./cronTest');
+const cronJobRoutes = require('./cronJobs');
+const n8nTestRoutes = require('./n8nTest');
+const waitlistRoutes = require('./waitlist');
+const businessOperatingHoursRoutes = require('./businessOperatingHours');
+const businessGalleryRoutes = require('./businessGallery');
+const clientPermissionsRoutes = require('./clientPermissions');
+const automationsRoutes = require('./automations');
+const publicRoutes = require('./public');
 const swaggerUi = require('swagger-ui-express');
 const swaggerDocument = require('./docs/swaggerDoc');
 
@@ -102,15 +103,15 @@ app.set('trust proxy', true);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     environment: config.server.environment,
     version: process.env.npm_package_version || '1.0.0'
   });
 });
 
-// Swagger API documentation (OpenAPI 3.0 – aligns with USER_API_ENDPOINTS.md & ADMIN_API_ENDPOINTS.md)
+// Swagger API documentation (OpenAPI 3.0 - aligns with USER_API_ENDPOINTS.md & ADMIN_API_ENDPOINTS.md)
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
   customCss: '.swagger-ui .topbar { display: none }',
   customSiteTitle: 'Plusfive API Docs',
@@ -134,7 +135,6 @@ app.use('/api/products', productRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/customer-status', customerStatusRoutes);
-
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/whatsapp-messages', whatsappMessageRoutes);
 app.use('/api/admin-dashboard', adminDashboardRoutes);
@@ -146,6 +146,7 @@ app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/business-gallery', businessGalleryRoutes);
 app.use('/api/client-permissions', clientPermissionsRoutes);
 app.use('/api/automations', automationsRoutes);
+app.use('/api/public', publicRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -194,19 +195,19 @@ const HOST = config.server.host;
 
 if (require.main === module) {
   const server = app.listen(PORT, HOST, () => {
-    console.log(`🚀 Server running on http://${HOST}:${PORT}`);
-    console.log(`📊 Environment: ${config.server.environment}`);
-    console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
-    console.log(`📖 Swagger docs: http://${HOST}:${PORT}/api-docs`);
-    console.log(`📝 Log level: ${config.logging.level}`);
-    
+    console.log(`Server running on http://${HOST}:${PORT}`);
+    console.log(`Environment: ${config.server.environment}`);
+    console.log(`Health check: http://${HOST}:${PORT}/health`);
+    console.log(`Swagger docs: http://${HOST}:${PORT}/api-docs`);
+    console.log(`Log level: ${config.logging.level}`);
+
     // Start Cron Jobs after server is running
     if (config.server.environment === 'production' || process.env.ENABLE_CRON === 'true') {
       const cronService = new CronJobService();
       cronService.startAllJobs();
-      console.log('🕒 Customer Status Cron Jobs Started');
+      console.log('Customer Status Cron Jobs Started');
     } else {
-      console.log('⏸️ Cron Jobs disabled (set ENABLE_CRON=true to enable)');
+      console.log('Cron Jobs disabled (set ENABLE_CRON=true to enable)');
     }
   });
 
