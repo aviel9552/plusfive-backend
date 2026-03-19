@@ -133,6 +133,13 @@ module.exports = {
     { name: 'Stripe', description: 'Billing & subscription' },
     { name: 'Payments', description: 'Alternative payment routes' },
     { name: 'WhatsApp', description: 'WhatsApp messages' },
+    { name: 'Reviews', description: 'Review messaging and rating flows' },
+    { name: 'Business Gallery', description: 'Business gallery image management' },
+    { name: 'Client Permissions', description: 'Client permission preferences' },
+    { name: 'Automations', description: 'Automation preferences' },
+    { name: 'Cron', description: 'Cron manual trigger and testing' },
+    { name: 'N8N Test', description: 'n8n webhook trigger test endpoints' },
+    { name: 'Public', description: 'Public business profile and appointments' },
     { name: 'Customer Status', description: 'Customer status dashboard' },
     { name: 'Admin Only', description: 'Admin role only – users CRUD' },
   ],
@@ -244,9 +251,16 @@ module.exports = {
       },
     },
     '/users/{id}': {
+      get: {
+        tags: ['Admin Only'],
+        summary: 'Get user by ID (admin only)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'User details' } },
+      },
       put: {
         tags: ['User Profile'],
-        summary: 'Update own profile (business details)',
+        summary: 'Update profile or user by ID',
         security: [{ BearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
@@ -257,6 +271,13 @@ module.exports = {
           },
         },
         responses: { 200: { description: 'User updated' } },
+      },
+      delete: {
+        tags: ['Admin Only'],
+        summary: 'Delete user by ID (admin only)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'User deleted' } },
       },
     },
 
@@ -676,13 +697,119 @@ module.exports = {
       get: { tags: ['QR'], summary: 'Get by ID', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
       delete: { tags: ['QR'], summary: 'Delete', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
     },
+    '/qr/qr/{shortCode}': {
+      get: {
+        tags: ['QR'],
+        summary: 'Get QR by short code (public)',
+        parameters: [{ name: 'shortCode', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/scan/{shortCode}': {
+      post: {
+        tags: ['QR'],
+        summary: 'Increment scan by short code',
+        parameters: [{ name: 'shortCode', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/share/{shortCode}': {
+      post: {
+        tags: ['QR'],
+        summary: 'Increment share by short code',
+        parameters: [{ name: 'shortCode', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/redirect/{id}': {
+      get: {
+        tags: ['QR'],
+        summary: 'Redirect by QR id',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 302: { description: 'Redirect response' } },
+      },
+    },
+    '/qr/generate-with-user-info': {
+      post: { tags: ['QR'], summary: 'Generate QR with user info', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/qr/generate-whatsapp': {
+      post: { tags: ['QR'], summary: 'Generate WhatsApp QR', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/qr/qr-code/{code}': {
+      get: {
+        tags: ['QR'],
+        summary: 'Get QR by code',
+        parameters: [{ name: 'code', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/{id}/analytics': {
+      get: {
+        tags: ['QR'],
+        summary: 'Get QR analytics by id',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/{id}/share': {
+      post: {
+        tags: ['QR'],
+        summary: 'Increment QR share count by id',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/{id}/scan': {
+      post: {
+        tags: ['QR'],
+        summary: 'Increment QR scan count by id',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/qr/{id}/image': {
+      get: {
+        tags: ['QR'],
+        summary: 'Get QR image by id',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
 
     // ---------- Webhooks ----------
+    '/webhooks/appointment': {
+      post: { tags: ['Webhooks'], summary: 'Inbound appointment webhook (public)', responses: { 200: {} } },
+    },
+    '/webhooks/rating': {
+      post: { tags: ['Webhooks'], summary: 'Inbound rating webhook (public)', responses: { 200: {} } },
+    },
+    '/webhooks/payment-checkout': {
+      post: { tags: ['Webhooks'], summary: 'Inbound payment checkout webhook (public)', responses: { 200: {} } },
+    },
+    '/webhooks/whatsapp': {
+      get: { tags: ['Webhooks'], summary: 'Verify WhatsApp webhook', responses: { 200: {} } },
+      post: { tags: ['Webhooks'], summary: 'Inbound WhatsApp webhook (public)', responses: { 200: {} } },
+    },
+    '/webhooks/payments': {
+      post: { tags: ['Webhooks'], summary: 'Create payment record', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
     '/webhooks/payment-webhooks': {
       get: { tags: ['Webhooks'], summary: 'Get payment webhooks', security: [{ BearerAuth: [] }], responses: { 200: {} } },
     },
     '/webhooks/payment-webhooks/{id}': {
       get: { tags: ['Webhooks'], summary: 'Get by ID', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
+    },
+    '/webhooks/payment-webhooks/customer/{customerId}': {
+      get: {
+        tags: ['Webhooks'],
+        summary: 'Get payment webhooks by customer ID',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'customerId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
     },
     '/webhooks/appointments': {
       get: { tags: ['Webhooks'], summary: 'Get appointments', security: [{ BearerAuth: [] }], responses: { 200: {} } },
@@ -693,6 +820,26 @@ module.exports = {
       put: { tags: ['Webhooks'], summary: 'Update appointment', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
       patch: { tags: ['Webhooks'], summary: 'Update appointment status', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
       delete: { tags: ['Webhooks'], summary: 'Delete appointment', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
+    },
+    '/webhooks/appointments/{id}/status': {
+      patch: { tags: ['Webhooks'], summary: 'Update appointment status', security: [{ BearerAuth: [] }], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: {} } },
+    },
+    '/webhooks/appointments/customer/{customerId}': {
+      get: {
+        tags: ['Webhooks'],
+        summary: 'Get appointments by customer ID',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'customerId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/webhooks/whatsapp-message': {
+      post: {
+        tags: ['Webhooks'],
+        summary: 'Store WhatsApp message manually',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: {} },
+      },
     },
 
     // ---------- Support ----------
@@ -735,8 +882,212 @@ module.exports = {
     },
 
     // ---------- WhatsApp ----------
+    '/whatsapp/debug/clear-all-conversations': {
+      delete: {
+        tags: ['WhatsApp'],
+        summary: 'Clear all WhatsApp conversation states (debug)',
+        description: 'Debug-only endpoint; clears conversation state records.',
+        responses: { 200: { description: 'Conversation states cleared' } },
+      },
+    },
+    '/whatsapp/debug/conversations': {
+      get: {
+        tags: ['WhatsApp'],
+        summary: 'Get WhatsApp conversation debug summary',
+        responses: { 200: { description: 'Debug conversation summary' } },
+      },
+    },
+    '/whatsapp/test': {
+      post: {
+        tags: ['WhatsApp'],
+        summary: 'Send basic WhatsApp test message',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Test message sent' } },
+      },
+    },
+    '/whatsapp/check-number': {
+      post: {
+        tags: ['WhatsApp'],
+        summary: 'Check WhatsApp number status',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Number status returned' } },
+      },
+    },
+    '/whatsapp/send-custom': {
+      post: {
+        tags: ['WhatsApp'],
+        summary: 'Send custom WhatsApp message',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Custom message sent' } },
+      },
+    },
     '/whatsapp-messages': {
       get: { tags: ['WhatsApp'], summary: 'Get WhatsApp messages', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/whatsapp-messages/add': {
+      post: { tags: ['WhatsApp'], summary: 'Report WhatsApp usage to Stripe', responses: { 200: {} } },
+    },
+
+    // ---------- Reviews ----------
+    '/reviews/send-text': {
+      post: { tags: ['Reviews'], summary: 'Send simple WhatsApp text to customer', responses: { 200: {} } },
+    },
+    '/reviews/send-rating-request': {
+      post: { tags: ['Reviews'], summary: 'Send rating request to customer', responses: { 200: {} } },
+    },
+    '/reviews/process-rating': {
+      post: { tags: ['Reviews'], summary: 'Process customer rating response', responses: { 200: {} } },
+    },
+    '/reviews/whatsapp-webhook': {
+      post: { tags: ['Reviews'], summary: 'Handle WhatsApp review button webhook', responses: { 200: {} } },
+    },
+    '/reviews/add': {
+      post: { tags: ['Reviews'], summary: 'Add review manually', responses: { 200: {} } },
+    },
+
+    // ---------- Business gallery ----------
+    '/business-gallery': {
+      get: {
+        tags: ['Business Gallery'],
+        summary: 'Get gallery images for logged-in user',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Gallery images list' } },
+      },
+    },
+    '/business-gallery/upload': {
+      post: {
+        tags: ['Business Gallery'],
+        summary: 'Upload up to 10 gallery images',
+        security: [{ BearerAuth: [] }],
+        description: 'Multipart form-data with images[] files.',
+        responses: { 200: { description: 'Images uploaded' } },
+      },
+    },
+    '/business-gallery/delete-multiple': {
+      post: {
+        tags: ['Business Gallery'],
+        summary: 'Delete multiple gallery images',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Selected images deleted' } },
+      },
+    },
+    '/business-gallery/{id}': {
+      delete: {
+        tags: ['Business Gallery'],
+        summary: 'Delete single gallery image',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Image deleted' } },
+      },
+    },
+
+    // ---------- Client permissions ----------
+    '/client-permissions': {
+      get: {
+        tags: ['Client Permissions'],
+        summary: 'Get client permissions',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Client permission settings' } },
+      },
+      put: {
+        tags: ['Client Permissions'],
+        summary: 'Create or update client permissions',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Client permissions upserted' } },
+      },
+    },
+
+    // ---------- Automations ----------
+    '/automations': {
+      get: {
+        tags: ['Automations'],
+        summary: 'Get automation preferences',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Automation settings' } },
+      },
+      put: {
+        tags: ['Automations'],
+        summary: 'Create or update automation preferences',
+        security: [{ BearerAuth: [] }],
+        responses: { 200: { description: 'Automation settings upserted' } },
+      },
+    },
+
+    // ---------- Cron ----------
+    '/cron-jobs/trigger': {
+      post: {
+        tags: ['Cron'],
+        summary: 'Trigger customer status cron job',
+        description: 'Protected by CRON_SECRET using Authorization: Bearer <secret>.',
+        responses: { 200: { description: 'Cron trigger executed' }, 401: { description: 'Unauthorized cron request' } },
+      },
+      get: {
+        tags: ['Cron'],
+        summary: 'Trigger customer status cron job (GET)',
+        description: 'Same trigger endpoint; accepts any HTTP method via router.all.',
+        responses: { 200: { description: 'Cron trigger executed' }, 401: { description: 'Unauthorized cron request' } },
+      },
+    },
+    '/cron-test/run-cron': {
+      get: { tags: ['Cron'], summary: 'Run at-risk customer processing (test)', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/cron-test/process-lost': {
+      get: { tags: ['Cron'], summary: 'Run lost customer processing (test)', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/cron-test/status-stats': {
+      get: { tags: ['Cron'], summary: 'Get customer status statistics (test)', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/cron-test/recent-changes': {
+      get: { tags: ['Cron'], summary: 'Get recent customer status changes (test)', security: [{ BearerAuth: [] }], responses: { 200: {} } },
+    },
+    '/cron-test/check-customer/{customerId}': {
+      get: {
+        tags: ['Cron'],
+        summary: 'Check computed status for a specific customer (test)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'customerId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/cron-test/customers/{status}': {
+      get: {
+        tags: ['Cron'],
+        summary: 'Get customers by status (test)',
+        security: [{ BearerAuth: [] }],
+        parameters: [{ name: 'status', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+
+    // ---------- N8N test ----------
+    '/n8n-test/at-risk': { post: { tags: ['N8N Test'], summary: 'Trigger n8n at-risk webhook test', responses: { 200: {} } } },
+    '/n8n-test/lost': { post: { tags: ['N8N Test'], summary: 'Trigger n8n lost webhook test', responses: { 200: {} } } },
+    '/n8n-test/review': { post: { tags: ['N8N Test'], summary: 'Trigger n8n review webhook test', responses: { 200: {} } } },
+    '/n8n-test/recovered': { post: { tags: ['N8N Test'], summary: 'Trigger n8n recovered webhook test', responses: { 200: {} } } },
+    '/n8n-test/custom': { post: { tags: ['N8N Test'], summary: 'Trigger n8n custom webhook test', responses: { 200: {} } } },
+
+    // ---------- Public ----------
+    '/public/business/{slug}': {
+      get: {
+        tags: ['Public'],
+        summary: 'Get public business page by slug',
+        parameters: [{ name: 'slug', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Public business details' } },
+      },
+    },
+    '/public/business/{slug}/appointments': {
+      get: {
+        tags: ['Public'],
+        summary: 'Get public appointments by business slug',
+        parameters: [{ name: 'slug', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Public appointment slots/list' } },
+      },
+      post: {
+        tags: ['Public'],
+        summary: 'Create public appointment by business slug',
+        parameters: [{ name: 'slug', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Appointment created' } },
+      },
     },
 
     // ---------- Customer status ----------
@@ -748,6 +1099,14 @@ module.exports = {
         tags: ['Customer Status'],
         summary: 'Get customers by status',
         parameters: [{ name: 'status', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: {} },
+      },
+    },
+    '/customer-status/customer/{customerId}/update': {
+      put: {
+        tags: ['Customer Status'],
+        summary: 'Update one customer status manually',
+        parameters: [{ name: 'customerId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { 200: {} },
       },
     },
@@ -783,28 +1142,7 @@ module.exports = {
         responses: { 200: {} },
       },
     },
-    '/users/{id}': {
-      get: {
-        tags: ['Admin Only'],
-        summary: 'Get user by ID (admin only)',
-        security: [{ BearerAuth: [] }],
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: {} },
-      },
-      put: {
-        tags: ['Admin Only'],
-        summary: 'Update user by ID (admin only)',
-        security: [{ BearerAuth: [] }],
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: {} },
-      },
-      delete: {
-        tags: ['Admin Only'],
-        summary: 'Delete user by ID (admin only)',
-        security: [{ BearerAuth: [] }],
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: {} },
-      },
-    },
+    // NOTE: '/users/{id}' is already defined above for update profile.
+    // Keep a single key in object literal to avoid silent override in JavaScript.
   },
 };
