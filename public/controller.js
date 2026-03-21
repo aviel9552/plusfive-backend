@@ -159,7 +159,13 @@ const createPublicAppointmentBySlug = async (req, res) => {
       staffId,
       serviceId,
       source,
+      customerNote,
     } = req.body || {};
+
+    const sanitizedCustomerNote =
+      customerNote != null && String(customerNote).trim()
+        ? String(customerNote).trim().slice(0, 2000)
+        : null;
 
     if (!customerPhone) {
       return errorResponse(res, 'customerPhone is required', 400);
@@ -347,6 +353,7 @@ const createPublicAppointmentBySlug = async (req, res) => {
         userId,
         staffId,
         serviceId,
+        customerNote: sanitizedCustomerNote,
       },
       include: {
         customer: {

@@ -2011,9 +2011,15 @@ const createAppointment = async (req, res) => {
       staffId, // Staff table ID (String)
       serviceId, // Service table ID (String)
       source,
+      customerNote, // Optional note from customer (stored on Appointment.customerNote)
       recurringType,   // SERVICE TYPE: Every Day | Every Week | Every 2 Weeks | Every Month | Every 2 Months
       recurringDuration // REPEAT FOR: 1 Week | 2 Weeks | 1 Month | 2 Months
     } = req.body;
+
+    const sanitizedCustomerNote =
+      customerNote != null && String(customerNote).trim()
+        ? String(customerNote).trim().slice(0, 2000)
+        : null;
 
     // Validate required fields
     if (!customerId && !customerPhone) {
@@ -2265,6 +2271,7 @@ const createAppointment = async (req, res) => {
       userId: finalUserId,
       staffId: finalStaffId,
       serviceId: finalServiceId,
+      customerNote: sanitizedCustomerNote,
       recurringType: recurringType || null,
       recurringDuration: recurringDuration || null
     };
@@ -2353,9 +2360,15 @@ const createRecurringAppointments = async (req, res) => {
       staffId,
       serviceId,
       source,
+      customerNote,
       recurringType,
       recurringDuration,
     } = req.body;
+
+    const sanitizedCustomerNoteRecurring =
+      customerNote != null && String(customerNote).trim()
+        ? String(customerNote).trim().slice(0, 2000)
+        : null;
 
     if (!recurringType || recurringType === 'Regular Appointment') {
       return errorResponse(res, 'recurringType is required for recurring (e.g. "Every Day", "Every Week").', 400);
@@ -2524,6 +2537,7 @@ const createRecurringAppointments = async (req, res) => {
           userId: finalUserId,
           staffId: finalStaffId,
           serviceId: finalServiceId,
+          customerNote: sanitizedCustomerNoteRecurring,
           recurringType: recurringType || null,
           recurringDuration: recurringDuration || null,
         },
