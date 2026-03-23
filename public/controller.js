@@ -9,6 +9,48 @@ const {
 } = require('../lib/phoneUtils');
 const { filterRecurringDatesByAvailability } = require('../lib/availabilityHelper');
 
+const DEFAULT_CLIENT_PERMISSIONS = {
+  allowOnlineBooking: true,
+  minAdvanceBookingMinutes: 10,
+  maxAdvanceBookingMinutes: 30240,
+  cancelBeforeMinutes: 180,
+  timeSlotInterval: 'half-hour',
+  appointmentLimit: 'unlimited',
+  showServicePrices: true,
+  showServiceDuration: false,
+  allowChooseTeamMember: true,
+  requireBusinessApproval: false,
+  onlyExistingClients: false,
+  oneAppointmentOnly: true,
+};
+
+const mapClientPermissions = (row) => ({
+  allowOnlineBooking: row?.allowOnlineBooking ?? DEFAULT_CLIENT_PERMISSIONS.allowOnlineBooking,
+  minAdvanceBookingMinutes:
+    row?.minAdvanceBookingMinutes ?? DEFAULT_CLIENT_PERMISSIONS.minAdvanceBookingMinutes,
+  maxAdvanceBookingMinutes:
+    row?.maxAdvanceBookingMinutes ?? DEFAULT_CLIENT_PERMISSIONS.maxAdvanceBookingMinutes,
+  cancelBeforeMinutes: row?.cancelBeforeMinutes ?? DEFAULT_CLIENT_PERMISSIONS.cancelBeforeMinutes,
+  timeSlotInterval: row?.timeSlotInterval ?? DEFAULT_CLIENT_PERMISSIONS.timeSlotInterval,
+  appointmentLimit: row?.appointmentLimit ?? DEFAULT_CLIENT_PERMISSIONS.appointmentLimit,
+  showServicePrices: row?.showServicePrices ?? DEFAULT_CLIENT_PERMISSIONS.showServicePrices,
+  showServiceDuration: row?.showServiceDuration ?? DEFAULT_CLIENT_PERMISSIONS.showServiceDuration,
+  allowChooseTeamMember:
+    row?.allowChooseTeamMember ?? DEFAULT_CLIENT_PERMISSIONS.allowChooseTeamMember,
+  requireBusinessApproval:
+    row?.requireBusinessApproval ?? DEFAULT_CLIENT_PERMISSIONS.requireBusinessApproval,
+  onlyExistingClients: row?.onlyExistingClients ?? DEFAULT_CLIENT_PERMISSIONS.onlyExistingClients,
+  oneAppointmentOnly: row?.oneAppointmentOnly ?? DEFAULT_CLIENT_PERMISSIONS.oneAppointmentOnly,
+});
+
+const parseAppointmentLimit = (value) => {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized || normalized === 'unlimited') return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 const buildWorkingHoursForResponse = (operatingHours) => {
   const workingHours = {};
   (operatingHours || []).forEach((oh) => {
@@ -73,6 +115,22 @@ const getPublicBusinessBySlug = async (req, res) => {
         facebookLink: true,
         tiktokLink: true,
         locationLink: true,
+        clientPermissions: {
+          select: {
+            allowOnlineBooking: true,
+            minAdvanceBookingMinutes: true,
+            maxAdvanceBookingMinutes: true,
+            cancelBeforeMinutes: true,
+            timeSlotInterval: true,
+            appointmentLimit: true,
+            showServicePrices: true,
+            showServiceDuration: true,
+            allowChooseTeamMember: true,
+            requireBusinessApproval: true,
+            onlyExistingClients: true,
+            oneAppointmentOnly: true,
+          },
+        },
       },
     });
 
@@ -122,11 +180,16 @@ const getPublicBusinessBySlug = async (req, res) => {
 
     const businessHoursByDay = buildBusinessHoursMap(operatingHours || []);
 
+    const { clientPermissions: rawClientPermissions, ...businessData } = business;
+
     return successResponse(res, {
       business: {
-        ...business,
-        phoneNumber: business.phoneNumber ? formatIsraelPhoneToLocal(business.phoneNumber) : business.phoneNumber,
+        ...businessData,
+        phoneNumber: businessData.phoneNumber
+          ? formatIsraelPhoneToLocal(businessData.phoneNumber)
+          : businessData.phoneNumber,
       },
+      clientPermissions: mapClientPermissions(rawClientPermissions),
       gallery,
       services,
       staff: staffWithWorkingHours,
@@ -179,12 +242,40 @@ const createPublicAppointmentBySlug = async (req, res) => {
 
     const business = await prisma.user.findUnique({
       where: { businessPublicSlug: slug },
-      select: { id: true, businessPublicSlug: true },
+      select: {
+        id: true,
+        businessPublicSlug: true,
+        clientPermissions: {
+          select: {
+            allowOnlineBooking: true,
+            minAdvanceBookingMinutes: true,
+            maxAdvanceBookingMinutes: true,
+            cancelBeforeMinutes: true,
+            timeSlotInterval: true,
+            appointmentLimit: true,
+            showServicePrices: true,
+            showServiceDuration: true,
+            allowChooseTeamMember: true,
+            requireBusinessApproval: true,
+            onlyExistingClients: true,
+            oneAppointmentOnly: true,
+          },
+        },
+      },
     });
     if (!business) {
       return errorResponse(res, 'Business not found', 404);
     }
     const userId = business.id;
+    const permissions = mapClientPermissions(business.clientPermissions);
+
+    if (permissions.allowOnlineBooking === false) {
+      return errorResponse(res, 'Online booking is disabled for this business', 403);
+    }
+
+    if (permissions.allowChooseTeamMember === false) {
+      return errorResponse(res, 'Team member selection is disabled for this business', 403);
+    }
 
     const parseDateSafely = (dateString) => {
       if (!dateString) return null;
@@ -204,6 +295,22 @@ const createPublicAppointmentBySlug = async (req, res) => {
     }
     if (parsedEndDate <= parsedStartDate) {
       return errorResponse(res, 'endDate must be after startDate', 400);
+    }
+    const now = new Date();
+    const advanceMinutes = Math.floor((parsedStartDate.getTime() - now.getTime()) / 60000);
+    if (advanceMinutes < permissions.minAdvanceBookingMinutes) {
+      return errorResponse(
+        res,
+        `Appointments must be booked at least ${permissions.minAdvanceBookingMinutes} minutes in advance`,
+        400
+      );
+    }
+    if (advanceMinutes > permissions.maxAdvanceBookingMinutes) {
+      return errorResponse(
+        res,
+        `Appointments can be booked up to ${permissions.maxAdvanceBookingMinutes} minutes in advance`,
+        400
+      );
     }
 
     if (!isValidIsraelPhone(customerPhone)) {
@@ -307,6 +414,10 @@ const createPublicAppointmentBySlug = async (req, res) => {
       },
     });
 
+    if (permissions.onlyExistingClients && !customer) {
+      return errorResponse(res, 'Only existing clients can book appointments for this business', 403);
+    }
+
     if (!customer) {
       const name = String(customerFullName || '').trim();
       const nameParts = name ? name.split(' ') : ['', ''];
@@ -342,9 +453,114 @@ const createPublicAppointmentBySlug = async (req, res) => {
       });
     }
 
+    if (permissions.oneAppointmentOnly) {
+      const [existingActiveAppointment, existingActiveWaitlist] = await Promise.all([
+        prisma.appointment.findFirst({
+          where: {
+            userId,
+            customerId: customer.id,
+            appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
+            startDate: { gte: now },
+          },
+          select: { id: true },
+        }),
+        prisma.waitlist.findFirst({
+          where: {
+            userId,
+            customerId: customer.id,
+            status: constants.WAITLIST_STATUS.WAITING,
+            requestedDate: { gte: now },
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (existingActiveAppointment || existingActiveWaitlist) {
+        return errorResponse(res, 'Only one future appointment request is allowed per client', 403);
+      }
+    }
+
+    const appointmentLimit = parseAppointmentLimit(permissions.appointmentLimit);
+    if (appointmentLimit) {
+      const activeFutureAppointmentsCount = await prisma.appointment.count({
+        where: {
+          userId,
+          customerId: customer.id,
+          appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
+          startDate: { gte: now },
+        },
+      });
+      if (activeFutureAppointmentsCount >= appointmentLimit) {
+        return errorResponse(
+          res,
+          `Appointment limit reached. Maximum allowed is ${appointmentLimit}`,
+          403
+        );
+      }
+    }
+
+    if (permissions.requireBusinessApproval) {
+      const requestedTime = `${pad(parsedStartDate.getHours())}:${pad(parsedStartDate.getMinutes())}`;
+      const waitlistEntry = await prisma.waitlist.create({
+        data: {
+          userId,
+          customerId: customer.id,
+          serviceId,
+          staffId,
+          requestedDate: parsedStartDate,
+          time: requestedTime,
+          startDateTime: parsedStartDate,
+          status: constants.WAITLIST_STATUS.WAITING,
+          note: sanitizedCustomerNote,
+        },
+        include: {
+          customer: {
+            select: {
+              id: true,
+              customerFullName: true,
+              customerPhone: true,
+              email: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              businessName: true,
+              email: true,
+            },
+          },
+          staff: {
+            select: {
+              id: true,
+              fullName: true,
+            },
+          },
+          service: {
+            select: {
+              id: true,
+              name: true,
+              duration: true,
+              price: true,
+              color: true,
+            },
+          },
+        },
+      });
+
+      return successResponse(
+        res,
+        {
+          ...waitlistEntry,
+          bookingType: 'waitlist',
+        },
+        'Request submitted for business approval',
+        201
+      );
+    }
+
     const newAppointment = await prisma.appointment.create({
       data: {
         source: source || 'public',
+        appointmentStatus: constants.APPOINTMENT_STATUS.BOOKED,
         endDate: parsedEndDate,
         duration: duration || null,
         startDate: parsedStartDate,
@@ -398,7 +614,15 @@ const createPublicAppointmentBySlug = async (req, res) => {
       },
     });
 
-    return successResponse(res, newAppointment, 'Appointment created successfully', 201);
+    return successResponse(
+      res,
+      {
+        ...newAppointment,
+        bookingType: 'appointment',
+      },
+      'Appointment created successfully',
+      201
+    );
   } catch (error) {
     console.error('Create public appointment by slug error:', error);
     return errorResponse(res, 'Failed to create appointment', 500);
@@ -481,8 +705,79 @@ const getPublicAppointmentsBySlug = async (req, res) => {
   }
 };
 
+/**
+ * Public: Cancel a newly created public booking by slug + booking id (no auth).
+ * PATCH /api/public/business/:slug/bookings/:bookingId/cancel
+ * Body: { bookingType: "appointment" | "waitlist" }
+ */
+const cancelPublicBookingBySlug = async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').trim().toLowerCase();
+    const bookingId = String(req.params.bookingId || '').trim();
+    const bookingType = String(req.body?.bookingType || 'appointment').trim().toLowerCase();
+
+    if (!/^[a-z0-9]{7}$/.test(slug)) {
+      return errorResponse(res, 'Invalid business_public_slug', 400);
+    }
+    if (!bookingId) {
+      return errorResponse(res, 'bookingId is required', 400);
+    }
+    if (!['appointment', 'waitlist'].includes(bookingType)) {
+      return errorResponse(res, 'Invalid bookingType. Must be appointment or waitlist', 400);
+    }
+
+    const business = await prisma.user.findUnique({
+      where: { businessPublicSlug: slug },
+      select: { id: true },
+    });
+    if (!business) {
+      return errorResponse(res, 'Business not found', 404);
+    }
+
+    if (bookingType === 'waitlist') {
+      const deleted = await prisma.waitlist.deleteMany({
+        where: {
+          id: bookingId,
+          userId: business.id,
+        },
+      });
+      if (!deleted.count) {
+        return errorResponse(res, 'Waitlist entry not found', 404);
+      }
+      return successResponse(
+        res,
+        { id: bookingId, bookingType: 'waitlist', action: 'deleted' },
+        'Waitlist request cancelled successfully'
+      );
+    }
+
+    const updated = await prisma.appointment.updateMany({
+      where: {
+        id: bookingId,
+        userId: business.id,
+      },
+      data: {
+        appointmentStatus: constants.APPOINTMENT_STATUS.CANCELLED,
+      },
+    });
+    if (!updated.count) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    return successResponse(
+      res,
+      { id: bookingId, bookingType: 'appointment', action: 'cancelled' },
+      'Appointment cancelled successfully'
+    );
+  } catch (error) {
+    console.error('Cancel public booking by slug error:', error);
+    return errorResponse(res, 'Failed to cancel booking', 500);
+  }
+};
+
 module.exports = {
   getPublicBusinessBySlug,
   createPublicAppointmentBySlug,
   getPublicAppointmentsBySlug,
+  cancelPublicBookingBySlug,
 };

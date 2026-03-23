@@ -3,6 +3,7 @@ const {
   getPublicBusinessBySlug,
   createPublicAppointmentBySlug,
   getPublicAppointmentsBySlug,
+  cancelPublicBookingBySlug,
 } = require('./controller');
 
 const router = express.Router();
@@ -11,5 +12,6 @@ const router = express.Router();
 router.get('/business/:slug', getPublicBusinessBySlug);
 router.get('/business/:slug/appointments', getPublicAppointmentsBySlug);
 router.post('/business/:slug/appointments', createPublicAppointmentBySlug);
+router.patch('/business/:slug/bookings/:bookingId/cancel', cancelPublicBookingBySlug);
 
 module.exports = router;
