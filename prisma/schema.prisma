@@ -593,9 +593,9 @@ model ClientPermissions {
 
   allowOnlineBooking        Boolean  @default(true)
   minAdvanceBookingMinutes  Int      @default(10)   // from CLIENT_PERMISSIONS_TIME_OPTIONS (e.g. 10, 15, 30)
-  maxAdvanceBookingMinutes  Int      @default(30240) // from same options (e.g. 10080=1 week, 30240=3 weeks)
+  maxAdvanceBookingMinutes  Int      @default(30240) // from CLIENT_PERMISSIONS_TIME_OPTIONS (e.g. 10080=1 week, 30240=3 weeks)
   cancelBeforeMinutes       Int      @default(180)  // from same options (e.g. 10, 60, 180=3 hours)
-  timeSlotInterval          String   @default("half-hour")  // half-hour, hour, 15-minutes, 30-minutes
+  timeSlotInterval          String   @default("20-minutes")  // 15-minutes, 20-minutes, 30-minutes, hour (legacy half-hour → 30-minutes in API)
   appointmentLimit          String   @default("unlimited") // unlimited, 1, 2, 3, 5, 10
   showServicePrices         Boolean  @default(true)
   showServiceDuration       Boolean  @default(false)

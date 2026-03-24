@@ -232,13 +232,19 @@ module.exports = {
     { value: '86400', label: 'חודשיים' },
   ],
 
-  // Time slot interval: value = slug, label = Hebrew
+  // Time slot interval: value = slug, label = Hebrew (keep in sync with frontend)
   CLIENT_PERMISSIONS_TIME_SLOT_INTERVAL_OPTIONS: [
     { value: '15-minutes', label: '15 דקות' },
+    { value: '20-minutes', label: '20 דקות' },
     { value: '30-minutes', label: '30 דקות' },
-    { value: 'half-hour', label: 'חצי שעה' },
     { value: 'hour', label: 'שעה' },
   ],
+
+  /** Legacy DB value `half-hour` was 30-minute steps; map for validation + API responses. */
+  normalizeClientPermissionsTimeSlotInterval(value) {
+    const v = String(value || '').trim();
+    return v === 'half-hour' ? '30-minutes' : v;
+  },
 
   // Appointment limit: value = 'unlimited' or count string, label = Hebrew
   CLIENT_PERMISSIONS_APPOINTMENT_LIMIT_OPTIONS: [

@@ -4,15 +4,16 @@ const {
   CLIENT_PERMISSIONS_TIME_OPTIONS,
   CLIENT_PERMISSIONS_TIME_SLOT_INTERVAL_OPTIONS,
   CLIENT_PERMISSIONS_APPOINTMENT_LIMIT_OPTIONS,
+  normalizeClientPermissionsTimeSlotInterval,
 } = require('../config/constants');
 
-// Defaults match constants: minutes (e.g. 30240 = 3 weeks, 180 = 3 hours)
+// Defaults match constants: minutes (e.g. 180 = 3 hours for cancel-before)
 const DEFAULT_SETTINGS = {
   allowOnlineBooking: true,
   minAdvanceBookingMinutes: 10,
   maxAdvanceBookingMinutes: 30240, // 3 weeks in minutes
   cancelBeforeMinutes: 180,       // 3 hours in minutes
-  timeSlotInterval: 'half-hour',
+  timeSlotInterval: '20-minutes',
   appointmentLimit: 'unlimited',
   showServicePrices: true,
   showServiceDuration: false,
@@ -46,7 +47,7 @@ const getClientPermissions = async (req, res) => {
       minAdvanceBookingMinutes: row.minAdvanceBookingMinutes,
       maxAdvanceBookingMinutes: row.maxAdvanceBookingMinutes,
       cancelBeforeMinutes: row.cancelBeforeMinutes,
-      timeSlotInterval: row.timeSlotInterval,
+      timeSlotInterval: normalizeClientPermissionsTimeSlotInterval(row.timeSlotInterval),
       appointmentLimit: row.appointmentLimit,
       showServicePrices: row.showServicePrices,
       showServiceDuration: row.showServiceDuration,
@@ -80,8 +81,9 @@ const upsertClientPermissions = async (req, res) => {
     // Validate dropdown values against constants (time slot interval & appointment limit)
     const validIntervalValues = new Set(CLIENT_PERMISSIONS_TIME_SLOT_INTERVAL_OPTIONS.map((o) => o.value));
     const validLimitValues = new Set(CLIENT_PERMISSIONS_APPOINTMENT_LIMIT_OPTIONS.map((o) => o.value));
-    const timeSlotInterval = validIntervalValues.has(body.timeSlotInterval)
-      ? body.timeSlotInterval
+    const normalizedInterval = normalizeClientPermissionsTimeSlotInterval(body.timeSlotInterval);
+    const timeSlotInterval = validIntervalValues.has(normalizedInterval)
+      ? normalizedInterval
       : DEFAULT_SETTINGS.timeSlotInterval;
     const appointmentLimit = validLimitValues.has(body.appointmentLimit)
       ? body.appointmentLimit
@@ -118,7 +120,7 @@ const upsertClientPermissions = async (req, res) => {
       minAdvanceBookingMinutes: row.minAdvanceBookingMinutes,
       maxAdvanceBookingMinutes: row.maxAdvanceBookingMinutes,
       cancelBeforeMinutes: row.cancelBeforeMinutes,
-      timeSlotInterval: row.timeSlotInterval,
+      timeSlotInterval: normalizeClientPermissionsTimeSlotInterval(row.timeSlotInterval),
       appointmentLimit: row.appointmentLimit,
       showServicePrices: row.showServicePrices,
       showServiceDuration: row.showServiceDuration,

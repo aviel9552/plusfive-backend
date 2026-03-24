@@ -1,0 +1,1 @@
+ALTER TABLE "client_permissions" ADD COLUMN IF NOT EXISTS "maxAdvanceBookingMinutes" INTEGER NOT NULL DEFAULT 30240;

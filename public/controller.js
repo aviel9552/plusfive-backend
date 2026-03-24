@@ -8,13 +8,14 @@ const {
   PHONE_VALIDATION_ERROR_MESSAGE,
 } = require('../lib/phoneUtils');
 const { filterRecurringDatesByAvailability } = require('../lib/availabilityHelper');
+const { normalizeClientPermissionsTimeSlotInterval } = require('../config/constants');
 
 const DEFAULT_CLIENT_PERMISSIONS = {
   allowOnlineBooking: true,
   minAdvanceBookingMinutes: 10,
   maxAdvanceBookingMinutes: 30240,
   cancelBeforeMinutes: 180,
-  timeSlotInterval: 'half-hour',
+  timeSlotInterval: '20-minutes',
   appointmentLimit: 'unlimited',
   showServicePrices: true,
   showServiceDuration: false,
@@ -31,7 +32,9 @@ const mapClientPermissions = (row) => ({
   maxAdvanceBookingMinutes:
     row?.maxAdvanceBookingMinutes ?? DEFAULT_CLIENT_PERMISSIONS.maxAdvanceBookingMinutes,
   cancelBeforeMinutes: row?.cancelBeforeMinutes ?? DEFAULT_CLIENT_PERMISSIONS.cancelBeforeMinutes,
-  timeSlotInterval: row?.timeSlotInterval ?? DEFAULT_CLIENT_PERMISSIONS.timeSlotInterval,
+  timeSlotInterval: normalizeClientPermissionsTimeSlotInterval(
+    row?.timeSlotInterval ?? DEFAULT_CLIENT_PERMISSIONS.timeSlotInterval
+  ),
   appointmentLimit: row?.appointmentLimit ?? DEFAULT_CLIENT_PERMISSIONS.appointmentLimit,
   showServicePrices: row?.showServicePrices ?? DEFAULT_CLIENT_PERMISSIONS.showServicePrices,
   showServiceDuration: row?.showServiceDuration ?? DEFAULT_CLIENT_PERMISSIONS.showServiceDuration,
@@ -236,8 +239,8 @@ const createPublicAppointmentBySlug = async (req, res) => {
     if (!startDate || !endDate) {
       return errorResponse(res, 'startDate and endDate are required', 400);
     }
-    if (!staffId || !serviceId) {
-      return errorResponse(res, 'staffId and serviceId are required', 400);
+    if (!serviceId) {
+      return errorResponse(res, 'serviceId is required', 400);
     }
 
     const business = await prisma.user.findUnique({
@@ -273,10 +276,6 @@ const createPublicAppointmentBySlug = async (req, res) => {
       return errorResponse(res, 'Online booking is disabled for this business', 403);
     }
 
-    if (permissions.allowChooseTeamMember === false) {
-      return errorResponse(res, 'Team member selection is disabled for this business', 403);
-    }
-
     const parseDateSafely = (dateString) => {
       if (!dateString) return null;
       if (dateString instanceof Date) return dateString;
@@ -301,14 +300,14 @@ const createPublicAppointmentBySlug = async (req, res) => {
     if (advanceMinutes < permissions.minAdvanceBookingMinutes) {
       return errorResponse(
         res,
-        `Appointments must be booked at least ${permissions.minAdvanceBookingMinutes} minutes in advance`,
+        `יש לקבוע תור לפחות ${permissions.minAdvanceBookingMinutes} דקות מראש. חזרו לבחירת השעה ובחרו שעה מאוחרת יותר.`,
         400
       );
     }
     if (advanceMinutes > permissions.maxAdvanceBookingMinutes) {
       return errorResponse(
         res,
-        `Appointments can be booked up to ${permissions.maxAdvanceBookingMinutes} minutes in advance`,
+        `ניתן לקבוע תור עד ${permissions.maxAdvanceBookingMinutes} דקות מראש.`,
         400
       );
     }
@@ -318,48 +317,17 @@ const createPublicAppointmentBySlug = async (req, res) => {
     }
     const formattedPhone = formatIsraeliPhone(customerPhone);
 
-    const [staffMember, service] = await Promise.all([
-      prisma.staff.findFirst({
-        where: {
-          id: staffId,
-          businessId: userId,
-          isDeleted: false,
-          isActive: true,
-        },
-        select: { id: true, businessId: true },
-      }),
-      prisma.service.findFirst({
-        where: {
-          id: serviceId,
-          businessId: userId,
-          isDeleted: false,
-          isActive: true,
-        },
-        select: { id: true, businessId: true },
-      }),
-    ]);
-
-    if (!staffMember) {
-      return errorResponse(res, 'Staff not found or inactive for this business', 400);
-    }
-    if (!service) {
-      return errorResponse(res, 'Service not found or inactive for this business', 400);
-    }
-
-    const staffService = await prisma.staffService.findFirst({
+    const service = await prisma.service.findFirst({
       where: {
-        staffId,
-        serviceId,
+        id: serviceId,
+        businessId: userId,
+        isDeleted: false,
         isActive: true,
       },
-      select: { id: true },
+      select: { id: true, businessId: true },
     });
-    if (!staffService) {
-      return errorResponse(
-        res,
-        'Staff does not have this service assigned. Please choose another staff or service.',
-        400
-      );
+    if (!service) {
+      return errorResponse(res, 'Service not found or inactive for this business', 400);
     }
 
     // Ensure requested time is inside business + staff operating hours.
@@ -368,38 +336,105 @@ const createPublicAppointmentBySlug = async (req, res) => {
     const startTimeStr = `${pad(parsedStartDate.getHours())}:${pad(parsedStartDate.getMinutes())}`;
     const endTimeStr = `${pad(parsedEndDate.getHours())}:${pad(parsedEndDate.getMinutes())}`;
 
-    const availableDates = await filterRecurringDatesByAvailability(
-      [startDateStr],
-      userId,
-      staffId,
-      startTimeStr,
-      endTimeStr,
-      prisma
-    );
-    if (!availableDates || availableDates.length === 0) {
-      return errorResponse(
-        res,
-        'Staff or business not available on this date/time. Please choose another time.',
-        400
+    const isStaffAvailableForSlot = async (staffIdToCheck) => {
+      const availableDates = await filterRecurringDatesByAvailability(
+        [startDateStr],
+        userId,
+        staffIdToCheck,
+        startTimeStr,
+        endTimeStr,
+        prisma
       );
-    }
+      if (!availableDates || availableDates.length === 0) return false;
 
-    // Prevent double-booking on public booking as well.
-    const overlapping = await prisma.appointment.findFirst({
-      where: {
-        staffId,
-        appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
-        startDate: { lt: parsedEndDate },
-        endDate: { gt: parsedStartDate },
-      },
-      select: { id: true },
-    });
-    if (overlapping) {
-      return errorResponse(
-        res,
-        'This time slot is already booked for this staff. Please choose another time.',
-        400
-      );
+      const overlapping = await prisma.appointment.findFirst({
+        where: {
+          staffId: staffIdToCheck,
+          appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
+          startDate: { lt: parsedEndDate },
+          endDate: { gt: parsedStartDate },
+        },
+        select: { id: true },
+      });
+      return !overlapping;
+    };
+
+    let effectiveStaffId = staffId ? String(staffId).trim() : '';
+    if (permissions.allowChooseTeamMember === false) {
+      const candidateStaffServices = await prisma.staffService.findMany({
+        where: {
+          serviceId,
+          isActive: true,
+          staff: {
+            businessId: userId,
+            isDeleted: false,
+            isActive: true,
+          },
+        },
+        select: { staffId: true },
+      });
+      const candidateStaffIds = [...new Set((candidateStaffServices || []).map((s) => s.staffId).filter(Boolean))];
+      if (!candidateStaffIds.length) {
+        return errorResponse(res, 'No active staff is available for this service', 400);
+      }
+
+      let assigned = null;
+      for (const candidateId of candidateStaffIds) {
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await isStaffAvailableForSlot(candidateId);
+        if (ok) {
+          assigned = candidateId;
+          break;
+        }
+      }
+      if (!assigned) {
+        return errorResponse(
+          res,
+          'No staff is available on this date/time for the selected service. Please choose another time.',
+          400
+        );
+      }
+      effectiveStaffId = assigned;
+    } else {
+      if (!effectiveStaffId) {
+        return errorResponse(res, 'staffId and serviceId are required', 400);
+      }
+      const staffMember = await prisma.staff.findFirst({
+        where: {
+          id: effectiveStaffId,
+          businessId: userId,
+          isDeleted: false,
+          isActive: true,
+        },
+        select: { id: true, businessId: true },
+      });
+      if (!staffMember) {
+        return errorResponse(res, 'Staff not found or inactive for this business', 400);
+      }
+
+      const staffService = await prisma.staffService.findFirst({
+        where: {
+          staffId: effectiveStaffId,
+          serviceId,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      if (!staffService) {
+        return errorResponse(
+          res,
+          'Staff does not have this service assigned. Please choose another staff or service.',
+          400
+        );
+      }
+      const available = await isStaffAvailableForSlot(effectiveStaffId);
+      if (!available) {
+        return errorResponse(
+          res,
+          'Staff or business not available on this date/time. Please choose another time.',
+          400
+        );
+      }
     }
 
     let customer = await prisma.customers.findFirst({
@@ -505,7 +540,7 @@ const createPublicAppointmentBySlug = async (req, res) => {
           userId,
           customerId: customer.id,
           serviceId,
-          staffId,
+          staffId: effectiveStaffId,
           requestedDate: parsedStartDate,
           time: requestedTime,
           startDateTime: parsedStartDate,
@@ -567,7 +602,7 @@ const createPublicAppointmentBySlug = async (req, res) => {
         createDate: new Date(),
         customerId: customer.id,
         userId,
-        staffId,
+        staffId: effectiveStaffId,
         serviceId,
         customerNote: sanitizedCustomerNote,
       },
@@ -661,7 +696,14 @@ const getPublicAppointmentsBySlug = async (req, res) => {
 
     const business = await prisma.user.findUnique({
       where: { businessPublicSlug: slug },
-      select: { id: true },
+      select: {
+        id: true,
+        clientPermissions: {
+          select: {
+            cancelBeforeMinutes: true,
+          },
+        },
+      },
     });
     if (!business) {
       return errorResponse(res, 'Business not found', 404);
@@ -684,6 +726,7 @@ const getPublicAppointmentsBySlug = async (req, res) => {
       where: {
         userId: business.id,
         staffId,
+        appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
         startDate: { lt: endDate },
         endDate: { gt: startDate },
       },
@@ -728,7 +771,14 @@ const cancelPublicBookingBySlug = async (req, res) => {
 
     const business = await prisma.user.findUnique({
       where: { businessPublicSlug: slug },
-      select: { id: true },
+      select: {
+        id: true,
+        clientPermissions: {
+          select: {
+            cancelBeforeMinutes: true,
+          },
+        },
+      },
     });
     if (!business) {
       return errorResponse(res, 'Business not found', 404);
@@ -751,10 +801,36 @@ const cancelPublicBookingBySlug = async (req, res) => {
       );
     }
 
+    const permissions = mapClientPermissions(business.clientPermissions);
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        id: bookingId,
+        userId: business.id,
+      },
+      select: {
+        id: true,
+        startDate: true,
+        appointmentStatus: true,
+      },
+    });
+    if (!appointment) {
+      return errorResponse(res, 'Appointment not found', 404);
+    }
+
+    const minsUntilStart = Math.floor((new Date(appointment.startDate).getTime() - Date.now()) / 60000);
+    if (minsUntilStart < permissions.cancelBeforeMinutes) {
+      return errorResponse(
+        res,
+        'Cancellation is not allowed. Please contact the business',
+        403
+      );
+    }
+
     const updated = await prisma.appointment.updateMany({
       where: {
         id: bookingId,
         userId: business.id,
+        appointmentStatus: { not: constants.APPOINTMENT_STATUS.CANCELLED },
       },
       data: {
         appointmentStatus: constants.APPOINTMENT_STATUS.CANCELLED,

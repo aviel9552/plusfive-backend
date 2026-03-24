@@ -2173,6 +2173,28 @@ const createAppointment = async (req, res) => {
       parsedEndDate = new Date(parsedStartDate.getFullYear(), parsedStartDate.getMonth(), parsedStartDate.getDate(), endH, endM, 0, 0);
     }
 
+    const clientPermsRow = await prisma.clientPermissions.findUnique({
+      where: { userId },
+      select: { minAdvanceBookingMinutes: true, maxAdvanceBookingMinutes: true },
+    });
+    const minLeadMinutes = clientPermsRow?.minAdvanceBookingMinutes ?? 10;
+    const maxLeadMinutes = clientPermsRow?.maxAdvanceBookingMinutes ?? 30240;
+    const advanceMinutes = Math.floor((parsedStartDate.getTime() - Date.now()) / 60000);
+    if (advanceMinutes < minLeadMinutes) {
+      return errorResponse(
+        res,
+        `יש לקבוע תור לפחות ${minLeadMinutes} דקות מראש. חזרו לבחירת השעה ובחרו שעה מאוחרת יותר.`,
+        400
+      );
+    }
+    if (advanceMinutes > maxLeadMinutes) {
+      return errorResponse(
+        res,
+        `ניתן לקבוע תור עד ${maxLeadMinutes} דקות מראש.`,
+        400
+      );
+    }
+
     // Validate staffId if provided
     let finalStaffId = staffId || null;
     if (finalStaffId) {
