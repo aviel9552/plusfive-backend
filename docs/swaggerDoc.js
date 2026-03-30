@@ -34,6 +34,13 @@ module.exports = {
           password: { type: 'string', example: 'Admin123#' },
         },
       },
+      CustomerPortalLoginBody: {
+        type: 'object',
+        required: ['customerPhone'],
+        properties: {
+          customerPhone: { type: 'string', description: 'Israeli mobile, any supported format' },
+        },
+      },
       RegisterBody: {
         type: 'object',
         required: ['email', 'password'],
@@ -140,6 +147,7 @@ module.exports = {
     { name: 'Cron', description: 'Cron manual trigger and testing' },
     { name: 'N8N Test', description: 'n8n webhook trigger test endpoints' },
     { name: 'Public', description: 'Public business profile and appointments' },
+    { name: 'Customer Portal', description: 'Customer panel APIs (customer JWT)' },
     { name: 'Customer Status', description: 'Customer status dashboard' },
     { name: 'Admin Only', description: 'Admin role only – users CRUD' },
   ],
@@ -222,6 +230,36 @@ module.exports = {
           },
         },
         responses: { 200: { description: 'Password reset' } },
+      },
+    },
+    '/auth/customer/login': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Customer portal – login (phone only)',
+        description:
+          'Israeli customerPhone only. Resolves a single business automatically; 409 if the phone exists under multiple businesses. Returns JWT (authKind customer).',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CustomerPortalLoginBody' },
+            },
+          },
+        },
+        responses: { 200: { description: 'Returns customer, business, token' } },
+      },
+    },
+    '/customer-portal/overview': {
+      get: {
+        tags: ['Customer Portal'],
+        summary: 'Customer dashboard overview for graphs',
+        description:
+          'Requires customer JWT from POST /auth/customer/login. Returns month KPIs, daily/monthly chart data, payment status split, and recent payments.',
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: 'year', in: 'query', schema: { type: 'integer', example: 2026 } },
+          { name: 'month', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 12, example: 3 } },
+        ],
+        responses: { 200: { description: 'Overview data fetched' }, 401: { description: 'Unauthorized' } },
       },
     },
 

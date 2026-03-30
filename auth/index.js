@@ -3,6 +3,7 @@ const router = express.Router();
 const { 
   register, 
   login, 
+  customerLogin,
   verifyEmail, 
   resendVerification, 
   forgotPassword, 
@@ -11,7 +12,8 @@ const {
 const { validateRequest } = require('../middleware/validation');
 const { 
   userRegistrationSchema, 
-  userLoginSchema, 
+  userLoginSchema,
+  customerPortalLoginSchema,
   resendVerificationSchema, 
   forgotPasswordSchema, 
   resetPasswordSchema
@@ -23,6 +25,9 @@ router.post('/register', register);
 
 // POST /api/auth/login - User login
 router.post('/login', validateRequest(userLoginSchema), login);
+
+// POST /api/auth/customer/login - Customer portal login (businessPublicSlug + customerPhone only)
+router.post('/customer/login', validateRequest(customerPortalLoginSchema), customerLogin);
 
 // GET /api/auth/verify-email/:token - Verify email
 router.get('/verify-email/:token', verifyEmail);

@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { successResponse, errorResponse, hashPassword, verifyPassword } = require('../lib/utils');
-const { generateToken } = require('../middleware/auth');
+const { generateToken, generateCustomerToken } = require('../middleware/auth');
 const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../lib/emailService');
 const { constants } = require('../config');
 const { formatIsraeliPhone, formatIsraelPhoneToLocal, isValidIsraelPhone, PHONE_VALIDATION_ERROR_MESSAGE } = require('../lib/phoneUtils');
@@ -131,6 +131,112 @@ const register = async (req, res) => {
       }
     }
     
+    return errorResponse(res, 'Internal server error', 500);
+  }
+};
+
+/**
+ * Resolve customer portal login by phone only. Requires exactly one eligible customer row.
+ * @returns {{ business: object, customer: object } | { error: string, status: number }}
+ */
+async function resolveCustomerPortalByPhone(customerPhone) {
+  if (!isValidIsraelPhone(customerPhone)) {
+    return { error: PHONE_VALIDATION_ERROR_MESSAGE, status: 400 };
+  }
+  const formattedPhone = formatIsraeliPhone(customerPhone);
+
+  const rows = await prisma.customers.findMany({
+    where: {
+      customerPhone: formattedPhone,
+      userId: { not: null },
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          businessPublicSlug: true,
+          businessName: true,
+          isActive: true,
+          isDeleted: true,
+        },
+      },
+      customerUsers: {
+        where: { isDeleted: false },
+      },
+    },
+  });
+
+  const eligible = [];
+
+  for (const customer of rows) {
+    const business = customer.user;
+    if (!business || business.isDeleted || !business.isActive) continue;
+
+    const link = customer.customerUsers.find((cu) => cu.userId === customer.userId);
+    if (!link || !link.isActive || link.status === 'blocked') continue;
+
+    const { user: _u, customerUsers: _cu, ...customerRest } = customer;
+
+    eligible.push({
+      customer: customerRest,
+      business: {
+        id: business.id,
+        businessPublicSlug: business.businessPublicSlug,
+        businessName: business.businessName,
+        isActive: business.isActive,
+      },
+    });
+  }
+
+  if (eligible.length === 0) {
+    return { error: 'No account found for this phone number', status: 401 };
+  }
+  if (eligible.length > 1) {
+    return {
+      error:
+        'This phone is linked to more than one business. Use the customer sign-in link from the business you booked with.',
+      status: 409,
+    };
+  }
+
+  return { business: eligible[0].business, customer: eligible[0].customer };
+}
+
+function customerSafeFields(customer) {
+  const out = { ...customer };
+  if (out.customerPhone && out.customerPhone.startsWith('+972')) {
+    out.customerPhone = '0' + out.customerPhone.substring(4);
+  }
+  return out;
+}
+
+// Customer portal login (phone only — must match exactly one business customer record)
+const customerLogin = async (req, res) => {
+  try {
+    const { customerPhone } = req.body;
+    const ctx = await resolveCustomerPortalByPhone(customerPhone);
+    if (ctx.error) {
+      return errorResponse(res, ctx.error, ctx.status);
+    }
+    const { business, customer } = ctx;
+
+    const token = generateCustomerToken(customer.id, business.id);
+
+    return successResponse(
+      res,
+      {
+        customer: customerSafeFields(customer),
+        business: {
+          id: business.id,
+          businessPublicSlug: business.businessPublicSlug,
+          businessName: business.businessName,
+        },
+        token,
+      },
+      'Login successful'
+    );
+  } catch (e) {
+    console.error('customerLogin:', e);
     return errorResponse(res, 'Internal server error', 500);
   }
 };
@@ -377,6 +483,7 @@ const resetPassword = async (req, res) => {
 module.exports = {
   register,
   login,
+  customerLogin,
   verifyEmail,
   resendVerification,
   forgotPassword,
